@@ -1,0 +1,1083 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "op_type": "model (DeepseekV3Model)",
+      "aten_ops": "aten.lift_fresh.default → aten.cat.default",
+      "module_path": "model",
+      "module_class": "DeepseekV3Model",
+      "layer": "",
+      "fusion_level": "leaf",
+      "num_sub_ops": 16,
+      "input_shapes": "[0], [1, 128, 128, 192], [1, 128, 128, 128], [0], [0], [1, 128, 128, 192], [1, 128, 128, 128], [0], [1, 128, 128, 192], [1, 128, 128, 128], [1, 128, 128, 192], [1, 128, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 128, 192], [1, 128, 128, 128], [1, 128, 128, 192], [1, 128, 128, 192], [1, 128, 128, 192]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "label": "model (DeepseekV3Model)",
+      "id": "fused_0"
+    },
+    {
+      "op_type": "model (DeepseekV3Model)",
+      "aten_ops": "aten.embedding.default → aten.rsub.Scalar → aten._to_copy.default → aten.masked_fill.Scalar",
+      "module_path": "model",
+      "module_class": "DeepseekV3Model",
+      "layer": "",
+      "fusion_level": "parent",
+      "num_sub_ops": 4,
+      "input_shapes": "[129280, 7168], [1, 1], [1, 1, 1, 129]",
+      "input_dtypes": "torch.bfloat16, torch.int64, torch.float32",
+      "output_shapes": "[1, 1, 7168], [1, 1, 1, 129]",
+      "output_dtypes": "torch.bfloat16, torch.float32",
+      "label": "model (DeepseekV3Model)",
+      "id": "fused_1"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 7168], [7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_2"
+    },
+    {
+      "op_type": "self_attn.q_a_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.q_a_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[1536, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 1536]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.q_a_proj (Linear)",
+      "id": "fused_3"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn.q_a_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 1536], [1536]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_4"
+    },
+    {
+      "op_type": "self_attn.q_b_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.q_b_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[24576, 1536], [1, 1, 1536]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 24576]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.q_b_proj (Linear)",
+      "id": "fused_5"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.view.default → prim.device.default → aten.transpose.int → aten.split_with_sizes.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 24576]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 1, 64], [1, 128, 1, 128]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_6"
+    },
+    {
+      "op_type": "self_attn.kv_a_proj_with_mqa (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.kv_a_proj_with_mqa",
+      "module_class": "Linear",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[576, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 576]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.kv_a_proj_with_mqa (Linear)",
+      "id": "fused_7"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.split_with_sizes.default → prim.device.default → aten.view.default → aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 576]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 1, 512], [1, 1, 1, 64]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_8"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn.kv_a_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 512], [512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_9"
+    },
+    {
+      "op_type": "self_attn.kv_b_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.kv_b_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[32768, 512], [1, 1, 512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 32768]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.kv_b_proj (Linear)",
+      "id": "fused_10"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.view.default → prim.device.default → aten.transpose.int → aten.split_with_sizes.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 32768]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 1, 128], [1, 128, 1, 128]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_11"
+    },
+    {
+      "op_type": "rope",
+      "aten_ops": "aten.arange.start_step → aten.div.Tensor → aten.pow.Scalar → aten.reciprocal.default → aten.mul.Tensor → aten.arange.default → aten.sub.Tensor → aten.clamp.default → prim.device.default → aten.rsub.Scalar → aten.add.Tensor → aten.view.default → aten.cat.default → aten.cos.default → aten._to_copy.default → aten.sin.default → aten.slice.Tensor",
+      "module_path": "model.layers.0.self_attn.rotary_emb",
+      "module_class": "DeepseekV3YarnRotaryEmbedding",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 42,
+      "input_shapes": "",
+      "input_dtypes": "",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rope",
+      "id": "fused_12"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "prim.device.default → aten.index.Tensor → aten.unsqueeze.default → aten.view.default → aten.transpose.int → aten.clone.default → aten._unsafe_view.default → aten.mul.Tensor → aten.slice.Tensor → aten.neg.default → aten.cat.default → aten.add.Tensor → aten.new_empty.default → aten.copy_.default → aten.expand.default → aten.bmm.default → aten._softmax.default → aten._to_copy.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 116,
+      "input_shapes": "[129, 64], [1, 1], [129, 64], [1, 128, 1, 128], [1, 128, 1, 128], [1, 1, 1, 129]",
+      "input_dtypes": "torch.bfloat16, torch.int64, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "attn",
+      "id": "fused_13"
+    },
+    {
+      "op_type": "self_attn.o_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[7168, 16384], [1, 1, 16384]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.o_proj (Linear)",
+      "id": "fused_14"
+    },
+    {
+      "op_type": "model.layers.0",
+      "aten_ops": "aten.add.Tensor",
+      "module_path": "model.layers.0",
+      "module_class": "DeepseekV3DecoderLayer",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "model.layers.0",
+      "id": "fused_15"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 7168], [7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_16"
+    },
+    {
+      "op_type": "mlp",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default → aten.silu.default → aten.mul.Tensor",
+      "module_path": "model.layers.0.mlp",
+      "module_class": "DeepseekV3MLP",
+      "layer": "0",
+      "fusion_level": "parent",
+      "num_sub_ops": 20,
+      "input_shapes": "[18432, 7168], [1, 1, 7168], [18432, 7168], [7168, 18432]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "mlp",
+      "id": "fused_17"
+    },
+    {
+      "op_type": "model.layers.0",
+      "aten_ops": "aten.add.Tensor",
+      "module_path": "model.layers.0",
+      "module_class": "DeepseekV3DecoderLayer",
+      "layer": "0",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "model.layers.0",
+      "id": "fused_18"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.input_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 7168], [7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_19"
+    },
+    {
+      "op_type": "self_attn.q_a_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.3.self_attn.q_a_proj",
+      "module_class": "Linear",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[1536, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 1536]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.q_a_proj (Linear)",
+      "id": "fused_20"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.self_attn.q_a_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 1536], [1536]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_21"
+    },
+    {
+      "op_type": "self_attn.q_b_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.3.self_attn.q_b_proj",
+      "module_class": "Linear",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[24576, 1536], [1, 1, 1536]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 24576]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.q_b_proj (Linear)",
+      "id": "fused_22"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.view.default → prim.device.default → aten.transpose.int → aten.split_with_sizes.default",
+      "module_path": "model.layers.3.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 24576]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 1, 64], [1, 128, 1, 128]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_23"
+    },
+    {
+      "op_type": "self_attn.kv_a_proj_with_mqa (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.3.self_attn.kv_a_proj_with_mqa",
+      "module_class": "Linear",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[576, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 576]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.kv_a_proj_with_mqa (Linear)",
+      "id": "fused_24"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.split_with_sizes.default → prim.device.default → aten.view.default → aten.transpose.int",
+      "module_path": "model.layers.3.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 576]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 1, 512], [1, 1, 1, 64]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_25"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.self_attn.kv_a_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 512], [512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_26"
+    },
+    {
+      "op_type": "self_attn.kv_b_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.3.self_attn.kv_b_proj",
+      "module_class": "Linear",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[32768, 512], [1, 1, 512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 32768]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.kv_b_proj (Linear)",
+      "id": "fused_27"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "aten.view.default → prim.device.default → aten.transpose.int → aten.split_with_sizes.default",
+      "module_path": "model.layers.3.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 1, 32768]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 1, 128], [1, 128, 1, 128]",
+      "output_dtypes": "torch.bfloat16, torch.bfloat16",
+      "label": "attn",
+      "id": "fused_28"
+    },
+    {
+      "op_type": "rope",
+      "aten_ops": "aten.arange.start_step → aten.div.Tensor → aten.pow.Scalar → aten.reciprocal.default → aten.mul.Tensor → aten.arange.default → aten.sub.Tensor → aten.clamp.default → prim.device.default → aten.rsub.Scalar → aten.add.Tensor → aten.view.default → aten.cat.default → aten.cos.default → aten._to_copy.default → aten.sin.default → aten.slice.Tensor",
+      "module_path": "model.layers.3.self_attn.rotary_emb",
+      "module_class": "DeepseekV3YarnRotaryEmbedding",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 42,
+      "input_shapes": "",
+      "input_dtypes": "",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rope",
+      "id": "fused_29"
+    },
+    {
+      "op_type": "attn",
+      "aten_ops": "prim.device.default → aten.index.Tensor → aten.unsqueeze.default → aten.view.default → aten.transpose.int → aten.clone.default → aten._unsafe_view.default → aten.mul.Tensor → aten.slice.Tensor → aten.neg.default → aten.cat.default → aten.add.Tensor → aten.new_empty.default → aten.copy_.default → aten.expand.default → aten.bmm.default → aten._softmax.default → aten._to_copy.default",
+      "module_path": "model.layers.3.self_attn",
+      "module_class": "DeepseekV3Attention",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 116,
+      "input_shapes": "[129, 64], [1, 1], [129, 64], [1, 128, 1, 128], [1, 128, 1, 128], [1, 1, 1, 129]",
+      "input_dtypes": "torch.bfloat16, torch.int64, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "attn",
+      "id": "fused_30"
+    },
+    {
+      "op_type": "self_attn.o_proj (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "model.layers.3.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[7168, 16384], [1, 1, 16384]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "self_attn.o_proj (Linear)",
+      "id": "fused_31"
+    },
+    {
+      "op_type": "model.layers.3",
+      "aten_ops": "aten.add.Tensor",
+      "module_path": "model.layers.3",
+      "module_class": "DeepseekV3DecoderLayer",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "model.layers.3",
+      "id": "fused_32"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "aten._to_copy.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.post_attention_layernorm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 7168], [7168]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_33"
+    },
+    {
+      "op_type": "mlp (DeepseekV3MoE)",
+      "aten_ops": "aten.view.default → prim.device.default",
+      "module_path": "model.layers.3.mlp",
+      "module_class": "DeepseekV3MoE",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 2,
+      "input_shapes": "[1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 7168]",
+      "output_dtypes": "torch.bfloat16",
+      "label": "mlp (DeepseekV3MoE)",
+      "id": "fused_34"
+    },
+    {
+      "op_type": "moe_gate",
+      "aten_ops": "aten.view.default → prim.device.default → aten._to_copy.default → aten.t.default → aten.mm.default → aten.sigmoid.default → aten.unsqueeze.default → aten.add.Tensor → aten.topk.default → aten.sum.dim_IntList → aten.zeros_like.default → aten.scatter_.value → aten.expand.default → aten.clone.default → aten._unsafe_view.default → aten.bitwise_not.default → aten.masked_fill.Scalar → aten.gather.default → aten.div.Tensor → aten.mul.Tensor",
+      "module_path": "model.layers.3.mlp.gate",
+      "module_class": "MoEGate",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 38,
+      "input_shapes": "[1, 1, 7168], [256, 7168], [256]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "moe_gate",
+      "id": "fused_35"
+    },
+    {
+      "op_type": "mlp",
+      "aten_ops": "aten.t.default → prim.device.default → aten.mm.default → aten.silu.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.mlp.experts.0",
+      "module_class": "DeepseekV3MLP",
+      "layer": "3",
+      "fusion_level": "parent",
+      "num_sub_ops": 11,
+      "input_shapes": "[2048, 7168], [1, 7168], [2048, 7168], [7168, 2048]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "mlp",
+      "id": "fused_36"
+    },
+    {
+      "op_type": "mlp (DeepseekV3MoE)",
+      "aten_ops": "prim.device.default → aten.slice.Tensor → aten.mul.Tensor → aten.view.default",
+      "module_path": "model.layers.3.mlp",
+      "module_class": "DeepseekV3MoE",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 7,
+      "input_shapes": "[1, 8], [1, 7168]",
+      "input_dtypes": "torch.float32, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "mlp (DeepseekV3MoE)",
+      "id": "fused_37"
+    },
+    {
+      "op_type": "mlp",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default → aten.silu.default → aten.mul.Tensor",
+      "module_path": "model.layers.3.mlp.shared_experts",
+      "module_class": "DeepseekV3MLP",
+      "layer": "3",
+      "fusion_level": "parent",
+      "num_sub_ops": 20,
+      "input_shapes": "[2048, 7168], [1, 1, 7168], [2048, 7168], [7168, 2048]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "mlp",
+      "id": "fused_38"
+    },
+    {
+      "op_type": "mlp",
+      "aten_ops": "aten.add.Tensor",
+      "module_path": "model.layers.3.mlp",
+      "module_class": "DeepseekV3MoE",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.float32, torch.bfloat16",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.float32",
+      "label": "mlp",
+      "id": "fused_39"
+    },
+    {
+      "op_type": "model.layers.3",
+      "aten_ops": "aten.add.Tensor",
+      "module_path": "model.layers.3",
+      "module_class": "DeepseekV3DecoderLayer",
+      "layer": "3",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.float32",
+      "output_shapes": "[1, 1, 7168]",
+      "output_dtypes": "torch.float32",
+      "label": "model.layers.3",
+      "id": "fused_40"
+    },
+    {
+      "op_type": "rms_norm",
+      "aten_ops": "prim.device.default → aten.pow.Tensor_Scalar → aten.mean.dim → aten.add.Tensor → aten.rsqrt.default → aten.mul.Tensor",
+      "module_path": "model.norm",
+      "module_class": "DeepseekV3RMSNorm",
+      "layer": "",
+      "fusion_level": "leaf",
+      "num_sub_ops": 8,
+      "input_shapes": "[1, 1, 7168], [7168]",
+      "input_dtypes": "torch.float32, torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "rms_norm",
+      "id": "fused_41"
+    },
+    {
+      "op_type": "lm_head (Linear)",
+      "aten_ops": "aten.t.default → prim.device.default → aten.view.default → aten.mm.default → aten._unsafe_view.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "fusion_level": "leaf",
+      "num_sub_ops": 6,
+      "input_shapes": "[129280, 7168], [1, 1, 7168]",
+      "input_dtypes": "torch.bfloat16, torch.float32",
+      "output_shapes": "[1, 1, 129280]",
+      "output_dtypes": "torch.float32",
+      "label": "lm_head (Linear)",
+      "id": "fused_42"
+    },
+    {
+      "op_type": "device",
+      "aten_ops": "prim.device.default",
+      "module_path": "",
+      "module_class": "",
+      "layer": "",
+      "fusion_level": "leaf",
+      "num_sub_ops": 1,
+      "input_shapes": "[1, 1, 129280]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "label": "device",
+      "id": "fused_43"
+    }
+  ],
+  "edges": [
+    {
+      "tensor_ids": [
+        1
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_1",
+      "target": "fused_2"
+    },
+    {
+      "tensor_ids": [
+        26
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_1",
+      "target": "fused_13"
+    },
+    {
+      "tensor_ids": [
+        1
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_1",
+      "target": "fused_15"
+    },
+    {
+      "tensor_ids": [
+        26
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_1",
+      "target": "fused_30"
+    },
+    {
+      "tensor_ids": [
+        33
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_3",
+      "target": "fused_4"
+    },
+    {
+      "tensor_ids": [
+        33
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_3",
+      "target": "fused_18"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_5",
+      "target": "fused_6"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_5",
+      "target": "fused_37"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_6",
+      "target": "fused_13"
+    },
+    {
+      "tensor_ids": [
+        41
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_7",
+      "target": "fused_8"
+    },
+    {
+      "tensor_ids": [
+        32
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_8",
+      "target": "fused_9"
+    },
+    {
+      "tensor_ids": [
+        40
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_8",
+      "target": "fused_28"
+    },
+    {
+      "tensor_ids": [
+        32
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_8",
+      "target": "fused_31"
+    },
+    {
+      "tensor_ids": [
+        48
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_10",
+      "target": "fused_11"
+    },
+    {
+      "tensor_ids": [
+        43
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_11",
+      "target": "fused_13"
+    },
+    {
+      "tensor_ids": [
+        44
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_11",
+      "target": "fused_25"
+    },
+    {
+      "tensor_ids": [
+        43
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_11",
+      "target": "fused_27"
+    },
+    {
+      "tensor_ids": [
+        43
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_11",
+      "target": "fused_39"
+    },
+    {
+      "tensor_ids": [
+        50
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_14",
+      "target": "fused_15"
+    },
+    {
+      "tensor_ids": [
+        55
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_15",
+      "target": "fused_13"
+    },
+    {
+      "tensor_ids": [
+        55
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_15",
+      "target": "fused_16"
+    },
+    {
+      "tensor_ids": [
+        55
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_15",
+      "target": "fused_18"
+    },
+    {
+      "tensor_ids": [
+        55
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_15",
+      "target": "fused_33"
+    },
+    {
+      "tensor_ids": [
+        55
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_15",
+      "target": "fused_40"
+    },
+    {
+      "tensor_ids": [
+        59
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_18",
+      "target": "fused_13"
+    },
+    {
+      "tensor_ids": [
+        59
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_18",
+      "target": "fused_26"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_21"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_30"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_34"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_35"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_38"
+    },
+    {
+      "tensor_ids": [
+        79
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_20",
+      "target": "fused_41"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_22",
+      "target": "fused_23"
+    },
+    {
+      "tensor_ids": [
+        2
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_23",
+      "target": "fused_40"
+    },
+    {
+      "tensor_ids": [
+        2
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_23",
+      "target": "fused_42"
+    },
+    {
+      "tensor_ids": [
+        58
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_28",
+      "target": "fused_30"
+    },
+    {
+      "tensor_ids": [
+        63
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_31",
+      "target": "fused_32"
+    },
+    {
+      "tensor_ids": [
+        98
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_34",
+      "target": "fused_36"
+    },
+    {
+      "tensor_ids": [
+        96
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_42",
+      "target": "fused_19"
+    },
+    {
+      "tensor_ids": [
+        96
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_42",
+      "target": "fused_32"
+    },
+    {
+      "tensor_ids": [
+        96
+      ],
+      "label": "",
+      "dtype": "",
+      "shape": "",
+      "source": "fused_42",
+      "target": "fused_43"
+    }
+  ],
+  "metadata": {
+    "num_nodes": 44,
+    "num_edges": 41
+  }
+}

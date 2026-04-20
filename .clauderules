@@ -18,3 +18,9 @@
 ## 4.执行任务固定流程
 - Read SESSION_PROGRESS.md and continue
 - 执行完记得先把SESSION_PROGRESS.md内容按照时间戳写入SESSION_HISTORY.md,直接添加到尾部即可，不需要读内容，写完也不需要确认或者打印内容。
+
+- 不要尝试欺骗
+- 不要尝试糊弄
+- 不清楚的地方不要猜，问清楚再修改
+- 不要为了通过用例而编程，真正实现功能，更不要尝试作弊。
+- Don't Patch the Source, Patch the Environment

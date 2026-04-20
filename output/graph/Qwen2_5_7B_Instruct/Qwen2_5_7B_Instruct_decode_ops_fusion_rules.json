@@ -1,0 +1,141 @@
+[
+  {
+    "module_class": "Qwen2RMSNorm",
+    "aten_op_sequence": [
+      "aten._to_copy.default",
+      "aten.pow.Tensor_Scalar",
+      "aten.mean.dim",
+      "aten.add.Tensor",
+      "aten.rsqrt.default",
+      "aten.mul.Tensor"
+    ],
+    "num_sub_ops": 8,
+    "fusion_level": "leaf",
+    "example_module_path": "model.layers.0.input_layernorm",
+    "occurrences": 3,
+    "fused_input_shapes": "[1, 1, 3584], [3584]",
+    "fused_input_dtypes": "torch.bfloat16, torch.bfloat16",
+    "fused_input_sources": "aten._to_copy.default (in[0]) | aten.mul.Tensor (in[0])",
+    "fused_output_shapes": "",
+    "fused_output_dtypes": "",
+    "fused_output_sources": ""
+  },
+  {
+    "module_class": "Linear",
+    "aten_op_sequence": [
+      "prim.device.default",
+      "aten.view.default",
+      "aten.t.default",
+      "aten.addmm.default"
+    ],
+    "num_sub_ops": 8,
+    "fusion_level": "leaf",
+    "example_module_path": "model.layers.0.self_attn.v_proj",
+    "occurrences": 3,
+    "fused_input_shapes": "[1, 1, 3584], [512, 3584], [512]",
+    "fused_input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16",
+    "fused_input_sources": "prim.device.default (in[0]) | aten.t.default (in[0]) | aten.addmm.default (in[0])",
+    "fused_output_shapes": "",
+    "fused_output_dtypes": "",
+    "fused_output_sources": ""
+  },
+  {
+    "module_class": "Qwen2RotaryEmbedding",
+    "aten_op_sequence": [
+      "prim.device.default",
+      "aten.unsqueeze.default",
+      "aten.expand.default",
+      "aten._to_copy.default",
+      "aten.view.default",
+      "aten.bmm.default",
+      "aten._unsafe_view.default",
+      "aten.transpose.int",
+      "aten.cat.default",
+      "aten.cos.default",
+      "aten.mul.Tensor",
+      "aten.sin.default"
+    ],
+    "num_sub_ops": 37,
+    "fusion_level": "leaf",
+    "example_module_path": "model.rotary_emb",
+    "occurrences": 1,
+    "fused_input_shapes": "[64], [1, 1]",
+    "fused_input_dtypes": "torch.float32, torch.int64",
+    "fused_input_sources": "prim.device.default (in[0]) | prim.device.default (in[0])",
+    "fused_output_shapes": "[1, 1, 128]",
+    "fused_output_dtypes": "torch.bfloat16",
+    "fused_output_sources": "aten._to_copy.default (out[0])"
+  },
+  {
+    "module_class": "Qwen2Attention",
+    "aten_op_sequence": [
+      "prim.device.default",
+      "aten.view.default",
+      "aten.t.default",
+      "aten.addmm.default",
+      "aten.transpose.int"
+    ],
+    "num_sub_ops": 24,
+    "fusion_level": "parent",
+    "example_module_path": "model.layers.0.self_attn",
+    "occurrences": 1,
+    "fused_input_shapes": "[1, 1, 3584], [3584, 3584], [3584], [512, 3584], [512]",
+    "fused_input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+    "fused_input_sources": "prim.device.default (in[0]) | aten.t.default (in[0]) | aten.addmm.default (in[0]) | aten.t.default (in[0]) | aten.addmm.default (in[0])",
+    "fused_output_shapes": "",
+    "fused_output_dtypes": "",
+    "fused_output_sources": ""
+  },
+  {
+    "module_class": "Qwen2Attention",
+    "aten_op_sequence": [
+      "aten.view.default",
+      "prim.device.default",
+      "aten.transpose.int",
+      "aten.unsqueeze.default",
+      "aten.mul.Tensor",
+      "aten.slice.Tensor",
+      "aten.neg.default",
+      "aten.cat.default",
+      "aten.add.Tensor",
+      "aten.expand.default",
+      "aten.clone.default",
+      "aten._unsafe_view.default",
+      "aten.bmm.default",
+      "aten._softmax.default",
+      "aten._to_copy.default"
+    ],
+    "num_sub_ops": 88,
+    "fusion_level": "leaf",
+    "example_module_path": "model.layers.0.self_attn",
+    "occurrences": 1,
+    "fused_input_shapes": "[1, 1, 128], [1, 1, 128], [1, 4, 1, 128], [1, 1, 1, 129]",
+    "fused_input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32",
+    "fused_input_sources": "aten.unsqueeze.default (in[0]) | aten.unsqueeze.default (in[0]) | aten.mul.Tensor (in[0]) | aten.add.Tensor (in[1])",
+    "fused_output_shapes": "",
+    "fused_output_dtypes": "",
+    "fused_output_sources": ""
+  },
+  {
+    "module_class": "Qwen2MLP",
+    "aten_op_sequence": [
+      "aten.t.default",
+      "prim.device.default",
+      "aten.view.default",
+      "aten.mm.default",
+      "aten._unsafe_view.default",
+      "aten.silu.default",
+      "aten.mul.Tensor"
+    ],
+    "num_sub_ops": 20,
+    "fusion_level": "parent",
+    "example_module_path": "model.layers.0.mlp",
+    "occurrences": 1,
+    "fused_input_shapes": "[18944, 3584], [1, 1, 3584], [18944, 3584], [3584, 18944]",
+    "fused_input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16",
+    "fused_input_sources": "aten.t.default (in[0]) | aten.view.default (in[0]) | aten.t.default (in[0]) | aten.t.default (in[0])",
+    "fused_output_shapes": "",
+    "fused_output_dtypes": "",
+    "fused_output_sources": ""
+  }
+]

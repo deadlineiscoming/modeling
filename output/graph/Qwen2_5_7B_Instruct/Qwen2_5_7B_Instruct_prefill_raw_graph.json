@@ -1,0 +1,5689 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "op_type": "aten.embedding.default",
+      "module_path": "model.embed_tokens",
+      "module_class": "Embedding",
+      "layer": "",
+      "component": "embedding",
+      "input_shapes": "[152064, 3584], [1, 128]",
+      "input_dtypes": "torch.bfloat16, torch.int64",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.embedding.default",
+      "id": "op_0"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_1"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_2"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "unsqueeze",
+      "input_shapes": "[64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_3"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_4"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "unsqueeze",
+      "input_shapes": "[1, 64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_5"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_6"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_7"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "expand",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_8"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_9"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_10"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_11"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128]",
+      "input_dtypes": "torch.int64",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_12"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128]",
+      "input_dtypes": "torch.int64",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_13"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "unsqueeze",
+      "input_shapes": "[1, 128]",
+      "input_dtypes": "torch.int64",
+      "output_shapes": "[1, 1, 128]",
+      "output_dtypes": "torch.int64",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_14"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128]",
+      "input_dtypes": "torch.int64",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_15"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "_to_copy",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.int64",
+      "output_shapes": "[1, 1, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_16"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_17"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_18"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "expand",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_19"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_20"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "view",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_21"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_22"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "expand",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 1, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_23"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_24"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "view",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 1, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_25"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 1, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_26"
+    },
+    {
+      "op_type": "aten.bmm.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "bmm",
+      "input_shapes": "[1, 64, 1], [1, 1, 128]",
+      "input_dtypes": "torch.float32, torch.float32",
+      "output_shapes": "[1, 64, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.bmm.default",
+      "id": "op_27"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "_unsafe_view",
+      "input_shapes": "[1, 64, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 64, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_28"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "transpose",
+      "input_shapes": "[1, 64, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 64]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_29"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 64, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_30"
+    },
+    {
+      "op_type": "aten.cat.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "cat",
+      "input_shapes": "[1, 128, 64], [1, 128, 64]",
+      "input_dtypes": "torch.float32, torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.cat.default",
+      "id": "op_31"
+    },
+    {
+      "op_type": "aten.cos.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "cos",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.cos.default",
+      "id": "op_32"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "mul",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_33"
+    },
+    {
+      "op_type": "aten.sin.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "sin",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.sin.default",
+      "id": "op_34"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "mul",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_35"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "_to_copy",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_36"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.rotary_emb",
+      "module_class": "Qwen2RotaryEmbedding",
+      "layer": "",
+      "component": "_to_copy",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_37"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_38"
+    },
+    {
+      "op_type": "aten.pow.Tensor_Scalar",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.pow.Tensor_Scalar",
+      "id": "op_39"
+    },
+    {
+      "op_type": "aten.mean.dim",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mean.dim",
+      "id": "op_40"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_41"
+    },
+    {
+      "op_type": "aten.rsqrt.default",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.rsqrt.default",
+      "id": "op_42"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 3584], [1, 128, 1]",
+      "input_dtypes": "torch.float32, torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_43"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_44"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.input_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "attn_norm",
+      "input_shapes": "[3584], [1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_45"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_46"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_47"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_48"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[3584, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_49"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[3584, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_50"
+    },
+    {
+      "op_type": "aten.addmm.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[3584], [128, 3584], [3584, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 3,
+      "num_outputs": 1,
+      "label": "aten.addmm.default",
+      "id": "op_51"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_52"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.q_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.q_proj",
+      "input_shapes": "[128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_53"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 28, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_54"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_55"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.transpose",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_56"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_57"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_58"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_59"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_60"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[512, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_61"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[512, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_62"
+    },
+    {
+      "op_type": "aten.addmm.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[512], [128, 3584], [3584, 512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 3,
+      "num_outputs": 1,
+      "label": "aten.addmm.default",
+      "id": "op_63"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_64"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.k_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.k_proj",
+      "input_shapes": "[128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_65"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 4, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_66"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_67"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.transpose",
+      "input_shapes": "[1, 128, 4, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_68"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 4, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_69"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_70"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_71"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_72"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[512, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_73"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[512, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_74"
+    },
+    {
+      "op_type": "aten.addmm.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[512], [128, 3584], [3584, 512]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 3,
+      "num_outputs": 1,
+      "label": "aten.addmm.default",
+      "id": "op_75"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 512]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_76"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.v_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.v_proj",
+      "input_shapes": "[128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_77"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 4, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_78"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 512]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_79"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.transpose",
+      "input_shapes": "[1, 128, 4, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_80"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 4, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_81"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.unsqueeze",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_82"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_83"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.unsqueeze",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_84"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_85"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.mul",
+      "input_shapes": "[1, 28, 128, 128], [1, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_86"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_87"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_88"
+    },
+    {
+      "op_type": "aten.slice.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.slice",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.slice.Tensor",
+      "id": "op_89"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_90"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_91"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_92"
+    },
+    {
+      "op_type": "aten.slice.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.slice",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.slice.Tensor",
+      "id": "op_93"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_94"
+    },
+    {
+      "op_type": "aten.neg.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.neg",
+      "input_shapes": "[1, 28, 128, 64]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.neg.default",
+      "id": "op_95"
+    },
+    {
+      "op_type": "aten.cat.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.cat",
+      "input_shapes": "[1, 28, 128, 64], [1, 28, 128, 64]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.cat.default",
+      "id": "op_96"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.mul",
+      "input_shapes": "[1, 28, 128, 128], [1, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_97"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.add",
+      "input_shapes": "[1, 28, 128, 128], [1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_98"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.mul",
+      "input_shapes": "[1, 4, 128, 128], [1, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_99"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_100"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_101"
+    },
+    {
+      "op_type": "aten.slice.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.slice",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.slice.Tensor",
+      "id": "op_102"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_103"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_104"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_105"
+    },
+    {
+      "op_type": "aten.slice.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.slice",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.slice.Tensor",
+      "id": "op_106"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_107"
+    },
+    {
+      "op_type": "aten.neg.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.neg",
+      "input_shapes": "[1, 4, 128, 64]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 64]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.neg.default",
+      "id": "op_108"
+    },
+    {
+      "op_type": "aten.cat.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.cat",
+      "input_shapes": "[1, 4, 128, 64], [1, 4, 128, 64]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.cat.default",
+      "id": "op_109"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.mul",
+      "input_shapes": "[1, 4, 128, 128], [1, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_110"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.add",
+      "input_shapes": "[1, 4, 128, 128], [1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_111"
+    },
+    {
+      "op_type": "aten.lift_fresh.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.lift_fresh",
+      "input_shapes": "[0]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[0]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.lift_fresh.default",
+      "id": "op_112"
+    },
+    {
+      "op_type": "aten.lift_fresh.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.lift_fresh",
+      "input_shapes": "[0]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[0]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.lift_fresh.default",
+      "id": "op_113"
+    },
+    {
+      "op_type": "aten.cat.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.cat",
+      "input_shapes": "[0], [1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.cat.default",
+      "id": "op_114"
+    },
+    {
+      "op_type": "aten.cat.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.cat",
+      "input_shapes": "[0], [1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 4, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.cat.default",
+      "id": "op_115"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_116"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_117"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.unsqueeze",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_118"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_119"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 4, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 7, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_120"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_121"
+    },
+    {
+      "op_type": "aten.clone.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.clone",
+      "input_shapes": "[1, 4, 7, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 7, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.clone.default",
+      "id": "op_122"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn._unsafe_view",
+      "input_shapes": "[1, 4, 7, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_123"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_124"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_125"
+    },
+    {
+      "op_type": "aten.unsqueeze.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.unsqueeze",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 1, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.unsqueeze.default",
+      "id": "op_126"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_127"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 4, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 7, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_128"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 4, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_129"
+    },
+    {
+      "op_type": "aten.clone.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.clone",
+      "input_shapes": "[1, 4, 7, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 4, 7, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.clone.default",
+      "id": "op_130"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn._unsafe_view",
+      "input_shapes": "[1, 4, 7, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_131"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.transpose",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_132"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_133"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_134"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_135"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_136"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_137"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_138"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_139"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_140"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_141"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_142"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_143"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_144"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_145"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_146"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_147"
+    },
+    {
+      "op_type": "aten.bmm.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.score",
+      "input_shapes": "[28, 128, 128], [28, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.bmm.default",
+      "id": "op_148"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn._unsafe_view",
+      "input_shapes": "[28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_149"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.mul",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_150"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.add",
+      "input_shapes": "[1, 28, 128, 128], [1, 1, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.float32",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_151"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_152"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_153"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_154"
+    },
+    {
+      "op_type": "aten._softmax.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.softmax",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._softmax.default",
+      "id": "op_155"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn._to_copy",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_156"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_157"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_158"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_159"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_160"
+    },
+    {
+      "op_type": "aten.expand.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.expand",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.expand.default",
+      "id": "op_161"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_162"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_163"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_164"
+    },
+    {
+      "op_type": "aten.bmm.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.score",
+      "input_shapes": "[28, 128, 128], [28, 128, 128]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.bmm.default",
+      "id": "op_165"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn._unsafe_view",
+      "input_shapes": "[28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 28, 128, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_166"
+    },
+    {
+      "op_type": "aten.transpose.int",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.transpose",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 28, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.transpose.int",
+      "id": "op_167"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 28, 128, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_168"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_169"
+    },
+    {
+      "op_type": "aten.clone.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.clone",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 28, 128]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.clone.default",
+      "id": "op_170"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.view",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_171"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn",
+      "module_class": "Qwen2Attention",
+      "layer": "0",
+      "component": "attn.device",
+      "input_shapes": "[1, 128, 28, 128]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_172"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[3584, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_173"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[3584, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_174"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_175"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_176"
+    },
+    {
+      "op_type": "aten.mm.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[128, 3584], [3584, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mm.default",
+      "id": "op_177"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.self_attn.o_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "attn.o_proj",
+      "input_shapes": "[128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_178"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0",
+      "module_class": "Qwen2DecoderLayer",
+      "layer": "0",
+      "component": "add",
+      "input_shapes": "[1, 128, 3584], [1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_179"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_180"
+    },
+    {
+      "op_type": "aten.pow.Tensor_Scalar",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.pow.Tensor_Scalar",
+      "id": "op_181"
+    },
+    {
+      "op_type": "aten.mean.dim",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mean.dim",
+      "id": "op_182"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_183"
+    },
+    {
+      "op_type": "aten.rsqrt.default",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.rsqrt.default",
+      "id": "op_184"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 3584], [1, 128, 1]",
+      "input_dtypes": "torch.float32, torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_185"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_186"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.post_attention_layernorm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "0",
+      "component": "ffn_norm",
+      "input_shapes": "[3584], [1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_187"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[18944, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_188"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[18944, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_189"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_190"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_191"
+    },
+    {
+      "op_type": "aten.mm.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[128, 3584], [3584, 18944]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mm.default",
+      "id": "op_192"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.mlp.gate_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.gate_proj",
+      "input_shapes": "[128, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_193"
+    },
+    {
+      "op_type": "aten.silu.default",
+      "module_path": "model.layers.0.mlp.act_fn",
+      "module_class": "SiLUActivation",
+      "layer": "0",
+      "component": "ffn.silu",
+      "input_shapes": "[1, 128, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.silu.default",
+      "id": "op_194"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[18944, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_195"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[18944, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_196"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_197"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_198"
+    },
+    {
+      "op_type": "aten.mm.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[128, 3584], [3584, 18944]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mm.default",
+      "id": "op_199"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.mlp.up_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.up_proj",
+      "input_shapes": "[128, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_200"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.layers.0.mlp",
+      "module_class": "Qwen2MLP",
+      "layer": "0",
+      "component": "ffn.mul",
+      "input_shapes": "[1, 128, 18944], [1, 128, 18944]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_201"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[3584, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[18944, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_202"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[3584, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_203"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[1, 128, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 18944]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_204"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[1, 128, 18944]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_205"
+    },
+    {
+      "op_type": "aten.mm.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[128, 18944], [18944, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mm.default",
+      "id": "op_206"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "model.layers.0.mlp.down_proj",
+      "module_class": "Linear",
+      "layer": "0",
+      "component": "ffn.down_proj",
+      "input_shapes": "[128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_207"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.layers.0",
+      "module_class": "Qwen2DecoderLayer",
+      "layer": "0",
+      "component": "add",
+      "input_shapes": "[1, 128, 3584], [1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_208"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_209"
+    },
+    {
+      "op_type": "aten.pow.Tensor_Scalar",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.pow.Tensor_Scalar",
+      "id": "op_210"
+    },
+    {
+      "op_type": "aten.mean.dim",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.mean.dim",
+      "id": "op_211"
+    },
+    {
+      "op_type": "aten.add.Tensor",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.add.Tensor",
+      "id": "op_212"
+    },
+    {
+      "op_type": "aten.rsqrt.default",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 1]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 1]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.rsqrt.default",
+      "id": "op_213"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 3584], [1, 128, 1]",
+      "input_dtypes": "torch.float32, torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.float32",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_214"
+    },
+    {
+      "op_type": "aten._to_copy.default",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.float32",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._to_copy.default",
+      "id": "op_215"
+    },
+    {
+      "op_type": "aten.mul.Tensor",
+      "module_path": "model.norm",
+      "module_class": "Qwen2RMSNorm",
+      "layer": "",
+      "component": "final_norm",
+      "input_shapes": "[3584], [1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mul.Tensor",
+      "id": "op_216"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "",
+      "module_class": "",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_217"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "",
+      "module_class": "",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_218"
+    },
+    {
+      "op_type": "aten.alias.default",
+      "module_path": "",
+      "module_class": "",
+      "layer": "",
+      "component": "alias",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.alias.default",
+      "id": "op_219"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "",
+      "module_class": "",
+      "layer": "",
+      "component": "device",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_220"
+    },
+    {
+      "op_type": "aten.t.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[152064, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[3584, 152064]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.t.default",
+      "id": "op_221"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[152064, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_222"
+    },
+    {
+      "op_type": "aten.view.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[128, 3584]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten.view.default",
+      "id": "op_223"
+    },
+    {
+      "op_type": "prim.device.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[1, 128, 3584]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "",
+      "output_dtypes": "",
+      "num_inputs": 1,
+      "num_outputs": 0,
+      "label": "prim.device.default",
+      "id": "op_224"
+    },
+    {
+      "op_type": "aten.mm.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[128, 3584], [3584, 152064]",
+      "input_dtypes": "torch.bfloat16, torch.bfloat16",
+      "output_shapes": "[128, 152064]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 2,
+      "num_outputs": 1,
+      "label": "aten.mm.default",
+      "id": "op_225"
+    },
+    {
+      "op_type": "aten._unsafe_view.default",
+      "module_path": "lm_head",
+      "module_class": "Linear",
+      "layer": "",
+      "component": "lm_head",
+      "input_shapes": "[128, 152064]",
+      "input_dtypes": "torch.bfloat16",
+      "output_shapes": "[1, 128, 152064]",
+      "output_dtypes": "torch.bfloat16",
+      "num_inputs": 1,
+      "num_outputs": 1,
+      "label": "aten._unsafe_view.default",
+      "id": "op_226"
+    }
+  ],
+  "edges": [
+    {
+      "tensor_ids": [
+        2
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 3584]",
+      "source": "op_0",
+      "target": "op_38"
+    },
+    {
+      "tensor_ids": [
+        2
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 3584]",
+      "source": "op_0",
+      "target": "op_179"
+    },
+    {
+      "tensor_ids": [
+        2
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 3584]",
+      "source": "op_0",
+      "target": "op_225"
+    },
+    {
+      "tensor_ids": [
+        4
+      ],
+      "label": "[1, 64]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64]",
+      "source": "op_3",
+      "target": "op_5"
+    },
+    {
+      "tensor_ids": [
+        4
+      ],
+      "label": "[1, 64]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64]",
+      "source": "op_3",
+      "target": "op_6"
+    },
+    {
+      "tensor_ids": [
+        4
+      ],
+      "label": "[1, 64]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64]",
+      "source": "op_3",
+      "target": "op_40"
+    },
+    {
+      "tensor_ids": [
+        4
+      ],
+      "label": "[1, 64]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64]",
+      "source": "op_3",
+      "target": "op_42"
+    },
+    {
+      "tensor_ids": [
+        4
+      ],
+      "label": "[1, 64]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64]",
+      "source": "op_3",
+      "target": "op_44"
+    },
+    {
+      "tensor_ids": [
+        5
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_5",
+      "target": "op_7"
+    },
+    {
+      "tensor_ids": [
+        5
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_5",
+      "target": "op_8"
+    },
+    {
+      "tensor_ids": [
+        5
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_5",
+      "target": "op_9"
+    },
+    {
+      "tensor_ids": [
+        5
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_5",
+      "target": "op_212"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_10"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_11"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_17"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_19"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_20"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_56"
+    },
+    {
+      "tensor_ids": [
+        6
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_8",
+      "target": "op_57"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_16"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_21"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_22"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_32"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_34"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_52"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_53"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_150"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_152"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_153"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_154"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_155"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_159"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_160"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_171"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_172"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_185"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_190"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_191"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_197"
+    },
+    {
+      "tensor_ids": [
+        8
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.int64",
+      "shape": "[1, 1, 128]",
+      "source": "op_14",
+      "target": "op_198"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_18"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_23"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_24"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_41"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_51"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_54"
+    },
+    {
+      "tensor_ids": [
+        9
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_16",
+      "target": "op_55"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_27"
+    },
+    {
+      "tensor_ids": [
+        10,
+        10
+      ],
+      "label": "2 tensors",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_31"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_43"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_46"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_47"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_48"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_58"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_59"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_60"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_70"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_71"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_72"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_180"
+    },
+    {
+      "tensor_ids": [
+        10
+      ],
+      "label": "[1, 64, 1]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 1]",
+      "source": "op_21",
+      "target": "op_208"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_25"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_26"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_36"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_63"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_66"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_67"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_116"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_117"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_118"
+    },
+    {
+      "tensor_ids": [
+        11
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_23",
+      "target": "op_119"
+    },
+    {
+      "tensor_ids": [
+        12
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_25",
+      "target": "op_27"
+    },
+    {
+      "tensor_ids": [
+        12
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_25",
+      "target": "op_33"
+    },
+    {
+      "tensor_ids": [
+        12
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_25",
+      "target": "op_35"
+    },
+    {
+      "tensor_ids": [
+        12
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_25",
+      "target": "op_82"
+    },
+    {
+      "tensor_ids": [
+        12
+      ],
+      "label": "[1, 1, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 1, 128]",
+      "source": "op_25",
+      "target": "op_83"
+    },
+    {
+      "tensor_ids": [
+        13
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_27",
+      "target": "op_28"
+    },
+    {
+      "tensor_ids": [
+        13
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_27",
+      "target": "op_37"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_29"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_30"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_51"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_86"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_87"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_88"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_89"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_90"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_91"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_92"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_93"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_94"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_149"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_167"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_168"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_177"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_193"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_200"
+    },
+    {
+      "tensor_ids": [
+        14
+      ],
+      "label": "[1, 64, 128]",
+      "dtype": "torch.float32",
+      "shape": "[1, 64, 128]",
+      "source": "op_28",
+      "target": "op_207"
+    },
+    {
+      "tensor_ids": [
+        15
+      ],
+      "label": "[1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 128]",
+      "source": "op_37",
+      "target": "op_84"
+    },
+    {
+      "tensor_ids": [
+        15
+      ],
+      "label": "[1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 128]",
+      "source": "op_37",
+      "target": "op_85"
+    },
+    {
+      "tensor_ids": [
+        15
+      ],
+      "label": "[1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 128]",
+      "source": "op_37",
+      "target": "op_225"
+    },
+    {
+      "tensor_ids": [
+        16
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.float32",
+      "shape": "[1, 128, 3584]",
+      "source": "op_38",
+      "target": "op_39"
+    },
+    {
+      "tensor_ids": [
+        16
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.float32",
+      "shape": "[1, 128, 3584]",
+      "source": "op_38",
+      "target": "op_43"
+    },
+    {
+      "tensor_ids": [
+        16
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.float32",
+      "shape": "[1, 128, 3584]",
+      "source": "op_38",
+      "target": "op_45"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_63"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_99"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_100"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_101"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_102"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_103"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_104"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_105"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_106"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_107"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_124"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_125"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_126"
+    },
+    {
+      "tensor_ids": [
+        21
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_61",
+      "target": "op_127"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_64"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_65"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_114"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_148"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_165"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_178"
+    },
+    {
+      "tensor_ids": [
+        23
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_63",
+      "target": "op_201"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_68"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_69"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_115"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_143"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_144"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_145"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_146"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_147"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_166"
+    },
+    {
+      "tensor_ids": [
+        24
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_66",
+      "target": "op_208"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_75"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_78"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_79"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_132"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_133"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_175"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_176"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_183"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_201"
+    },
+    {
+      "tensor_ids": [
+        25
+      ],
+      "label": "[128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 3584]",
+      "source": "op_71",
+      "target": "op_206"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_75"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_115"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_120"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_121"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_130"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_141"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_142"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_151"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_156"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_165"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_169"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_170"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_177"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_194"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_204"
+    },
+    {
+      "tensor_ids": [
+        27
+      ],
+      "label": "[3584, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[3584, 512]",
+      "source": "op_73",
+      "target": "op_205"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_76"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_77"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_122"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_128"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_129"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_136"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_137"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_138"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_139"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_140"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_163"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_164"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_179"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_181"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_185"
+    },
+    {
+      "tensor_ids": [
+        29
+      ],
+      "label": "[128, 512]",
+      "dtype": "torch.bfloat16",
+      "shape": "[128, 512]",
+      "source": "op_75",
+      "target": "op_187"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_80"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_81"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_123"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_131"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_148"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_157"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_158"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_211"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_213"
+    },
+    {
+      "tensor_ids": [
+        30
+      ],
+      "label": "[1, 128, 4, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 4, 128]",
+      "source": "op_78",
+      "target": "op_215"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_86"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_99"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_214"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_217"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_218"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_219"
+    },
+    {
+      "tensor_ids": [
+        31
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_82",
+      "target": "op_220"
+    },
+    {
+      "tensor_ids": [
+        32
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_84",
+      "target": "op_97"
+    },
+    {
+      "tensor_ids": [
+        32
+      ],
+      "label": "[1, 1, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 1, 128, 128]",
+      "source": "op_84",
+      "target": "op_110"
+    },
+    {
+      "tensor_ids": [
+        33
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_86",
+      "target": "op_98"
+    },
+    {
+      "tensor_ids": [
+        33
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_86",
+      "target": "op_109"
+    },
+    {
+      "tensor_ids": [
+        33
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_86",
+      "target": "op_111"
+    },
+    {
+      "tensor_ids": [
+        34
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_89",
+      "target": "op_96"
+    },
+    {
+      "tensor_ids": [
+        34
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_89",
+      "target": "op_98"
+    },
+    {
+      "tensor_ids": [
+        34
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_89",
+      "target": "op_111"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_95"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_108"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_114"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_161"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_162"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_192"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_199"
+    },
+    {
+      "tensor_ids": [
+        35
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_93",
+      "target": "op_206"
+    },
+    {
+      "tensor_ids": [
+        36
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_95",
+      "target": "op_96"
+    },
+    {
+      "tensor_ids": [
+        36
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_95",
+      "target": "op_109"
+    },
+    {
+      "tensor_ids": [
+        36
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_95",
+      "target": "op_209"
+    },
+    {
+      "tensor_ids": [
+        36
+      ],
+      "label": "[1, 28, 128, 64]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 64]",
+      "source": "op_95",
+      "target": "op_226"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_97"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_134"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_135"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_182"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_184"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_186"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_192"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_199"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_210"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_214"
+    },
+    {
+      "tensor_ids": [
+        37
+      ],
+      "label": "[1, 28, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 28, 128, 128]",
+      "source": "op_96",
+      "target": "op_216"
+    },
+    {
+      "tensor_ids": [
+        38
+      ],
+      "label": "[1, 4, 128, 128]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 4, 128, 128]",
+      "source": "op_109",
+      "target": "op_110"
+    },
+    {
+      "tensor_ids": [
+        111
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 3584]",
+      "source": "op_219",
+      "target": "op_223"
+    },
+    {
+      "tensor_ids": [
+        111
+      ],
+      "label": "[1, 128, 3584]",
+      "dtype": "torch.bfloat16",
+      "shape": "[1, 128, 3584]",
+      "source": "op_219",
+      "target": "op_224"
+    }
+  ],
+  "metadata": {
+    "num_nodes": 227,
+    "num_edges": 227
+  }
+}

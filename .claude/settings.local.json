@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip list:*)",
+      "Bash(python -m pip list)",
+      "Bash(python -m pytest test_screenshot_ops.py -v -m \"not network\" -k \"llama3_8b or moe_router or qwen2_7b or mixtral\" --tb=short)",
+      "Bash(.venv/Scripts/python screenshot_ops.py ./hf_models/deepseek_v3 --layers 2)",
+      "Bash(where python:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(gh repo:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(cp screenshot_ops/classifier.py python/zrt/graph/)",
+      "Bash(cp screenshot_ops/dispatch.py python/zrt/graph/)",
+      "Bash(cp screenshot_ops/excel_writer.py python/zrt/graph/)",
+      "Bash(cp screenshot_ops/fusion.py python/zrt/graph/)",
+      "Bash(cp screenshot_ops/graph_builder.py python/zrt/graph/)",
+      "Bash(pytest test_screenshot_ops.py -v -x)",
+      "Bash(wc -l D:/workspace/claude/modeling/python/zrt/graph/*.py D:/workspace/claude/modeling/python/zrt/layers/*.py D:/workspace/claude/modeling/python/zrt/policy_model/*.py)"
+    ]
+  }
+}

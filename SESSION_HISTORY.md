@@ -177,3 +177,288 @@ records_to_opgraph / nx 双向转换正确，所有 smoke test 通过。
 
 2. **capture 层迁移（可选后续）**
    - 将 `export_all` 从 `nx.DiGraph` 改为直接接收 `OpGraph`
+## 2026-04-18 18:17:54 +08:00 | Writer: Codex
+
+# Session Progress
+
+## 当前文件状态
+
+| 文件 | 状态 |
+|------|------|
+| `ARCHITECTURE.md` | ✅ V2 完成，含 10 个章节 |
+| `python/zrt/graph/*` | ✅ 现有图抓取+融合引擎，可用 |
+| `python/zrt/ir/` | ✅ OpGraph IR 完整实现 + NetworkX 适配器 |
+| `python/zrt/graph/main.py` | ✅ capture 层已迁移：`run_trace/run_trace_phases` 输出 `OpGraph` |
+| `python/zrt/hardware/` | ✅ 完整实现：spec.py + registry.py + 5 个 YAML 配置 |
+| `python/zrt/simulator/` | ✅ 完整实现：Phase 1 核心 Roofline 仿真器 |
+| `python/zrt/transform/` | ✅ 完整实现：4-stage Transform Pipeline |
+| `python/zrt/executor/` | ✅ 完整实现：DAGScheduler + Timeline |
+
+## 已解决的问题
+
+### transform/ 模块实现（本次）
+
+**方案**：方案 B（先抓图再变换），两者都要（拓扑变化 + stream 注解）
+
+**新增文件**：
+- `python/zrt/transform/__init__.py`：公开 API
+- `python/zrt/transform/base.py`：GraphPass ABC
+- `python/zrt/transform/context.py`：TransformContext, ParallelConfig, StreamConfig, QuantConfig
+- `python/zrt/transform/pipeline.py`：TransformPipeline + build_default_pipeline()
+- `python/zrt/transform/parallel/tensor_parallel.py`：TensorParallelPass（column/row parallel shape修改 + 注解）
+- `python/zrt/transform/parallel/expert_parallel.py`：ExpertParallelPass（MoE EP 注解）
+- `python/zrt/transform/parallel/comm_inserter.py`：CommInserterPass（插入 comm.all_reduce / comm.all_to_all 节点，边重连）
+- `python/zrt/transform/fusion/pass_.py`：FusionPass（现有引擎的 stub 适配器）
+- `python/zrt/transform/optim/passes.py`：QuantizationPass / EPLBPass / SharedExpertPass / MTPPass
+- `python/zrt/transform/analysis/passes.py`：FlopsPass + RooflinePass + StreamAssignPass
+
+**核心设计**：
+- TP column parallel：outputs 最后一维 / tp，同步更新出边 tensor shape
+- TP row parallel：inputs[0] 最后一维 / tp，标注 comm_after=all_reduce
+- CommInserter：在 row-parallel 节点后插入 comm.all_reduce，EP expert 块前后插入 comm.all_to_all，边重连正确
+- StreamAssignPass：compute 节点 → stream 0..num_compute-1，comm 节点 → stream num_compute..total-1，round-robin
+
+**测试**：
+- `tests/test_transform.py`：18 个测试全部通过（2.08s）
+- TP shape 修改验证
+- comm 节点插入和边重连验证
+- 多流 stream_id 分配验证（含多 compute/comm 流配置）
+- 端到端 pipeline 验证
+
+## 已完成（本次）：Executor / DAGScheduler
+
+**文件**：
+- `python/zrt/executor/scheduler.py`：DAGScheduler + Timeline + ScheduledOp
+- `python/zrt/executor/__init__.py`：公开 API
+
+**核心设计**：
+- 拓扑序 + list scheduling：`start = max(前驱完成时间, 所在 stream 可用时间)`
+- `latency_us` 优先从 annotations 读取，fallback 到 Roofline 估算（需传 hw_spec），再 fallback 到 1 µs
+- `Timeline.overlap_us = compute_time + comm_time - total_latency`（量化通算掩盖收益）
+- `Timeline.ops_on_stream(id)` 返回指定 stream 的按时间排序的 op 列表
+
+**测试**：
+- `tests/test_executor.py`：14 个测试全部通过（1.28s）
+- 覆盖：单节点、线性链、依赖顺序、同 stream 串行化、不同 stream 并行、overlap 量化、无 overlap 线性链、latency fallback、完整 pipeline 集成
+
+## 下一步待办
+
+1. ~~**FusionPass 真正接入 OpGraph IR**~~ ✅ 已完成
+
+2. ~~**E2ESummary 报表**~~ ✅ 已完成
+   - `python/zrt/report/summary.py`：E2ESummary + build_summary()
+   - 16 个测试全部通过
+
+3. **capture 层迁移（可选后续）**
+   - 将 `export_all` 从 `nx.DiGraph` 改为直接接收 `OpGraph`
+
+---
+
+## 2026-04-18 20:35:00 +08:00 | Writer: Claude Code
+
+### 本次完成
+
+**补充缺失基类**
+- 新增 `python/zrt/policy_model/policy_base_model.py`
+  - 定义 `PolicyBaseModel` 抽象基类，支持所有 policy 模型继承
+  - 包含 RuntimeConfig 初始化和 predict 抽象方法
+
+**测试全量验证**
+- pytest 全量运行：**146 passed, 27 skipped**（无失败）
+- 核心模块通过（memory, executor, transform, simulator, policy_model）
+- 运行时间：42.20s
+
+### 下一步待办
+
+1. 将 `MemoryModel` 接入统一编排入口，而不是只作为独立模块
+2. 评估是否需要补 `memory/activation.py`，基于图生命周期峰值分析
+3. 继续 `capture` 层收口，改为直接消费 `OpGraph`
+
+---
+
+## 2026-04-20 12:30:00 +08:00 | Writer: Claude Code
+
+### 优先级 1 任务完成：MemoryModel E2E 集成 + activation.py
+
+**Task 2: 图拓扑生命周期分析（activation.py）✅**
+
+新增文件 `python/zrt/memory/activation.py`：
+- `ActivationAnalysis` dataclass（peak_bytes, peak_mb, peak_node_id, per_node_live_mb）
+- `analyze_activation(graph: OpGraph) -> ActivationAnalysis` 
+  - Liveness 分析：topo_sort → last_use_idx 计算 → live_set 跟踪
+  - 遍历拓扑序，逐步加入/移除张量，记录峰值
+
+修改 `python/zrt/memory/model.py`：
+- `estimate()` 当 profile 是 OpGraph 且有节点时，调用 `analyze_activation` 替代公式激活估算
+
+修改 `python/zrt/memory/__init__.py`：
+- 导出 ActivationAnalysis、analyze_activation
+
+测试（3 个新）：
+- `test_activation_analysis_simple` — 线性图峰值验证
+- `test_activation_analysis_peak_node_id` — peak_node_id 正确性
+- `test_memory_model_uses_graph_activation` — OpGraph 使用图分析
+
+**Task 1: E2E 集成（memory_budget 接入 E2ESummary）✅**
+
+修改 `python/zrt/report/summary.py`：
+- E2ESummary 新增字段 `memory_budget: MemoryBudget | None = None`
+- build_summary() 新增可选参数 `memory_budget: MemoryBudget | None = None`
+- 返回 E2ESummary 时包含 memory_budget（向后兼容）
+
+修改 `tests/test_report_summary.py`：
+- `test_build_summary_with_memory_budget` — 验证可传入 MemoryBudget
+- `test_build_summary_without_memory_budget` — 验证默认 None（向后兼容）
+
+**全量测试验证 ✅**
+
+```
+pytest tests/ -v --tb=short
+151 passed, 27 skipped, 0 failed
+```
+
+对比基线：146 passed（上次） + 5 new tests = 151 passed ✅
+
+### 下一步待办
+
+1. E2E 集成示例：run_trace() → transform → simulate → build_summary(with memory)
+2. 评估 export_all() 是否改为直接接收 OpGraph（可选）
+3. 补充文档：activation.py 算法细节、设计约束
+
+---
+
+## 2026-04-20 — E2E 示例脚本 + MemoryBudget 集成
+
+### 完成的任务
+- **Task 1（前次）**：MemoryModel 接入 E2ESummary ✅
+- **Task 2（前次）**：激活内存 liveness 分析 ✅
+- **Task 0（本次）**：补充 E2E 示例脚本 e2e_check.py，完整集成 memory_budget ✅
+
+### 变更
+- `e2e_check.py`：
+  - 导入 `load_model` 和 `MemoryModel`
+  - Step 1 后调用 `load_model()` 获取配置对象（仅读取 config，不加载权重）
+  - 新增 Step 6a：创建 MemoryModel，从 config 调用 estimate() 获取 MemoryBudget
+    - 输出各分量：weights_mb、kv_cache_mb、activation_peak_mb、comm_buffer_mb、framework_overhead_mb、total_mb、is_feasible
+  - Step 6b：将 memory_budget 传入 `build_summary()` 参数
+  - Step 7：新增 2 条断言验证 memory_budget 存在且 is_feasible
+
+### 验证结果 ✅
+```
+[e2e_check.py 完整运行，Qwen2.5-7B on H100]
+
+[1] 抓图完成 ✓
+[2] TP=1 baseline: latency=0.761ms, comm_time=0µs
+[3] TP=4 变换: comm_nodes=2, overlap=1.10µs
+[4] 调度事件 ✓
+[5] 节点注解验证 ✓
+[6a] 内存预算:
+  - weights_mb: 4025.11 MB
+  - kv_cache_mb: 1.00 MB
+  - activation_peak_mb: 9.90 MB
+  - comm_buffer_mb: 0.00 MB
+  - framework_overhead_mb: 201.80 MB
+  - total_mb: 4237.81 MB / 81920.00 MB (H100)
+  - is_feasible: True ✓
+[6b] E2ESummary 包含 memory_budget ✓
+[7] 所有 12 个断言通过 ✓
+```
+
+### 关键设计
+1. **配置对象来源**：调用 `load_model(model_id, num_hidden_layers)` 仅读取 config，避免加载权重
+   - 这样可以在同一脚本中复用同一个模型配置而无需重复加载
+2. **内存模型应用**：传入配置对象（dict-like）给 MemoryModel.estimate()
+   - 它会自动从 config.metadata 或对象属性提取 hidden_size、num_layers 等
+3. **完整端到端流程**：
+   - run_trace_phases() → OpGraph
+   - transform pipeline → 变换后的 OpGraph
+   - DAGScheduler → timeline (latency/compute/comm/overlap)
+   - MemoryModel → MemoryBudget (weights/kv_cache/activation/comm/overhead)
+   - build_summary() 集成两者 → E2ESummary (latency + memory)
+
+### 下一步待办
+
+1. ~~补充 E2E 示例~~ ✅
+2. 评估是否需要将 `export_all()` 从 `nx.DiGraph` 改为直接接收 `OpGraph`（可选）
+3. 补充文档：activation.py 的设计约束、liveness 算法细节
+
+
+---
+
+## 2026-04-20 — Executor 完善：单机多卡/多机多卡多流图执行器
+
+### 背景问题
+ARCHITECTURE.md 要求的 executor 模块缺少 `stream.py` 和 `overlap.py` 两个核心模块；更严重的是，RooflinePass 对通信节点使用 HBM 带宽公式（~1-10µs），而非硬件互联带宽（NVLink ~36µs, RoCE ~1000µs），导致：
+- 单机多卡（TP=4 on 8×H100）：通信延迟严重低估
+- 多机多卡（TP=16 across 2 nodes）：完全无法模型化跨节点通信成本
+
+### 核心修复
+1. **`python/zrt/executor/stream.py`** — Stream 数据类（stream_id, stream_type）
+   - 简单的流抽象，per ARCHITECTURE.md 设计
+
+2. **`python/zrt/executor/overlap.py`** — OverlapAnalyzer + OverlapReport
+   - OverlapReport：compute_us / comm_us / overlap_us / exposed_comm_us / overlap_ratio / critical_path_us
+   - OverlapAnalyzer.analyze(timeline) → OverlapReport
+   - 使用扫描线算法精确计算通算掩盖区间交集（优于当前 Timeline 的近似公式 `compute + comm - total`）
+
+3. **`python/zrt/transform/analysis/comm_latency.py`** — CommLatencyPass
+   - 运行于 analyze stage（RooflinePass 之后）
+   - 对所有通信节点重新计算 latency_us：
+     - 读取 node.attrs["collective"] 和 node.attrs["group_size"]
+     - 判断跨节点：group_size > hw.interconnect.intra_node.num_devices
+     - 选择 intra_node 或 inter_node 的带宽 (Gbps)
+     - 应用集合通信公式（Ring AllReduce / AllGather / AllToAll / etc.）
+   - 标注 cross_node flag 和 comm_algorithm
+   - 支持 6 种集合操作的公式（per ARCHITECTURE.md）
+
+4. **修改** `python/zrt/transform/pipeline.py`
+   - 在 build_default_pipeline() 的 analyze stage 注册 CommLatencyPass（在 RooflinePass 之后）
+   - 确保通信延迟覆盖 Roofline 的错误估算
+
+5. **修改导出**
+   - `python/zrt/executor/__init__.py`
+   - `python/zrt/transform/analysis/__init__.py`
+   - `python/zrt/transform/__init__.py`
+
+### 新增测试（8 个，21 total in test_executor.py）
+- `test_overlap_analyzer_no_comm`：无通信 → overlap=0
+- `test_overlap_analyzer_fully_hidden_comm`：comm 完全隐藏 → overlap=comm_us
+- `test_overlap_analyzer_partial_overlap`：部分掩盖 → 0 < overlap < comm_us
+- `test_comm_latency_pass_intra_node`：TP=4 → cross_node=False，使用 NVLink BW
+- `test_comm_latency_pass_cross_node`：TP=16 → cross_node=True，使用 RoCE BW
+- `test_comm_latency_pass_zero_group_size`：group_size=1 → latency=0
+- `test_comm_latency_pass_alltoall`：EP 场景 AllToAll 延迟计算
+
+### 验证结果 ✅
+```bash
+pytest tests/test_executor.py -v     # 21/21 passed (13 existing + 8 new)
+pytest tests/ -v                     # 158 passed, 27 skipped, 0 failed
+PYTHONIOENCODING=utf-8 python e2e_check.py  # All 7 steps pass
+```
+
+对标改进：
+- e2e_check.py TP=4 的 comm_time：Roofline 估算 ~1µs → 实际 NVLink 模型 36.47µs ✓
+- overlap：仍为 36.47µs（完全掩盖，不影响总延迟）
+- 架构一致性：所有 7 步（抓图、变换、调度、仿真、内存、报表）全部通过 ✓
+
+### 关键设计决策
+1. **CommLatencyPass 运行位置**：在 RooflinePass 之后（overwrite latency_us）
+   - 不修改 RooflinePass，保持单一职责
+   - CommInserterPass 已在 split stage 写好 attrs，analysis stage 直接读用
+
+2. **跨节点判断**：group_size > intra_node.num_devices
+   - 例：TP=4, node.num_devices=8 → 节点内（NVLink）
+   - 例：TP=16, node.num_devices=8 → 跨节点（RoCE）
+   - 与网络拓扑无关，纯粹基于设备数量阈值
+
+3. **集合通信公式**：Ring AllReduce 为标准
+   - 2(n-1)/n * D / BW + 2(n-1) * latency
+   - 其他算法（Tree, RecursiveHalving）的代码框架已预留
+
+### 下一步待办
+1. ~~补充 E2E 示例~~ ✅
+2. ~~完善 executor~~ ✅
+3. 补充多机多卡场景的真机验证（构造 TP>8 的 e2e 案例）
+4. CommLatencyPass 的性能基准测试（与真机 nsys/msprof profiling 对标）
+5. 补充文档：CommLatencyPass 设计、Ring AllReduce 公式证明
+

@@ -2,3 +2,7 @@ CLAUDE.md
 __pycache__/
 AGENTS.md
 output
+.claude
+.venv
+.clauderules
+.claudignore

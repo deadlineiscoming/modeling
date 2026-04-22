@@ -7,11 +7,11 @@ from .training import (
     PipelineStepMetrics,
     TrainingMemoryBreakdown,
 )
-from .modeller import estimate_training, TrainingReport
+from .modeller import estimate_training, model_training, TrainingReport
 
 __all__ = [
     "FlopsPass", "RooflinePass", "StreamAssignPass", "CommLatencyPass",
     "TrainingFlopsPass", "TrainingMemoryPass", "TrainingPipelinePass",
     "PipelineStepMetrics", "TrainingMemoryBreakdown",
-    "estimate_training", "TrainingReport",
+    "estimate_training", "model_training", "TrainingReport",
 ]

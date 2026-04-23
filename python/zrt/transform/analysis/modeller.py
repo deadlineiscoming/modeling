@@ -308,14 +308,16 @@ def estimate_training_from_graphs(
     memory_breakdown = fwd.metadata.get("memory_breakdown")
 
     # Step time with 1F1B schedule
+    # Correct formula: step = (M + pp - 1) * t_stage
     pp_val = ctx.parallel.pp
     num_microbatches = ctx.training.num_microbatches
+    step_time_ms = (num_microbatches + pp_val - 1) * per_stage_ms
+    bubble_time_ms = (pp_val - 1) * per_stage_ms
+    bubble_fraction = bubble_time_ms / step_time_ms if step_time_ms > 0 else 0.0
+
     warmup_steps = max(0, pp_val - 1)
     cooldown_steps = max(0, pp_val - 1)
-    steady_steps = max(0, num_microbatches - pp_val + 1)
-    total_steps = warmup_steps + num_microbatches + cooldown_steps
-    step_time_ms = per_stage_ms * total_steps
-    bubble_fraction = (warmup_steps + cooldown_steps) / total_steps if total_steps > 0 else 0.0
+    steady_steps = num_microbatches
 
     # MFU
     training_flops = fwd.metadata.get("training_flops", 0.0)

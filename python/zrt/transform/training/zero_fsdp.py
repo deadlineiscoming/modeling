@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from zrt.ir.graph import OpGraph
-from zrt.ir.node import OpNode
-from zrt.ir.edge import Edge
-from zrt.transform.base import GraphPass
-from zrt.transform.context import TransformContext
+from python.zrt.ir.graph import OpGraph
+from python.zrt.ir.node import OpNode
+from python.zrt.ir.edge import Edge
+from python.zrt.transform.base import GraphPass
+from python.zrt.transform.context import TransformContext
 
 
 class ZeroFSDPPass(GraphPass):

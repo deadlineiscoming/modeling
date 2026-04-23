@@ -110,8 +110,10 @@ def build_training_pipeline() -> TransformPipeline:
     from python.zrt.transform.fusion import FusionPass
     from python.zrt.transform.analysis import (
         FlopsPass, RooflinePass, CommLatencyPass, StreamAssignPass,
+        TrainFlopsPass,
         TrainingFlopsPass, TrainingMemoryPass, TrainingPipelinePass,
     )
+    from python.zrt.transform.training.zero_fsdp import ZeroFSDPPass
 
     is_train = lambda c: c.training is not None
 
@@ -131,14 +133,20 @@ def build_training_pipeline() -> TransformPipeline:
     pipe.add("fuse", FusionPass())
 
     # ── Stage 3: Optim ────────────────────────────────────────────────────────
+    # ZeroFSDPPass annotates g.metadata["zero"] with weight/grad/optstate shard
+    # factors; TrainingMemoryPass consumes these downstream.
+    pipe.add("optim", ZeroFSDPPass(), condition=is_train)
 
     # ── Stage 4: Analyze ──────────────────────────────────────────────────────
     pipe.add("analyze", FlopsPass())
     pipe.add("analyze", RooflinePass())
     pipe.add("analyze", CommLatencyPass())
     pipe.add("analyze", StreamAssignPass())
-    pipe.add("analyze", TrainingFlopsPass(),   condition=is_train)
-    pipe.add("analyze", TrainingMemoryPass(),  condition=is_train)
+    # TrainFlopsPass annotates per-node flops_fwd / flops_dx / flops_dw.
+    # TrainingFlopsPass below sums those annotations; 6P is fallback only.
+    pipe.add("analyze", TrainFlopsPass(),       condition=is_train)
+    pipe.add("analyze", TrainingFlopsPass(),    condition=is_train)
+    pipe.add("analyze", TrainingMemoryPass(),   condition=is_train)
     pipe.add("analyze", TrainingPipelinePass(), condition=is_train)
 
     return pipe

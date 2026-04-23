@@ -15,10 +15,12 @@ if TYPE_CHECKING:
 # ── TrainingFlopsPass ───────────────────────────────────────────────────────────
 
 class TrainingFlopsPass(GraphPass):
-    """Annotate graph with training FLOPs using the 6P rule.
+    """Annotate graph with training FLOPs.
 
-    Training FLOPs = 6 * total_params * tokens (for dense transformers)
-    Forward: 2 * params * tokens, Backward: 4 * params * tokens
+    Strategy (priority order):
+    1. Per-node annotations: sum flops_fwd / flops_dx / flops_dw from
+       ``TrainFlopsPass`` when available (more accurate for MoE, comm, etc.)
+    2. 6P rule fallback: 6 * total_params * tokens (dense transformers)
 
     Adds to graph.metadata:
       "training_flops": float
@@ -32,14 +34,10 @@ class TrainingFlopsPass(GraphPass):
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
         g = graph.clone()
 
-        # Check if total_params was provided as metadata override (Tier-1)
         has_param_override = g.metadata.get("total_params", 0) > 0
 
         total_params = count_params(g)
 
-        # Layer scaling: when only a subset of layers is traced, scale
-        # graph-counted params to full model. Tier-1 override is already
-        # the full-model count, so it does NOT need scaling.
         num_layers = g.metadata.get("num_layers", 0)
         num_layers_traced = g.metadata.get("num_layers_traced", num_layers)
         layer_scale = num_layers / num_layers_traced if num_layers_traced > 0 and num_layers != num_layers_traced else 1.0
@@ -47,15 +45,29 @@ class TrainingFlopsPass(GraphPass):
         if not has_param_override and layer_scale != 1.0:
             total_params = int(total_params * layer_scale)
 
-        # Get sequence length and batch size from metadata
-        seq_len = g.metadata.get("seq_len", 2048)
-        batch_size = ctx.training.micro_batch if ctx.training else 1
-        tokens = seq_len * batch_size
+        # ── Try per-node annotation path ────────────────────────────────────
+        forward_flops = sum(
+            n.annotations.get("flops_fwd", 0) for n in g.nodes.values()
+        )
+        backward_flops = sum(
+            n.annotations.get("flops_dx", 0) + n.annotations.get("flops_dw", 0)
+            for n in g.nodes.values()
+        )
 
-        # 6P rule: 2 params * tokens (forward) + 4 params * tokens (backward)
-        forward_flops = 2 * total_params * tokens
-        backward_flops = 4 * total_params * tokens
-        training_flops = forward_flops + backward_flops
+        if forward_flops > 0 or backward_flops > 0:
+            # Per-node annotations available — scale to full model
+            if layer_scale != 1.0:
+                forward_flops = int(forward_flops * layer_scale)
+                backward_flops = int(backward_flops * layer_scale)
+            training_flops = forward_flops + backward_flops
+        else:
+            # Fallback: 6P rule
+            seq_len = g.metadata.get("seq_len", 2048)
+            batch_size = ctx.training.micro_batch if ctx.training else 1
+            tokens = seq_len * batch_size
+            forward_flops = 2 * total_params * tokens
+            backward_flops = 4 * total_params * tokens
+            training_flops = forward_flops + backward_flops
 
         g.metadata["training_flops"] = training_flops
         g.metadata["forward_flops"] = forward_flops
@@ -101,6 +113,13 @@ class TrainingMemoryPass(GraphPass):
       - 2: Gradients + optimizer state sharded across DP
       - 3: Weights + gradients + optimizer state sharded across DP
 
+    Activation memory uses the Korthikanti formula (34 * h * s * L * bs)
+    with recompute-policy multiplier, CP sharding, and PP inflight depth.
+
+    When ``g.metadata["zero"]`` is present (written by ZeroFSDPPass),
+    weight/grad/opt-state sharding factors are read from it; otherwise
+    self-derived from ZeRO stage + DP/TP.
+
     Adds to graph.metadata:
       "memory_breakdown": TrainingMemoryBreakdown
     """
@@ -110,48 +129,61 @@ class TrainingMemoryPass(GraphPass):
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
         g = graph.clone()
 
-        # Training always uses BF16 parameters; mixed-precision keeps FP32 master copy
         param_dtype = 2  # BF16
 
         total_params = count_params(g)
 
-        # Get parallel config
         dp = ctx.parallel.dp if ctx.parallel else 1
         tp = ctx.parallel.tp if ctx.parallel else 1
+        cp = getattr(ctx.parallel, "cp", 1) if ctx.parallel else 1
+        pp = ctx.parallel.pp if ctx.parallel else 1
         zero_stage = ctx.training.zero_stage if ctx.training else 0
 
-        # Weights: sharded by TP, optionally by ZeRO-3
-        weights_sharding = tp
-        if zero_stage >= 3:
-            weights_sharding *= dp
-        weights_bytes = (total_params * param_dtype) / weights_sharding
+        # ── Weight / grad / opt-state sharding ──────────────────────────────
+        zero_meta = g.metadata.get("zero")
+        if zero_meta:
+            weight_shard = zero_meta["weight_shard"] * tp
+            grad_shard = zero_meta["grad_shard"] * tp
+            opt_shard = zero_meta["optstate_shard"]
+        else:
+            weight_shard = tp
+            if zero_stage >= 3:
+                weight_shard *= dp
+            grad_shard = weight_shard
+            if zero_stage >= 2 and zero_stage < 3:
+                grad_shard = dp
+            opt_shard = dp if zero_stage >= 1 else 1
 
-        # Gradients: same as weights, optionally sharded by ZeRO-2/3
-        grads_sharding = weights_sharding
-        if zero_stage >= 2 and zero_stage < 3:
-            grads_sharding = dp  # ZeRO-2 shards grads but not weights
-        grads_bytes = (total_params * param_dtype) / grads_sharding
+        weights_bytes = (total_params * param_dtype) / weight_shard
+        grads_bytes = (total_params * param_dtype) / grad_shard
 
-        # Optimizer state: Adam/AdamW under mixed precision uses FP32 master + m + v = 12 B/P
         optimizer = ctx.training.optimizer if ctx.training else "adam"
-        opt_bytes_per_param = 12 if optimizer in ("adam", "adamw") else 8  # Muon: master + momentum
-        opt_sharding = 1
-        if zero_stage >= 1:
-            opt_sharding = dp
-        opt_bytes = (total_params * opt_bytes_per_param) / opt_sharding
+        opt_bytes_per_param = 12 if optimizer in ("adam", "adamw") else 8
+        opt_bytes = (total_params * opt_bytes_per_param) / opt_shard
 
-        # Activations: estimate using Korthikanti formula
+        # ── Activation memory (Korthikanti) ─────────────────────────────────
         seq_len = g.metadata.get("seq_len", 2048)
         hidden = g.metadata.get("hidden", 4096)
         num_layers = g.metadata.get("num_layers", 32)
         batch_size = ctx.training.micro_batch if ctx.training else 1
 
-        # Korthikanti formula: 10 * hidden * seq_len * num_layers * batch_size / tp
-        # Factor of 10 accounts for attention + FFN activations
-        activations_bytes = (10 * hidden * seq_len * num_layers * batch_size) / tp
+        # Korthikanti upper bound: 34 * hidden * seq_len * num_layers * batch_size
+        base = 34 * hidden * seq_len * num_layers * batch_size
+
+        # Parallel sharding: TP cuts hidden/attn; CP cuts seq (if cp > 1)
+        shard = tp * max(cp, 1)
+
+        # Recompute policy multiplier
+        rc = getattr(ctx.training, "recompute_policy", "selective") if ctx.training else "selective"
+        rc_mult = {"none": 1.0, "selective": 0.5, "full": 0.1}.get(rc, 1.0)
+
+        # PP inflight depth: 1F1B steady state, stage 0 holds pp microbatches
+        # Phase 2 will replace with (pp - stage_id); Phase 1 uses conservative pp
+        inflight = pp
+
+        activations_bytes = (base / shard) * rc_mult * inflight
 
         # Communication buffers: AG/RS buffers
-        # Approx: 2 * hidden * seq_len / tp per layer
         comm_bytes = (2 * hidden * seq_len * num_layers) / tp
 
         breakdown = TrainingMemoryBreakdown(
@@ -195,12 +227,11 @@ class PipelineStepMetrics:
 class TrainingPipelinePass(GraphPass):
     """Annotate graph with pipeline schedule metrics (1F1B).
 
-    1F1B schedule:
-      - Warmup: PP-1 steps (ramp up microbatches)
-      - Steady: M - PP + 1 steps (full pipeline utilization)
-      - Cooldown: PP-1 steps (drain microbatches)
+    Correct 1F1B schedule (homogeneous stages):
+      step_time = (M + pp - 1) * t_stage
+      bubble_fraction = (pp - 1) / (M + pp - 1)
 
-    Bubble fraction = (warmup + cooldown) / total_steps
+    where M = num_microbatches, t_stage = per-stage latency.
 
     Adds to graph.metadata:
       "pipeline_metrics": PipelineStepMetrics

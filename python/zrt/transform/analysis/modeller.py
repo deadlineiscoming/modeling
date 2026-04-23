@@ -1,24 +1,25 @@
 """Training modeller: main entry point for training performance estimation.
 
-This module provides the estimate_training() function which runs training-specific
-analysis passes on an OpGraph and returns training performance metrics.
+Two usage modes:
 
-Usage:
-    from python.zrt.transform.analysis import estimate_training
-    from python.zrt.transform.context import TransformContext, TrainingConfig
+1. **From an existing OpGraph** (lower-level)::
 
-    ctx = TransformContext(
-        hw_spec=my_hardware_spec,
-        training=TrainingConfig(
-            optimizer="adam",
-            zero_stage=1,
-            micro_batch=1,
-            global_batch=32,
-        ),
-    )
-    result = estimate_training(graph, ctx)
-    print(f"Step time: {result.step_time_ms:.2f} ms")
-    print(f"MFU: {result.mfu:.1%}")
+       from python.zrt.transform.analysis import estimate_training
+       report = estimate_training(graph, ctx)
+
+2. **From a model directory** (end-to-end, captures graph then estimates)::
+
+       from python.zrt.transform.analysis import model_training
+       report = model_training(
+           model_id="hf_models/deepseek_v3_2",
+           num_layers=4,
+           seq_len=128,
+           hw_spec=my_hardware_spec,
+           total_params=671e9,
+           tp=8, pp=4, dp=2,
+           micro_batch=1, global_batch=8192,
+       )
+       print(report.summary())
 """
 from __future__ import annotations
 
@@ -157,6 +158,12 @@ def estimate_training(
 
     g = flops_pass.run(graph, ctx)
     g = memory_pass.run(g, ctx)
+
+    # Annotate per-node latency before pipeline timing (requires hw_spec)
+    if ctx.hw_spec is not None:
+        from .passes import RooflinePass
+        g = RooflinePass().run(g, ctx)
+
     g = pipeline_pass.run(g, ctx)
 
     # Extract metrics from graph metadata
@@ -200,3 +207,108 @@ def estimate_training(
     )
 
     return report
+
+
+def model_training(
+    model_id: str,
+    num_layers: int = 4,
+    batch_size: int = 1,
+    seq_len: int = 128,
+    total_params: int | None = None,
+    hidden: int = 7168,
+    num_layers_full: int | None = None,
+    hw_spec: "HardwareSpec | None" = None,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    dp: int = 1,
+    zero_stage: int = 1,
+    optimizer: str = "adam",
+    micro_batch: int = 1,
+    global_batch: int = 32,
+    output_dir: str | None = None,
+) -> TrainingReport:
+    """Capture a computation graph from a model and estimate training performance.
+
+    This is the main end-to-end entry point. It chains graph capture
+    (``run_trace_phases``) → IR conversion → ``estimate_training`` in a
+    single call.
+
+    Parameters
+    ----------
+    model_id : str
+        HuggingFace model ID or local path (e.g. ``"hf_models/deepseek_v3_2"``).
+    num_layers : int
+        Number of layers to trace (keep small for speed; results are scaled).
+    batch_size, seq_len : int
+        Trace input dimensions.
+    total_params : int or None
+        Full model parameter count.  If provided, stored in graph metadata
+        so the FLOPs pass uses the authoritative count.
+    hidden : int
+        Hidden dimension (for memory estimation).
+    num_layers_full : int or None
+        Total layers in the full model (for memory scaling).  Defaults to
+        *num_layers* if not provided.
+    hw_spec : HardwareSpec or None
+        Target hardware.  Required for realistic latency / MFU estimates.
+    tp, pp, ep, dp : int
+        Parallelism dimensions.
+    zero_stage : int
+        ZeRO stage (0–3).
+    optimizer : str
+        Optimizer name (``"adam"``, ``"adamw"``, ``"muon"``).
+    micro_batch, global_batch : int
+        Batch configuration.
+    output_dir : str or None
+        Where to write trace outputs (Excel, JSON, ONNX).  None = temp dir.
+
+    Returns
+    -------
+    TrainingReport
+    """
+    from python.zrt.graph import run_trace_phases
+    from python.zrt.transform.context import ParallelConfig, TrainingConfig, TransformContext
+
+    # 1. Capture
+    _, phase_records = run_trace_phases(
+        model_id=model_id,
+        num_layers=num_layers,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        phases=("train_forward",),
+        output_dir=output_dir,
+    )
+    records = phase_records["train_forward"]
+
+    # 2. Build OpGraph with full-model metadata
+    from python.zrt.ir.adapter import records_to_opgraph
+
+    metadata: dict = {
+        "seq_len": seq_len,
+        "batch_size": batch_size,
+        "num_layers": num_layers_full or num_layers,
+        "hidden": hidden,
+    }
+    if total_params is not None:
+        metadata["total_params"] = int(total_params)
+
+    graph = records_to_opgraph(
+        records=records,
+        name=model_id.replace("/", "_"),
+        phase="train_forward",
+        metadata=metadata,
+    )
+
+    # 3. Estimate
+    ctx = TransformContext(
+        hw_spec=hw_spec,
+        parallel=ParallelConfig(tp=tp, pp=pp, ep=ep, dp=dp),
+        training=TrainingConfig(
+            optimizer=optimizer,
+            zero_stage=zero_stage,
+            micro_batch=micro_batch,
+            global_batch=global_batch,
+        ),
+    )
+    return estimate_training(graph, ctx)

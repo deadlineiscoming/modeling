@@ -11,6 +11,76 @@ if TYPE_CHECKING:
     from python.zrt.ir.graph import OpGraph
     from python.zrt.transform.context import TransformContext
 
+# Short op-name tokens (from "aten.<token>.default") that consume weight matrices.
+# Mapped to the first input index that is a weight (inputs before it are activations/bias).
+# addmm: (bias, input, weight) → weight starts at index 2
+# mm/matmul/linear/bmm: (input, weight) → weight starts at index 1
+_MATMUL_WEIGHT_START: dict[str, int] = {
+    "mm": 1, "matmul": 1, "linear": 1, "bmm": 1, "baddbmm": 2, "addmm": 2,
+}
+# Embedding ops: input[0] is the weight table, input[1] is the index tensor
+_EMBED_OPS: frozenset[str] = frozenset({"embedding"})
+
+
+def _op_short(op_type: str) -> str:
+    """Extract the short token from a qualified op name like 'aten.mm.default' → 'mm'."""
+    parts = op_type.split(".")
+    return parts[1] if len(parts) >= 2 else parts[0]
+
+
+def _count_params(graph: "OpGraph") -> int:
+    """Count model parameters from an OpGraph.
+
+    Three-tier strategy, tried in order:
+    1. graph.metadata["total_params"] — authoritative when set by a model loader
+    2. Name heuristic — tensor IDs containing "weight" or "param" (synthetic graphs)
+    3. Structural fallback — external 2-D inputs to matmul/embedding ops, skipping
+       activation positions that differ per op type (captured graphs use opaque IDs)
+    """
+    if graph.metadata.get("total_params", 0) > 0:
+        return int(graph.metadata["total_params"])
+
+    counted_ids: set[str] = set()
+    name_total = 0
+    for node in graph.nodes.values():
+        if node.category == "compute":
+            for inp in node.inputs:
+                if inp.id in counted_ids:
+                    continue
+                if ("weight" in inp.id or "param" in inp.id) and inp.shape:
+                    counted_ids.add(inp.id)
+                    name_total += math.prod(inp.shape)
+    if name_total > 0:
+        return name_total
+
+    produced_ids: set[str] = set()
+    for node in graph.nodes.values():
+        for out in node.outputs:
+            produced_ids.add(out.id)
+
+    counted_ids = set()
+    struct_total = 0
+    for node in graph.nodes.values():
+        if node.category != "compute":
+            continue
+        short = _op_short(node.op_type)
+        weight_start = _MATMUL_WEIGHT_START.get(short)
+        is_embed = short in _EMBED_OPS
+        if weight_start is None and not is_embed:
+            continue
+
+        for i, inp in enumerate(node.inputs):
+            if inp.id in produced_ids or inp.id in counted_ids:
+                continue
+            if weight_start is not None and i < weight_start:
+                continue
+            if is_embed and i > 0:
+                continue  # only input[0] is the embedding table
+            if inp.shape and len(inp.shape) == 2:
+                counted_ids.add(inp.id)
+                struct_total += math.prod(inp.shape)
+    return struct_total
+
 
 # ── TrainingFlopsPass ───────────────────────────────────────────────────────────
 
@@ -32,15 +102,7 @@ class TrainingFlopsPass(GraphPass):
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
         g = graph.clone()
 
-        # Estimate total params from weight tensors in the graph
-        total_params = 0
-        for node in g.nodes.values():
-            if node.category == "compute":
-                # Count parameters from weight inputs (model parameters)
-                # Heuristic: inputs with "weight" in the id or with large 2D shapes
-                for inp in node.inputs:
-                    if ("weight" in inp.id or "param" in inp.id) and inp.shape:
-                        total_params += math.prod(inp.shape)
+        total_params = _count_params(g)
 
         # Get sequence length and batch size from metadata
         seq_len = g.metadata.get("seq_len", 2048)
@@ -107,14 +169,7 @@ class TrainingMemoryPass(GraphPass):
         # Get dtype bytes
         param_dtype = 2 if ctx.quant and ctx.quant.weight == "bf16" else 4  # BF16 or FP32
 
-        # Count parameters
-        total_params = 0
-        for node in g.nodes.values():
-            if node.category == "compute":
-                for inp in node.inputs:
-                    # Heuristic: inputs with "weight" in the id or with large 2D shapes
-                    if ("weight" in inp.id or "param" in inp.id) and inp.shape:
-                        total_params += math.prod(inp.shape)
+        total_params = _count_params(g)
 
         # Get parallel config
         dp = ctx.parallel.dp if ctx.parallel else 1
@@ -211,49 +266,34 @@ class TrainingPipelinePass(GraphPass):
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
         g = graph.clone()
 
-        # Get config
         pp = ctx.parallel.pp if ctx.parallel else 1
         num_microbatches = ctx.training.num_microbatches if ctx.training else 1
         hw = ctx.hw_spec
 
-        # Estimate per-stage time from node latencies
-        stage_time_us = 0.0
-        num_stages = pp
+        stage_time_us = sum(
+            n.annotations.get("latency_us", 0.0) for n in g.nodes.values()
+        )
+        per_stage_us = stage_time_us / pp if pp > 0 else stage_time_us
 
-        # Sum up latencies for a single forward pass
-        for node in g.topo_sort():
-            if node.category == "compute":
-                stage_time_us += node.annotations.get("latency_us", 0.0)
-            elif node.category == "communication":
-                stage_time_us += node.annotations.get("latency_us", 0.0)
-
-        # Divide by PP for per-stage time (rough approximation)
-        per_stage_us = stage_time_us / num_stages if num_stages > 0 else stage_time_us
-
-        # 1F1B schedule
         warmup_steps = max(0, pp - 1)
         cooldown_steps = max(0, pp - 1)
         steady_steps = max(0, num_microbatches - pp + 1)
 
-        # Total step time (for one global batch)
         step_time_us = per_stage_us * (warmup_steps + num_microbatches + cooldown_steps)
         step_time_ms = step_time_us / 1000.0
         per_stage_ms = per_stage_us / 1000.0
 
-        # Bubble fraction
         total_steps = warmup_steps + num_microbatches + cooldown_steps
         bubble_fraction = (warmup_steps + cooldown_steps) / total_steps if total_steps > 0 else 0.0
 
-        # Compute MFU
         training_flops = g.metadata.get("training_flops", 0.0)
         world_size = ctx.parallel.total_devices if ctx.parallel else 1
 
-        # Peak FLOPs per GPU
         from python.zrt.ir.types import DType
-        dtype = DType.BF16
-        peak_flops_per_gpu = hw.peak_flops(dtype)
+        # BF16 is the standard compute dtype for mixed-precision training
+        compute_dtype = DType.BF16
+        peak_flops_per_gpu = hw.peak_flops(compute_dtype)
 
-        # MFU = (training_flops / step_time) / (world_size * peak_flops_per_gpu)
         step_time_sec = step_time_us / 1e6
         achieved_flops = training_flops / step_time_sec if step_time_sec > 0 else 0.0
         peak_flops_total = world_size * peak_flops_per_gpu

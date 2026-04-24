@@ -69,3 +69,62 @@ def estimate(
         warnings=warnings,
         config_summary=config_summary,
     )
+
+
+def grid_search(
+    model: ModelSpec, system: SystemSpec, space: "SearchSpace",
+) -> list[Report]:
+    """Grid search over all valid parallel configurations.
+
+    Returns list of Reports sorted by step_time_ms (ascending).
+    Invalid configurations (validation errors) are skipped.
+    """
+    from zrt.training.search.space import SearchSpace
+
+    strategies = space.strategies(system.world_size)
+    reports = []
+
+    for strategy in strategies:
+        try:
+            strategy.validate(model, system)
+        except ValueError:
+            continue
+
+        try:
+            report = estimate(model, system, strategy)
+            if report.memory is not None:
+                total_gb = report.memory.total / 1e9
+                if total_gb > space.max_memory_gb:
+                    continue
+            reports.append(report)
+        except Exception:
+            continue
+
+    reports.sort(key=lambda r: r.step_time_ms)
+    return reports
+
+
+def pareto_frontier(reports: list[Report]) -> list[Report]:
+    """Extract Pareto frontier (step_time vs memory).
+
+    A config is on the Pareto frontier if no other config has both
+    lower step_time AND lower memory.
+    """
+    if not reports:
+        return []
+
+    sorted_reports = sorted(reports, key=lambda r: r.step_time_ms)
+
+    frontier = []
+    min_memory = float("inf")
+
+    for report in sorted_reports:
+        mem_gb = report.memory.total / 1e9 if report.memory else None
+        if not frontier:
+            frontier.append(report)
+            min_memory = mem_gb if mem_gb is not None else float("inf")
+        elif mem_gb is not None and mem_gb < min_memory:
+            frontier.append(report)
+            min_memory = mem_gb
+
+    return frontier

@@ -309,16 +309,22 @@ class TrainingPipelinePass(GraphPass):
             if layer_scale != 1.0:
                 per_stage_us *= layer_scale
 
-            effective_steps = num_microbatches + pp - 1
-            step_time_us = per_stage_us * effective_steps
-            bubble_fraction = (pp - 1) / effective_steps if effective_steps > 0 else 0.0
+        pp_schedule = (ctx.training.pp_schedule if ctx.training else "1f1b")
+        V = max(1, ctx.training.vpp_chunks if ctx.training else 1)
 
-        # 1F1B schedule constants
-        warmup_steps = max(0, pp - 1)
-        cooldown_steps = max(0, pp - 1)
-        steady_steps = max(0, num_microbatches - pp + 1)
+        if pp_schedule == "interleaved" and V > 1 and pp > 1:
+            bubble_us = (pp - 1) * per_stage_us / V
+        elif pp_schedule == "dualpipev" and pp > 1:
+            bubble_us = (pp - 1) * per_stage_us / (2.0 * max(1, V))
+        elif pp_schedule == "dualpipe" and pp > 1:
+            bubble_us = (pp - 1) * per_stage_us / 2.0
+        else:  # "1f1b" or pp == 1
+            bubble_us = (pp - 1) * per_stage_us
+
+        step_time_us = num_microbatches * per_stage_us + bubble_us
         step_time_ms = step_time_us / 1000.0
         per_stage_ms = per_stage_us / 1000.0
+        bubble_fraction = bubble_us / step_time_us if step_time_us > 0 else 0.0
 
         # DP-in-bubble: if DP AR fits inside the bubble window, it is free;
         # otherwise the exposed portion adds to step time.
@@ -338,6 +344,9 @@ class TrainingPipelinePass(GraphPass):
                 step_time_us += t_exposed_dp_us
                 step_time_ms = step_time_us / 1000.0
 
+        warmup_steps = max(0, pp - 1)
+        cooldown_steps = max(0, pp - 1)
+        steady_steps = num_microbatches
         training_flops = g.metadata.get("training_flops", 0.0)
         world_size = ctx.parallel.total_devices if ctx.parallel else 1
 

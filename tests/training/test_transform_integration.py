@@ -192,7 +192,7 @@ def test_training_pipeline_pass():
     metrics = result.metadata["pipeline_metrics"]
     assert metrics.warmup_steps == 1  # pp - 1
     assert metrics.cooldown_steps == 1  # pp - 1
-    assert metrics.steady_steps == 7  # M - pp + 1
+    assert metrics.steady_steps == 8  # M (num_microbatches)
     assert 0 < metrics.bubble_fraction < 1
 
 

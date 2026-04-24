@@ -6,6 +6,7 @@ roofline model with achieved efficiency curves.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from zrt.training.ir.graph import Collective, Graph, Op
@@ -13,17 +14,37 @@ from zrt.training.io.perf_tables import achieved_bandwidth_efficiency, achieved_
 from zrt.training.models.comm import collective_time, tier_for_group, total_comm_time
 from zrt.training.models.flops import OpCost, op_cost
 from zrt.training.spec.dtype import Dtype
-from zrt.training.spec.model import ModelSpec
+from zrt.training.spec.model import LayerKind, ModelSpec
 from zrt.training.spec.strategy import Strategy
 from zrt.training.spec.system import SystemSpec
 
 
 @dataclass
 class StageTime:
-    fwd: float = 0.0   # seconds
-    bwd: float = 0.0   # seconds (includes recompute + dx + dw)
-    comm_fwd: float = 0.0  # exposed comm time during forward
-    comm_bwd: float = 0.0  # exposed comm time during backward
+    fwd: float = 0.0
+    bwd: float = 0.0
+    comm_fwd: float = 0.0
+    comm_bwd: float = 0.0
+
+
+def ep_imbalance_factor(num_experts: int, ep: int, topk: int = 1) -> float:
+    """EP load imbalance factor >= 1.0.
+
+    With EP parallelism, each GPU handles num_experts/ep experts.
+    Due to token routing randomness, the actual load is imbalanced.
+
+    Model: factor = 1 + (topk / (num_experts / ep)) * sqrt(log(num_experts / ep))
+
+    This is a simplified model based on the balls-into-bins analysis.
+    When ep == 1 or num_experts <= 0, returns 1.0 (no imbalance).
+    """
+    if ep <= 1 or num_experts <= 0:
+        return 1.0
+    experts_per_gpu = num_experts / ep
+    if experts_per_gpu <= 0:
+        return 1.0
+    factor = 1.0 + (topk / experts_per_gpu) * math.sqrt(math.log(max(experts_per_gpu, 2)))
+    return max(factor, 1.0)
 
 
 def op_to_time(
@@ -96,6 +117,14 @@ def stage_time(
 
     t_fwd += t_comm_fwd
     t_bwd += t_comm_bwd
+
+    if strategy.ep > 1 and model.num_experts > 0:
+        has_moe = any(op.layer_kind == LayerKind.MOE for op in stage_ops)
+        if has_moe:
+            imb = ep_imbalance_factor(model.num_experts, strategy.ep,
+                                       getattr(model, 'top_k', 1))
+            t_fwd *= imb
+            t_bwd *= imb
 
     return StageTime(fwd=t_fwd, bwd=t_bwd, comm_fwd=t_comm_fwd, comm_bwd=t_comm_bwd)
 

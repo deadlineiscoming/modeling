@@ -1,0 +1,12 @@
+name: llama3_70b_meta
+description: "LLaMA-3 70B, Meta reference, H100 SXM, TP8 PP1 DP32"
+config:
+  tp: 8
+  pp: 1
+  dp: 32
+  zero_stage: 1
+  micro_batch: 2
+  global_batch: 1024
+targets:
+  mfu: 0.55
+  tolerance: 0.10

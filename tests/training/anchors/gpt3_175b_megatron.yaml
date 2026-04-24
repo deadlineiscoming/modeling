@@ -1,0 +1,12 @@
+name: gpt3_175b_megatron
+description: "GPT-3 175B, Megatron-LM reference, H100 SXM, TP8 PP1 DP64"
+config:
+  tp: 8
+  pp: 1
+  dp: 64
+  zero_stage: 1
+  micro_batch: 1
+  global_batch: 1536
+targets:
+  mfu: 0.52
+  tolerance: 0.10

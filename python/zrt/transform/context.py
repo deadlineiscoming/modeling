@@ -77,7 +77,8 @@ class TrainingConfig:
     recompute_policy: str = "none"  # "none", "full", "selective"
 
     # Pipeline schedule
-    pp_schedule: str = "1f1b"  # "1f1b", "interleaved", "dualpipe"
+    pp_schedule: str = "1f1b"  # "1f1b", "interleaved", "dualpipe", "dualpipev"
+    vpp_chunks: int = 1
 
     # Optional explicit layer→stage assignment for PP; length must equal
     # the number of traced transformer layers.  None → greedy bin-packing.

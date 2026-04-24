@@ -5,6 +5,7 @@ Reference: Megatron-LM (Narayanan et al. 2021) §3.2.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from zrt.training.compose.stage import StageTime, stage_time
@@ -27,6 +28,238 @@ class StepResult:
     dp_ar_exposed: float = 0.0
     memory: MemBreakdown | None = None
     mfu: float = 0.0
+
+
+class PipelineComposer(ABC):
+
+    @abstractmethod
+    def compose(
+        self,
+        stage_times: list[StageTime],
+        M: int,
+        pp: int,
+        dp_ar_time: float,
+        strategy: Strategy,
+    ) -> StepResult:
+        ...
+
+
+class OneF1BComposer(PipelineComposer):
+
+    def compose(
+        self,
+        stage_times: list[StageTime],
+        M: int,
+        pp: int,
+        dp_ar_time: float,
+        strategy: Strategy,
+    ) -> StepResult:
+        """Standard 1F1B pipeline schedule.
+
+        warmup   = (pp - 1) * t_fwd[0]
+        steady   = M * max(t_fwd[s] + t_bwd[s])
+        cooldown = (pp - 1) * t_bwd[-1]
+        step     = warmup + steady + cooldown + dp_ar_exposed
+        """
+        if pp == 1:
+            # No pipeline: just fwd + bwd for single stage
+            st = stage_times[0] if stage_times else StageTime()
+            step = st.fwd + st.bwd
+            # DP overlap not applicable with PP=1
+            dp_exposed = dp_ar_time
+
+            ideal_step = M * (st.fwd + st.bwd)
+            bubble_frac = 0.0
+
+            return StepResult(
+                step_time=step * M + dp_exposed,
+                bubble_fraction=bubble_frac,
+                warmup=0.0,
+                steady=step * M,
+                cooldown=0.0,
+                dp_ar_exposed=dp_exposed,
+            )
+
+        # With pipeline parallelism
+        t_fwd_max = max(st.fwd for st in stage_times) if stage_times else 0
+        t_bwd_max = max(st.bwd for st in stage_times) if stage_times else 0
+        t_stage_max = max(st.fwd + st.bwd for st in stage_times) if stage_times else 0
+
+        warmup = (pp - 1) * t_fwd_max
+        steady = M * t_stage_max
+        cooldown = (pp - 1) * t_bwd_max
+
+        # DP AR: hide in bubble if enabled
+        bubble = warmup + cooldown
+        dp_exposed = dp_ar_time
+        if strategy.dp_overlap_in_bubble and dp_ar_time > 0:
+            hidden = min(bubble, dp_ar_time)
+            dp_exposed = dp_ar_time - hidden
+
+        step = warmup + steady + cooldown + dp_exposed
+        ideal_step = M * t_stage_max
+        bubble_frac = (warmup + cooldown) / step if step > 0 else 0.0
+
+        return StepResult(
+            step_time=step,
+            bubble_fraction=bubble_frac,
+            warmup=warmup,
+            steady=steady,
+            cooldown=cooldown,
+            dp_ar_exposed=dp_exposed,
+        )
+
+
+class Interleaved1F1BComposer(PipelineComposer):
+    """VPP / Interleaved 1F1B pipeline schedule.
+
+    Each device holds `vpp_chunks` virtual stages, reducing pipeline
+    bubble by interleaving forward and backward passes.
+
+    With V virtual stages per device, each virtual stage has 1/V of the
+    layers, so per-virtual-stage times are t_fwd/V and t_bwd/V.
+    The warmup/cooldown fill (pp-1) pipeline slots but each slot is
+    1/V the time, giving a bubble that is V times smaller than standard 1F1B.
+    """
+
+    def compose(
+        self,
+        stage_times: list[StageTime],
+        M: int,
+        pp: int,
+        dp_ar_time: float,
+        strategy: Strategy,
+    ) -> StepResult:
+        V = strategy.vpp_chunks
+        if V <= 1 or pp <= 1:
+            return OneF1BComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
+
+        t_fwd_max = max(st.fwd for st in stage_times) if stage_times else 0
+        t_bwd_max = max(st.bwd for st in stage_times) if stage_times else 0
+        t_stage_max = max(st.fwd + st.bwd for st in stage_times) if stage_times else 0
+
+        warmup = (pp - 1) * t_fwd_max / V
+        steady = M * t_stage_max
+        cooldown = (pp - 1) * t_bwd_max / V
+
+        bubble = warmup + cooldown
+        dp_exposed = dp_ar_time
+        if strategy.dp_overlap_in_bubble and dp_ar_time > 0:
+            hidden = min(bubble, dp_ar_time)
+            dp_exposed = dp_ar_time - hidden
+
+        step = warmup + steady + cooldown + dp_exposed
+        bubble_frac = (warmup + cooldown) / step if step > 0 else 0.0
+
+        return StepResult(
+            step_time=step,
+            bubble_fraction=bubble_frac,
+            warmup=warmup,
+            steady=steady,
+            cooldown=cooldown,
+            dp_ar_exposed=dp_exposed,
+        )
+
+
+class DualPipeComposer(PipelineComposer):
+    """DualPipe schedule — forward and backward on different stages in parallel.
+
+    Key insight: in standard 1F1B, each stage alternates F then B.
+    DualPipe splits the pipeline so that while stage S does forward,
+    stage S+1 does backward, reducing bubble.
+
+    Bubble fraction ≈ (pp - 1) / (2 * M + pp - 1)
+    Step time ≈ (M + (pp-1)/2) * t_stage + dp_exposed
+    """
+
+    def compose(
+        self,
+        stage_times: list[StageTime],
+        M: int,
+        pp: int,
+        dp_ar_time: float,
+        strategy: Strategy,
+    ) -> StepResult:
+        if pp <= 1:
+            return OneF1BComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
+
+        t_stage_max = max(st.fwd + st.bwd for st in stage_times) if stage_times else 0
+
+        warmup = (pp - 1) / 2.0 * t_stage_max
+        steady = M * t_stage_max
+        cooldown = (pp - 1) / 2.0 * t_stage_max
+
+        bubble = warmup + cooldown
+        dp_exposed = dp_ar_time
+        if strategy.dp_overlap_in_bubble and dp_ar_time > 0:
+            hidden = min(bubble, dp_ar_time)
+            dp_exposed = dp_ar_time - hidden
+
+        step = warmup + steady + cooldown + dp_exposed
+        bubble_frac = bubble / step if step > 0 else 0.0
+
+        return StepResult(
+            step_time=step,
+            bubble_fraction=bubble_frac,
+            warmup=warmup,
+            steady=steady,
+            cooldown=cooldown,
+            dp_ar_exposed=dp_exposed,
+        )
+
+
+class DualPipeVComposer(PipelineComposer):
+    """DualPipeV — DualPipe with virtual stage splitting.
+
+    Combines DualPipe's F/B parallelism with VPP's virtual stages.
+    Bubble ≈ (pp - 1) / (2 * V * M + pp - 1)
+    """
+
+    def compose(
+        self,
+        stage_times: list[StageTime],
+        M: int,
+        pp: int,
+        dp_ar_time: float,
+        strategy: Strategy,
+    ) -> StepResult:
+        V = strategy.vpp_chunks
+        if V <= 1:
+            return DualPipeComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
+        if pp <= 1:
+            return OneF1BComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
+
+        t_stage_max = max(st.fwd + st.bwd for st in stage_times) if stage_times else 0
+
+        warmup = (pp - 1) / (2.0 * V) * t_stage_max
+        steady = M * t_stage_max
+        cooldown = (pp - 1) / (2.0 * V) * t_stage_max
+
+        bubble = warmup + cooldown
+        dp_exposed = dp_ar_time
+        if strategy.dp_overlap_in_bubble and dp_ar_time > 0:
+            hidden = min(bubble, dp_ar_time)
+            dp_exposed = dp_ar_time - hidden
+
+        step = warmup + steady + cooldown + dp_exposed
+        bubble_frac = bubble / step if step > 0 else 0.0
+
+        return StepResult(
+            step_time=step,
+            bubble_fraction=bubble_frac,
+            warmup=warmup,
+            steady=steady,
+            cooldown=cooldown,
+            dp_ar_exposed=dp_exposed,
+        )
+
+
+_COMPOSERS: dict[PPSched, PipelineComposer] = {
+    PPSched.ONE_F_ONE_B: OneF1BComposer(),
+    PPSched.INTERLEAVED: Interleaved1F1BComposer(),
+    PPSched.DUALPIPE: DualPipeComposer(),
+    PPSched.DUALPIPE_V: DualPipeVComposer(),
+}
 
 
 def pipeline_step_time(
@@ -64,11 +297,8 @@ def pipeline_step_time(
     dp_ar_time = comm_times.get("dp_grad_reduce", 0.0)
 
     # Compose according to schedule
-    if strategy.pp_schedule == PPSched.ONE_F_ONE_B:
-        step = _one_f_one_b(stage_times, M, pp, dp_ar_time, strategy)
-    else:
-        # Phase 1: default to 1F1B for unsupported schedules
-        step = _one_f_one_b(stage_times, M, pp, dp_ar_time, strategy)
+    composer = _COMPOSERS.get(strategy.pp_schedule, OneF1BComposer())
+    step = composer.compose(stage_times, M, pp, dp_ar_time, strategy)
 
     step.per_stage = stage_times
 
@@ -79,66 +309,6 @@ def pipeline_step_time(
     step.mfu = compute_mfu(model, strategy, system, step.step_time)
 
     return step
-
-
-def _one_f_one_b(
-    stage_times: list[StageTime], M: int, pp: int,
-    dp_ar_time: float, strategy: Strategy,
-) -> StepResult:
-    """Standard 1F1B pipeline schedule.
-
-    warmup   = (pp - 1) * t_fwd[0]
-    steady   = M * max(t_fwd[s] + t_bwd[s])
-    cooldown = (pp - 1) * t_bwd[-1]
-    step     = warmup + steady + cooldown + dp_ar_exposed
-    """
-    if pp == 1:
-        # No pipeline: just fwd + bwd for single stage
-        st = stage_times[0] if stage_times else StageTime()
-        step = st.fwd + st.bwd
-        # DP overlap not applicable with PP=1
-        dp_exposed = dp_ar_time
-
-        ideal_step = M * (st.fwd + st.bwd)
-        bubble_frac = 0.0
-
-        return StepResult(
-            step_time=step * M + dp_exposed,
-            bubble_fraction=bubble_frac,
-            warmup=0.0,
-            steady=step * M,
-            cooldown=0.0,
-            dp_ar_exposed=dp_exposed,
-        )
-
-    # With pipeline parallelism
-    t_fwd_max = max(st.fwd for st in stage_times) if stage_times else 0
-    t_bwd_max = max(st.bwd for st in stage_times) if stage_times else 0
-    t_stage_max = max(st.fwd + st.bwd for st in stage_times) if stage_times else 0
-
-    warmup = (pp - 1) * t_fwd_max
-    steady = M * t_stage_max
-    cooldown = (pp - 1) * t_bwd_max
-
-    # DP AR: hide in bubble if enabled
-    bubble = warmup + cooldown
-    dp_exposed = dp_ar_time
-    if strategy.dp_overlap_in_bubble and dp_ar_time > 0:
-        hidden = min(bubble, dp_ar_time)
-        dp_exposed = dp_ar_time - hidden
-
-    step = warmup + steady + cooldown + dp_exposed
-    ideal_step = M * t_stage_max
-    bubble_frac = (warmup + cooldown) / step if step > 0 else 0.0
-
-    return StepResult(
-        step_time=step,
-        bubble_fraction=bubble_frac,
-        warmup=warmup,
-        steady=steady,
-        cooldown=cooldown,
-        dp_ar_exposed=dp_exposed,
-    )
 
 
 def _assign_stages(model: ModelSpec, strategy: Strategy) -> list[list[int]]:

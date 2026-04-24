@@ -349,8 +349,11 @@ class TrainingSummary:
     by_layer:           list[float]                   # per-layer step latency (ms)
     top_bottleneck_ops: list[tuple[str, float]]       # [(desc, latency_us), ...]
 
-    # ── memory (optional) ─────────────────────────────────────────────────────
+    # ── memory (optional) ──────────────────────────────────────────────────────
     memory_breakdown: "TrainingMemoryBreakdown | None" = None
+
+    # ── chrome trace (optional) ───────────────────────────────────────────────
+    chrome_trace: dict | None = None
 
     # ── string representation ─────────────────────────────────────────────────
 

@@ -1,0 +1,13 @@
+name: deepseek_v3
+description: "DeepSeek-V3 671B MoE, reference, H100 SXM, TP8 EP8 DP32"
+config:
+  tp: 8
+  pp: 1
+  ep: 8
+  dp: 32
+  zero_stage: 1
+  micro_batch: 1
+  global_batch: 1024
+targets:
+  mfu: 0.45
+  tolerance: 0.15

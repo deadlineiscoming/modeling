@@ -540,6 +540,70 @@ def _fused_moe_gate(node: "OpNode", with_topk: bool = False) -> FMR:
     return _default(node)
 
 
+def _repo_kernel(node: "OpNode") -> FMR:
+    """Heuristic for RepoKernel: try to detect a matmul-like pattern (two 2-D inputs)
+    and fall back to default. """
+    if len(node.inputs) >= 2:
+        a, b = node.inputs[0], node.inputs[1]
+        if len(a.shape) >= 2 and len(b.shape) >= 2:
+            # reuse mm logic
+            return _mm(node)
+    return _default(node)
+
+
+def _moe_infer(node: "OpNode") -> FMR:
+    """MoE inference fused block: approximate with fused_mlp cost."""
+    return _fused_mlp(node)
+
+
+def _repo_interleave(node: "OpNode") -> FMR:
+    """Interleave / de-interleave used in repo routing — treat as gather/scatter (0 flops)."""
+    return _gather(node)
+
+
+def _repo_complex(node: "OpNode") -> FMR:
+    """Complex-number specialized ops: conservative elementwise estimate (2 ops/elem)."""
+    return _elementwise(node, 2.0)
+
+
+def _lightning_indexer(node: "OpNode") -> FMR:
+    """Indexer-like ops: routing / indexing — zero-flop gather semantics."""
+    return _gather(node)
+
+
+def _indexer_prolog(node: "OpNode") -> FMR:
+    """Prolog for indexer pipelines: treat as gather."""
+    return _gather(node)
+
+
+def _grouped_mm(node: "OpNode") -> FMR:
+    """Grouped matmul: first dim is group count G: (G,M,K) @ (G,K,N) -> (G,M,N).
+    Falls back to mm/bmm heuristics when shapes differ.
+    """
+    if len(node.inputs) < 2:
+        return _default(node)
+    a, b = node.inputs[0], node.inputs[1]
+    if len(a.shape) >= 3 and len(b.shape) >= 3:
+        G, M, K = a.shape[0], a.shape[1], a.shape[2]
+        N = b.shape[-1]
+        it = a.dtype.itemsize
+        flops = 2.0 * G * M * N * K
+        read = (G * M * K + G * K * N) * it
+        write = G * M * N * it
+        return flops, read, write
+    # fallback
+    return _mm(node)
+
+
+def _concat_fp16(node: "OpNode") -> FMR:
+    """Concat + cast to fp16: no compute, copy inputs to output (read inputs, write output)."""
+    # read: sum of input bytes, write: output bytes
+    read = float(node.total_input_bytes())
+    write = float(node.total_output_bytes())
+    return 0.0, read, write
+
+
+
 # ── op → formula dispatch table ──────────────────────────────────────────────
 
 # Maps op_type (exact match) → formula function.
@@ -678,6 +742,16 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     "embedding":                        _embedding,
     "lm_head":                          _linear_proj,
     "embedding_backward":               _embedding,
+    # Repository / project-specific ops
+    "RepoKernel":                       _repo_kernel,
+    "MoEInfer":                         _moe_infer,
+    "RepoInterleave":                   _repo_interleave,
+    "RepoComplex":                      _repo_complex,
+    "LightningIndexer":                 _lightning_indexer,
+    "IndexerProlog":                    _indexer_prolog,
+    "GroupedMm":                        _grouped_mm,
+    "GroupedMatMul":                    _grouped_mm,
+    "ConcatFP16":                       _concat_fp16,
 }
 
 
@@ -989,6 +1063,55 @@ def _fs_default(node: "OpNode") -> dict:
     return _mk("N_out", str(n_out), "Σ|inputs|·b", str(ri), "Σ|outputs|·b", str(wo))
 
 
+def _fs_repo_kernel(node: "OpNode") -> dict:
+    # Try to mirror mm formatting when possible
+    if len(node.inputs) >= 2:
+        a, b = node.inputs[0], node.inputs[1]
+        if len(a.shape) >= 2 and len(b.shape) >= 2:
+            return _fs_mm(node)
+    return _fs_default(node)
+
+
+def _fs_moe_infer(node: "OpNode") -> dict:
+    return _fs_mlp(node)
+
+
+def _fs_repo_interleave(node: "OpNode") -> dict:
+    return _fs_gather(node)
+
+
+def _fs_repo_complex(node: "OpNode") -> dict:
+    return _fs_elementwise(node, 2.0, "2")
+
+
+def _fs_lightning_indexer(node: "OpNode") -> dict:
+    return _fs_gather(node)
+
+
+def _fs_indexer_prolog(node: "OpNode") -> dict:
+    return _fs_gather(node)
+
+
+def _fs_grouped_mm(node: "OpNode") -> dict:
+    if len(node.inputs) < 2: return _fs_default(node)
+    a, b = node.inputs[0], node.inputs[1]
+    if len(a.shape) >= 3 and len(b.shape) >= 3:
+        G, M, K, N, bw = a.shape[0], a.shape[1], a.shape[2], b.shape[-1], _bw(node)
+        return _mk("2·G·M·K·N",
+                   f"2·{G}·{M}·{K}·{N}",
+                   "(G·M·K+G·K·N)·b",
+                   f"({G}·{M}·{K}+{G}·{K}·{N})·{bw}",
+                   "G·M·N·b",
+                   f"{G}·{M}·{N}·{bw}")
+    return _fs_mm(node)
+
+
+def _fs_concat_fp16(node: "OpNode") -> dict:
+    ri = node.total_input_bytes()
+    wo = node.total_output_bytes()
+    return _mk("0 (concat/cast)", "0", "Σ|inputs|·b", str(ri), "|output|·b", str(wo))
+
+
 _EW_DISPATCH: dict[str, tuple] = {
     "aten.add.Tensor": (1.0, "1"), "aten.add_.Tensor": (1.0, "1"),
     "aten.add.Scalar": (1.0, "1"), "aten.sub.Tensor": (1.0, "1"),
@@ -1063,6 +1186,12 @@ _FORMULA_DISPATCH: dict[str, "callable"] = {
     "embedding": _fs_embedding, "embedding_backward": _fs_embedding,
     "rope": lambda n: _fs_elementwise(n, 2.0, "2"),
     "Linear": _fs_linear_proj, "lm_head": _fs_linear_proj,
+    # repo / project-specific formula entries
+    "RepoKernel": _fs_repo_kernel, "MoEInfer": _fs_moe_infer,
+    "RepoInterleave": _fs_repo_interleave, "RepoComplex": _fs_repo_complex,
+    "LightningIndexer": _fs_lightning_indexer, "IndexerProlog": _fs_indexer_prolog,
+    "GroupedMm": _fs_grouped_mm, "GroupedMatMul": _fs_grouped_mm,
+    "ConcatFP16": _fs_concat_fp16,
 }
 
 
@@ -1093,3 +1222,6 @@ def get_op_formulas(node: "OpNode") -> dict[str, str]:
             return _fs_shape(node)
 
     return _fs_default(node)
+
+
+

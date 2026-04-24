@@ -25,15 +25,27 @@ The bound column in SimResult tells you which term dominates.
 │   Linear       │ FusionPass 融合的 nn.Linear            │ 2·batch·I·N [+ batch·N if bias]       │
 │   lm_head      │ (input=(*,I), weight=(I,N) transposed) │ R=(batch·I+I·N)·b  W=batch·N·b        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 卷积 (Convolution)                                                                              │
+│   conv2d       │ aten.convolution / aten._convolution   │ 2·N·Cout·Hout·Wout·Cin·Kh·Kw         │
+│   conv3d       │ aten.conv2d / conv3d                   │ R=input+weight+bias  W=output        │
+│                │ weight=(Cout, Cin/groups, Kh, Kw)      │ groups时 Cin/groups 替代 Cin         │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 注意力 (Attention)                                                                              │
 │   sdpa         │ aten.scaled_dot_product_attention       │ 4·N·H·Sq·Sk·D + 5·N·H·Sq·Sk          │
 │   flash_attn   │ aten._scaled_dot_product_flash_attn    │   (QK matmul + AV matmul + softmax)   │
-│   mla_attn     │ flash_attn / sdpa / mla_attn           │ R=(Q+K+V)·b  W=output·b               │
+│   paged_attn   │ PageAttentionFP16 / paged_attention    │ 同上 + block_tables索引开销          │
+│   sparse_attn  │ SparseFlashAttention / local_attention │ (同上) * sparsity_ratio              │
+│                │                                        │ R=(Q + ratio*K + ratio*V)*b  W=output│
+│   mla_attn     │ flash_attn / sdpa / mla_attn           │ ratio从annotations或attrs获取        │
 │   sdpa_backward│ attn_grad                              │ 同上 (backward 代入 grad shape)        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 归一化 (Norm)                                                                                   │
 │   rms_norm     │ rms_norm                               │ 4·N  (sq+mean+rsqrt+scale)            │
 │                │                                        │ R=(N+|weight|)·b  W=N·b               │
+│   gemma_norm   │ GemmaRMSNorm / gemma_rms_norm          │ 4·N (与 rms_norm 相同)                │
+│                │                                        │ R=(N+|weight|)·b  W=N·b               │
+│   rms_gated    │ RMSNormGated / rms_norm_gated          │ 9·N  (rms_norm 4N + sigmoid 4N + mul) │
+│                │                                        │ R=(N+|weight|+|gate|)·b  W=N·b        │
 │   layer_norm   │ aten.layer_norm / layer_norm           │ 5·N  (mean+var+norm+scale+shift)       │
 │                │                                        │ R=(N+2·|weight|)·b  W=N·b             │
 │   add_rms_norm │ add_rms_norm / add_layer_norm          │ 6·N  (norm×5 + residual add)           │
@@ -44,11 +56,16 @@ The bound column in SimResult tells you which term dominates.
 │                │ aten._softmax / aten.softmax.int        │ 5·N  (max+sub+exp+sum+div)            │
 │                │                                        │ R=N·b  W=N·b                          │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 排序 (Sort / Topk) — O(N log N)                                                                 │
+│   sort         │ aten.sort / sort.values / sort.indices  │ 2·N·log₂(N)  (compare + swap)         │
+│   topk         │ aten.topk / argsort                     │ R=N·b  W=(values+indices)·b           │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 逐元素 — 1 op/elem                                                                              │
 │                │ add / sub / rsub / mul / div / neg /   │ 1·N                                   │
 │                │ abs / relu / tanh / exp / log /        │ R=sum(|inputs|)·b                     │
 │                │ sqrt / rsqrt / pow / masked_fill        │ W=|output|·b                          │
 │                │ mean / sum / amax / amin (reduction)    │                                       │
+│                │ cumsum / cumprod (scan/prefix sum)      │ 1·N (scan操作)                        │
 │                │ copy_                                   │ 0 FLOPs, R=input·b, W=output·b        │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 逐元素 — 2 ops/elem                                                                             │
@@ -66,6 +83,8 @@ The bound column in SimResult tells you which term dominates.
 │                │                                        │ R=input·b  W=output·b                 │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ MLP / 专家层 (MLP / MoE expert)                                                                 │
+│   swiglu       │ swiglu                                 │ 4·batch·H·I+2·batch·I·H+5·batch·I     │
+│                │ (gate+up proj, act, down proj)         │ R=hidden+3·weights·b  W=output·b      │
 │   gated_mlp    │ gated_mlp / mlp                        │ Σ 2·batch·H·Oᵢ + 4·N_act/2           │
 │   moe_block    │ gated_mlp_backward / mlp_backward      │   (按权重矩阵累加 GEMM FLOPs          │
 │   moe_expert   │ moe_expert / moe_shared / moe_block    │    + gated activation 代价)           │
@@ -241,6 +260,87 @@ def _linear(node: "OpNode") -> FMR:
     return flops, read, write
 
 
+def _convolution(node: "OpNode") -> FMR:
+    """aten.convolution.default / aten._convolution.default / conv2d / conv3d.
+
+    2D Convolution: input=(N,Cin,H,W), weight=(Cout,Cin/groups,Kh,Kw)
+    Output shape: (N, Cout, Hout, Wout)
+    Hout = (H + 2*padding - Kh) / stride + 1
+    Wout = (W + 2*padding - Kw) / stride + 1
+
+    FLOPs = 2 * N * Cout * Hout * Wout * (Cin/groups * Kh * Kw) * groups
+          = 2 * N * Cout * Hout * Wout * Cin * Kh * Kw (当 groups=1)
+
+    3D Convolution: input=(N,Cin,D,H,W), weight=(Cout,Cin/groups,Kd,Kh,Kw)
+    FLOPs = 2 * N * Cout * Dout * Hout * Wout * Cin * Kd * Kh * Kw
+
+    Depthwise Conv (groups=Cin): FLOPs = 2 * N * Cin * Hout * Wout * Kh * Kw
+
+    R = |input| + |weight| [+ |bias|]
+    W = |output|
+    """
+    if len(node.inputs) < 2:
+        return _default(node)
+
+    inp = node.inputs[0]
+    weight = node.inputs[1]
+
+    if len(inp.shape) < 3 or len(weight.shape) < 4:
+        return _default(node)
+
+    # Determine conv dimension from weight shape
+    # weight shape: (Cout, Cin/groups, Kh, Kw) for 2D
+    #              (Cout, Cin/groups, Kd, Kh, Kw) for 3D
+    weight_ndim = len(weight.shape) - 2  # spatial dims
+
+    # Batch size and input channels
+    N = inp.shape[0]
+    Cin = inp.shape[1]
+
+    # Output channels and kernel size
+    Cout = weight.shape[0]
+    Cin_per_group = weight.shape[1]
+
+    # Groups (from weight shape: Cin/groups == weight.shape[1])
+    groups = Cin // Cin_per_group if Cin_per_group > 0 else 1
+
+    # Kernel spatial dimensions
+    kernel_dims = weight.shape[2:]  # (Kh, Kw) or (Kd, Kh, Kw)
+    kernel_size = 1
+    for k in kernel_dims:
+        kernel_size *= k
+
+    # Output spatial dimensions (from output tensor if available)
+    if node.outputs:
+        out = node.outputs[0]
+        spatial_dims = out.shape[2:]  # (Hout, Wout) or (Dout, Hout, Wout)
+        output_spatial = 1
+        for s in spatial_dims:
+            output_spatial *= s
+    else:
+        # Estimate from input and kernel (assuming stride=1, padding=0)
+        input_spatial_dims = inp.shape[2:]
+        output_spatial = 1
+        for i, k in zip(input_spatial_dims, kernel_dims):
+            output_spatial *= max(1, i - k + 1)
+
+    # FLOPs calculation
+    # For each output element: multiply Cin/groups * kernel_size weights and add
+    # groups * Cout output channels, N batch
+    flops = 2.0 * N * Cout * output_spatial * (Cin_per_group * kernel_size)
+
+    # Memory bandwidth
+    it = inp.dtype.itemsize
+    read = float(inp.mem_bytes + weight.mem_bytes)
+    if len(node.inputs) >= 3:  # bias
+        bias = node.inputs[2]
+        flops += N * Cout * output_spatial  # bias add
+        read += float(bias.mem_bytes)
+    write = float(node.outputs[0].mem_bytes if node.outputs else N * Cout * output_spatial * it)
+
+    return flops, read, write
+
+
 def _scaled_dot_product_attention(node: "OpNode") -> FMR:
     """aten._scaled_dot_product_flash_attention / scaled_dot_product_attention.
 
@@ -264,6 +364,119 @@ def _scaled_dot_product_attention(node: "OpNode") -> FMR:
     flops += 5.0 * N * H * Sq * Sk
     read  = (N*H*Sq*D + N*H*Sk*D + N*H*Sk*D) * it   # Q + K + V
     write = (N*H*Sq*D) * it                           # output
+    return flops, read, write
+
+
+def _paged_attention(node: "OpNode") -> FMR:
+    """PageAttentionFP16 / paged_attention (vLLM PagedAttention kernel).
+
+    PagedAttention 允许 KV cache 以非连续内存块存储，减少内存碎片。
+    计算上与 FlashAttention 相同，但内存访问通过 block tables 索引。
+
+    Input layout: Q=(num_tokens,H,D), K/V cache 在 page blocks 中
+    - block_tables: (num_tokens, max_blocks_per_seq) 紧张映射
+    - KV cache: (max_num_blocks, H, block_size, D)
+
+    FLOPs = 4*N*H*Sq*Sk*D + 5*N*H*Sq*Sk  (与 FlashAttention 相同)
+    R = Q*b + K*b + V*b + block_tables*sizeof(int)  (额外索引开销)
+    W = output*b
+
+    内存带宽估计略高于 FlashAttention，因为 KV 非连续访问有额外开销。
+    """
+    if not node.inputs:
+        return _default(node)
+
+    q = node.inputs[0]
+    if len(q.shape) < 3:
+        return _default(node)
+
+    # Q shape: (num_tokens, H, D) or (batch, seq_len, H, D)
+    if len(q.shape) == 3:
+        N, H, D = q.shape[0], q.shape[1], q.shape[2]
+        Sq = 1  # decode 阶段通常是 1
+    elif len(q.shape) == 4:
+        N, H, Sq, D = q.shape[0], q.shape[1], q.shape[2], q.shape[3]
+    else:
+        return _default(node)
+
+    it = q.dtype.itemsize
+
+    # KV cache length 需从 block_tables 或 node.annotations 估算
+    # 若无信息，假设 Sk = Sq * 4 (典型解码场景)
+    Sk = node.annotations.get("kv_cache_len", Sq * 4) if node.annotations else Sq * 4
+
+    # FLOPs 与 FlashAttention 相同
+    flops = 4.0 * N * H * Sq * Sk * D
+    flops += 5.0 * N * H * Sq * Sk
+
+    # 内存带宽：Q + K + V + block_tables 索引
+    q_bytes = N * H * Sq * D * it
+    kv_bytes = N * H * Sk * D * it * 2  # K + V
+    block_table_bytes = N * Sk * 8  # int64 indices, 每个 KV block 一个索引
+    read = q_bytes + kv_bytes + block_table_bytes
+    write = N * H * Sq * D * it
+
+    return flops, read, write
+
+
+def _sparse_flash_attention(node: "OpNode") -> FMR:
+    """SparseFlashAttention / sparse_attention / local_attention.
+
+    SparseFlashAttention 只计算部分位置的注意力，用于长序列场景。
+    稀疏模式包括：local window、global attention、random attention、block sparse 等。
+
+    Input layout: Q=(N,H,Sq,D), K=(N,H,Sk,D), V=(N,H,Sk,D)
+    - sparsity_ratio: 实际计算的注意力位置比例 (0 < ratio <= 1)
+    - 可从 node.annotations["sparsity_ratio"] 或 attrs["window_size"]/Sk 估算
+
+    FLOPs = (4*N*H*Sq*Sk*D + 5*N*H*Sq*Sk) * sparsity_ratio
+    R = (Q + sparsity_ratio*K + sparsity_ratio*V)*b  (只访问稀疏位置的 KV)
+    W = output*b
+
+    典型稀疏比例：
+    - local window (window_size=256, Sk=4096): ratio ≈ 256/4096 = 0.0625
+    - block sparse (block_size=64, dense_blocks=10%): ratio ≈ 0.1
+    - Longformer (local + global): ratio ≈ 0.1-0.2
+    """
+    if len(node.inputs) < 3:
+        return _default(node)
+
+    q, k, v = node.inputs[0], node.inputs[1], node.inputs[2]
+    if len(q.shape) < 4 or len(k.shape) < 4:
+        return _default(node)
+
+    N, H, Sq, D = q.shape[0], q.shape[1], q.shape[2], q.shape[3]
+    Sk = k.shape[2]
+    it = q.dtype.itemsize
+
+    # 获取稀疏比例，优先级：annotations > attrs > 默认值
+    sparsity_ratio = 1.0
+    if node.annotations and "sparsity_ratio" in node.annotations:
+        sparsity_ratio = float(node.annotations["sparsity_ratio"])
+    elif node.attrs:
+        # 从 window_size 估算
+        if "window_size" in node.attrs:
+            window_size = int(node.attrs["window_size"])
+            sparsity_ratio = min(1.0, window_size / Sk)
+        # 从 block_sparse 配置估算
+        elif "block_size" in node.attrs and "num_dense_blocks" in node.attrs:
+            block_size = int(node.attrs["block_size"])
+            num_dense_blocks = int(node.attrs["num_dense_blocks"])
+            total_blocks = Sk // block_size
+            sparsity_ratio = num_dense_blocks / total_blocks if total_blocks > 0 else 1.0
+
+    # 限制 sparsity_ratio 在合理范围
+    sparsity_ratio = max(0.01, min(1.0, sparsity_ratio))
+
+    # FLOPs 乘以稀疏比例
+    flops = (4.0 * N * H * Sq * Sk * D + 5.0 * N * H * Sq * Sk) * sparsity_ratio
+
+    # 内存带宽：Q 全部访问，KV 只访问稀疏位置
+    q_bytes = N * H * Sq * D * it
+    kv_bytes = N * H * int(Sk * sparsity_ratio) * D * it * 2  # K + V (稀疏部分)
+    read = q_bytes + kv_bytes
+    write = N * H * Sq * D * it
+
     return flops, read, write
 
 
@@ -300,6 +513,77 @@ def _rms_norm(node: "OpNode") -> FMR:
     flops = 4.0 * n
     weight_size = inp.shape[-1] if inp.shape else 1
     read  = (n + weight_size) * it
+    write = n * it
+    return flops, read, write
+
+
+def _rms_norm_gated(node: "OpNode") -> FMR:
+    """RMSNormGated / rms_norm_gated: RMSNorm with gating mechanism.
+    
+    RMSNormGated(x) = RMSNorm(x, weight) ⊗ sigmoid(gate)
+    
+    输入布局：
+    - inputs[0]: hidden tensor (B, S, H) 或 (N,)
+    - inputs[1]: norm weight (H,)
+    - inputs[2]: gate tensor (可选，与 hidden 同形状) 或 gate weight (H,)
+    
+    计算步骤：
+    1. RMSNorm: 4·N FLOPs (pow+mean+rsqrt+mul+scale)
+    2. Sigmoid(gate): 4·N FLOPs (sigmoid 约4 ops/elem)
+    3. Multiply: 1·N FLOPs
+    总计: 4·N + 4·N + 1·N = 9·N FLOPs
+    
+    若 gate 通过 matmul 计算（有 gate weight 而非 gate tensor）：
+    - gate = x @ W_gate: 2·batch·H·gate_dim FLOPs
+    - 此时总计: 4·N + 2·batch·H·gate_dim + 5·N
+    
+    R = |hidden| + |weight| + |gate| (或 |gate_weight|)
+    W = |output|
+    """
+    if len(node.inputs) < 2:
+        return _default(node)
+    
+    inp = node.inputs[0]
+    norm_weight = node.inputs[1]
+    
+    n = _numel(inp.shape)
+    it = inp.dtype.itemsize
+    
+    # RMSNorm FLOPs
+    flops = 4.0 * n
+    
+    # Gate FLOPs: sigmoid(4N) + multiply(1N) = 5N
+    # 如果有第三个输入，判断是 gate tensor 还是 gate weight
+    if len(node.inputs) >= 3:
+        gate = node.inputs[2]
+        gate_n = _numel(gate.shape)
+        
+        # 如果 gate 形状与 inp 相同，是 gate tensor
+        if gate_n == n:
+            flops += 5.0 * n  # sigmoid + multiply
+            weight_size = inp.shape[-1] if inp.shape else 1
+            gate_weight_size = gate.shape[-1] if gate.shape else 1
+            read = (n + weight_size + gate_n) * it
+        # 如果 gate 是 weight 形状 (gate_dim, hidden_dim)，是 gate weight matmul
+        elif len(gate.shape) >= 2:
+            # gate matmul: x_norm @ W_gate
+            batch = _numel(inp.shape[:-1]) if len(inp.shape) > 1 else 1
+            H = inp.shape[-1] if inp.shape else 1
+            gate_out = gate.shape[0] if gate.shape[1] == H else gate.shape[1]
+            flops += 2.0 * batch * H * gate_out + 5.0 * batch * gate_out
+            weight_size = H
+            read = (n + weight_size) * it + gate.mem_bytes
+        else:
+            # 默认：假设 gate tensor
+            flops += 5.0 * n
+            weight_size = inp.shape[-1] if inp.shape else 1
+            read = (n + weight_size + gate_n) * it
+    else:
+        # 无 gate 输入，假设自 gating (对 norm output 做 sigmoid)
+        flops += 5.0 * n
+        weight_size = inp.shape[-1] if inp.shape else 1
+        read = (n + weight_size) * it
+    
     write = n * it
     return flops, read, write
 
@@ -425,6 +709,38 @@ def _write_only(node: "OpNode") -> FMR:
     return 0.0, 0.0, float(node.total_output_bytes())
 
 
+def _sort(node: "OpNode") -> FMR:
+    """aten.sort.default / aten.sort.values / topk / argsort
+    
+    Sort 算子复杂度：O(N log₂ N) 比较操作
+    - GPU 并行排序常用 radix sort (k·N) 或 bitonic sort (N·log²N)
+    - 保守估计用 2·N·log₂N FLOPs（每次比较约 2 ops: compare + swap condition）
+    
+    FLOPs ≈ 2·N·log₂(N)   (N 为待排序元素数)
+    R = N·b   W = 2·N·b  (输出 values + indices)
+    
+    对于 topk: FLOPs ≈ N·k·log₂(N/k) 或更小，这里仍用保守估计
+    """
+    if not node.inputs:
+        return _default(node)
+    
+    inp = node.inputs[0]
+    n = _numel(inp.shape)
+    it = inp.dtype.itemsize
+    
+    # log2(N) with minimum 1 to avoid 0 for small tensors
+    log_n = max(1.0, math.log2(max(n, 1)))
+    
+    # 2 ops per comparison (compare + conditional swap)
+    flops = 2.0 * n * log_n
+    
+    # Read input, write sorted values + indices
+    read = float(node.total_input_bytes())
+    write = float(node.total_output_bytes())
+    
+    return flops, read, write
+
+
 def _default(node: "OpNode") -> FMR:
     """Conservative fallback for unrecognized ops.
     FLOPs = N_out  (1 flop / output element)
@@ -467,6 +783,48 @@ def _fused_norm(node: "OpNode") -> FMR:
     weight_size = inp.shape[-1] if inp.shape else 1
     read  = (n * 2 + weight_size) * it   # input + residual + weight
     write = n * it
+    return flops, read, write
+
+
+def _swiglu(node: "OpNode") -> FMR:
+    """SwiGLU activation: gate + up projections, sigmoid activation, down projection.
+    
+    SwiGLU(x) = Swish(x·W_gate) ⊗ (x·W_up) · W_down
+              = (sigmoid(x·W_gate) ⊗ x·W_gate ⊗ x·W_up) · W_down
+    
+    Typical input layout: [hidden=(B,S,H), gate_w=(I,H), up_w=(I,H), down_w=(H,I)]
+    
+    FLOPs = 2·batch·H·I (gate_proj) + 2·batch·H·I (up_proj)
+          + 5·batch·I  (sigmoid 4ops + mul 1op)
+          + 2·batch·I·H (down_proj)
+          ≈ 4·batch·H·I + 2·batch·I·H + 5·batch·I
+    
+    R = hidden·b + |gate_w|·b + |up_w|·b + |down_w|·b
+    W = output·b (same shape as hidden)
+    """
+    if len(node.inputs) < 4:
+        return _default(node)
+    
+    hidden = node.inputs[0]
+    gate_w, up_w, down_w = node.inputs[1], node.inputs[2], node.inputs[3]
+    
+    if len(hidden.shape) < 1 or len(gate_w.shape) < 2:
+        return _default(node)
+    
+    batch = _numel(hidden.shape[:-1])
+    H = hidden.shape[-1]
+    
+    I_gate = gate_w.shape[0] if gate_w.shape[1] == H else gate_w.shape[1]
+    I_up   = up_w.shape[0] if up_w.shape[1] == H else up_w.shape[1]
+    I = max(I_gate, I_up)
+    
+    it = hidden.dtype.itemsize
+    
+    flops = 4.0 * batch * H * I + 2.0 * batch * I * H + 5.0 * batch * I
+    
+    read  = (batch * H + I * H + I * H + H * I) * it
+    write = batch * H * it
+    
     return flops, read, write
 
 
@@ -557,10 +915,27 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     "aten.matmul":                      _mm,
     "aten.linear.default":              _linear,
     "aten.linear":                      _linear,
+    # ── convolution ────────────────────────────────────────────────────────────
+    "aten.convolution.default":         _convolution,
+    "aten._convolution.default":        _convolution,
+    "aten.conv2d.default":              _convolution,
+    "aten.conv3d.default":              _convolution,
+    "conv2d":                           _convolution,
+    "conv3d":                           _convolution,
+    "Conv":                             _convolution,
     # ── attention ─────────────────────────────────────────────────────────────
     "aten._scaled_dot_product_flash_attention.default":    _scaled_dot_product_attention,
     "aten.scaled_dot_product_attention.default":           _scaled_dot_product_attention,
     "aten._scaled_dot_product_efficient_attention.default":_scaled_dot_product_attention,
+    # ── paged attention (vLLM) ──────────────────────────────────────────────
+    "PageAttentionFP16":                _paged_attention,
+    "paged_attention":                  _paged_attention,
+    "paged_attention_fp16":             _paged_attention,
+    # ── sparse attention (Longformer, BigBird, local window) ──────────────
+    "SparseFlashAttention":             _sparse_flash_attention,
+    "sparse_attention":                 _sparse_flash_attention,
+    "sparse_flash_attention":           _sparse_flash_attention,
+    "local_attention":                  _sparse_flash_attention,
     # ── norm ──────────────────────────────────────────────────────────────────
     "aten.layer_norm.default":          _layer_norm,
     "aten.layer_norm":                  _layer_norm,
@@ -573,6 +948,7 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     "aten.add.Tensor":                  _elementwise,
     "aten.add_.Tensor":                 _elementwise,
     "aten.add.Scalar":                  _elementwise,
+    "AddInplace":                       _elementwise,
     "aten.sub.Tensor":                  _elementwise,
     "aten.sub.Scalar":                  _elementwise,
     "aten.rsub.Scalar":                 _elementwise,
@@ -627,6 +1003,19 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     "aten.var.correction":              lambda n: _elementwise(n, 3.0),
     "aten.amax.default":                lambda n: _elementwise(n, 1.0),
     "aten.amin.default":                lambda n: _elementwise(n, 1.0),
+    # ── scan / prefix sum (cumsum, cumprod) ────────────────────────────────────
+    "aten.cumsum.default":              lambda n: _elementwise(n, 1.0),
+    "aten.cumsum.dim":                  lambda n: _elementwise(n, 1.0),
+    "cumsum":                           lambda n: _elementwise(n, 1.0),
+    "aten.cumprod.default":             lambda n: _elementwise(n, 1.0),
+    "aten.cumprod.dim":                 lambda n: _elementwise(n, 1.0),
+    "cumprod":                          lambda n: _elementwise(n, 1.0),
+    # ── sort / topk (O(N log N) complexity) ─────────────────────────────────────
+    "aten.sort.default":                _sort,
+    "aten.sort.values":                 _sort,
+    "aten.sort.indices":                _sort,
+    "aten.topk.default":                _sort,
+    "aten.argsort.default":             _sort,
     # ── dtype cast ────────────────────────────────────────────────────────────
     "aten._to_copy.default":            _dtype_cast,
     # ── memory / shape — trivial compute ──────────────────────────────────────
@@ -639,6 +1028,10 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     # ── fused semantic labels from FusionEngine / FusionPass ──────────────────
     # norm
     "rms_norm":                         _rms_norm,
+    "GemmaRMSNorm":                     _rms_norm,
+    "gemma_rms_norm":                   _rms_norm,
+    "RMSNormGated":                     _rms_norm_gated,
+    "rms_norm_gated":                   _rms_norm_gated,
     "layer_norm":                       _layer_norm,
     "add_rms_norm":                     _fused_norm,
     "add_layer_norm":                   _fused_norm,
@@ -651,7 +1044,9 @@ _EXACT_FORMULAS: dict[str, "callable"] = {
     "attn":                             _fused_attention,
     "attn_grad":                        _fused_attention,
     "mla_attn":                         _fused_attention,
-    # MLP
+    "paged_attn":                       _paged_attention,
+    # MLP / SwiGLU
+    "swiglu":                           _swiglu,
     "gated_mlp":                        _fused_mlp,
     "gated_mlp_backward":               _fused_mlp,
     "mlp":                              _fused_mlp,
@@ -893,6 +1288,50 @@ def _fs_linear_proj(node: "OpNode") -> dict:
                "batch·N·b", f"{batch}·{N}·{bw}")
 
 
+def _fs_convolution(node: "OpNode") -> dict:
+    if len(node.inputs) < 2: return _fs_default(node)
+    inp, weight = node.inputs[0], node.inputs[1]
+    if len(inp.shape) < 3 or len(weight.shape) < 4: return _fs_default(node)
+
+    N = inp.shape[0]
+    Cin = inp.shape[1]
+    Cout = weight.shape[0]
+    Cin_per_group = weight.shape[1]
+    groups = Cin // Cin_per_group if Cin_per_group > 0 else 1
+
+    kernel_dims = weight.shape[2:]
+    kernel_size = 1
+    for k in kernel_dims:
+        kernel_size *= k
+
+    if node.outputs:
+        out = node.outputs[0]
+        spatial_dims = out.shape[2:]
+        output_spatial = 1
+        for s in spatial_dims:
+            output_spatial *= s
+    else:
+        input_spatial_dims = inp.shape[2:]
+        output_spatial = 1
+        for i, k in zip(input_spatial_dims, kernel_dims):
+            output_spatial *= max(1, i - k + 1)
+
+    flops = 2 * N * Cout * output_spatial * (Cin_per_group * kernel_size)
+    if len(node.inputs) >= 3:
+        flops += N * Cout * output_spatial
+
+    ri = inp.mem_bytes + weight.mem_bytes
+    if len(node.inputs) >= 3:
+        ri += node.inputs[2].mem_bytes
+    wo = node.outputs[0].mem_bytes if node.outputs else N * Cout * output_spatial * _bw(node)
+
+    kernel_str = "*".join(str(k) for k in kernel_dims)
+    return _mk(f"2·N·Cout·Hout·Wout·Cin·{kernel_str}",
+               f"{flops} (groups={groups})",
+               "input+weight+bias·b", str(ri),
+               "output·b", str(wo))
+
+
 def _fs_sdpa(node: "OpNode") -> dict:
     if len(node.inputs) < 3: return _fs_default(node)
     q, k = node.inputs[0], node.inputs[1]
@@ -906,11 +1345,107 @@ def _fs_sdpa(node: "OpNode") -> dict:
                "N·H·Sq·D·b", f"{N}·{H}·{Sq}·{D}·{bw}")
 
 
+def _fs_paged_attention(node: "OpNode") -> dict:
+    if len(node.inputs) < 1: return _fs_default(node)
+    q = node.inputs[0]
+    if len(q.shape) < 3: return _fs_default(node)
+    if len(q.shape) == 3:
+        N, H, D = q.shape[0], q.shape[1], q.shape[2]
+        Sq = 1
+    elif len(q.shape) == 4:
+        N, H, Sq, D = q.shape[0], q.shape[1], q.shape[2], q.shape[3]
+    else:
+        return _fs_default(node)
+    Sk = node.annotations.get("kv_cache_len", Sq * 4) if node.annotations else Sq * 4
+    bw = _bw(node)
+    q_bytes = N * H * Sq * D * bw
+    kv_bytes = N * H * Sk * D * bw * 2
+    block_bytes = N * Sk * 8
+    return _mk("4·N·H·Sq·Sk·D+5·N·H·Sq·Sk",
+               f"4·{N}·{H}·{Sq}·{Sk}·{D}+5·{N}·{H}·{Sq}·{Sk}",
+               "(Q+K+V+block_tables)·b",
+               f"{q_bytes+kv_bytes+block_bytes}",
+               "N·H·Sq·D·b", f"{N}·{H}·{Sq}·{D}·{bw}")
+
+
+def _fs_sparse_flash_attention(node: "OpNode") -> dict:
+    if len(node.inputs) < 3: return _fs_default(node)
+    q, k = node.inputs[0], node.inputs[1]
+    if len(q.shape) < 4: return _fs_default(node)
+    N, H, Sq, D = q.shape[0], q.shape[1], q.shape[2], q.shape[3]
+    Sk, bw = (k.shape[2] if len(k.shape) >= 3 else Sq), _bw(node)
+
+    # 获取稀疏比例
+    sparsity_ratio = 1.0
+    if node.annotations and "sparsity_ratio" in node.annotations:
+        sparsity_ratio = float(node.annotations["sparsity_ratio"])
+    elif node.attrs and "window_size" in node.attrs:
+        window_size = int(node.attrs["window_size"])
+        sparsity_ratio = min(1.0, window_size / Sk)
+
+    sparsity_ratio = max(0.01, min(1.0, sparsity_ratio))
+    sparse_Sk = int(Sk * sparsity_ratio)
+
+    # FLOPs 公式
+    base_flops = 4 * N * H * Sq * Sk * D + 5 * N * H * Sq * Sk
+    actual_flops = int(base_flops * sparsity_ratio)
+
+    # 内存带宽
+    q_bytes = N * H * Sq * D * bw
+    kv_bytes = N * H * sparse_Sk * D * bw * 2
+
+    return _mk(f"(4·N·H·Sq·Sk·D+5·N·H·Sq·Sk)·ratio",
+               f"{actual_flops} (ratio={sparsity_ratio:.3f})",
+               "(Q+ratio*K+ratio*V)*b",
+               f"{q_bytes+kv_bytes}",
+               "N·H·Sq·D·b", f"{N}·{H}·{Sq}·{D}·{bw}")
+
+
 def _fs_rms_norm(node: "OpNode") -> dict:
     if not node.inputs: return _fs_default(node)
     inp = node.inputs[0]
     N, W, bw = _numel(inp.shape), (inp.shape[-1] if inp.shape else 1), _bw(node)
     return _mk("4·N", f"4·{N}", "(N+|W|)·b", f"({N}+{W})·{bw}", "N·b", f"{N}·{bw}")
+
+
+def _fs_rms_norm_gated(node: "OpNode") -> dict:
+    if len(node.inputs) < 2: return _fs_default(node)
+    inp = node.inputs[0]
+    N, W, bw = _numel(inp.shape), (inp.shape[-1] if inp.shape else 1), _bw(node)
+    
+    # 计算 gate 相关的 FLOPs
+    if len(node.inputs) >= 3:
+        gate = node.inputs[2]
+        gate_n = _numel(gate.shape)
+        # 如果 gate 是 tensor（与 inp 同形状），9N FLOPs
+        if gate_n == N:
+            flops_str = "9·N"
+            flops_num = f"9·{N}"
+            read_str = "(N+|W|+|gate|)·b"
+            read_num = f"({N}+{W}+{gate_n})·{bw}"
+        # 如果 gate 是 weight matrix，需要额外 matmul
+        elif len(gate.shape) >= 2:
+            batch = _numel(inp.shape[:-1]) if len(inp.shape) > 1 else 1
+            H = inp.shape[-1] if inp.shape else 1
+            gate_out = gate.shape[0] if gate.shape[1] == H else gate.shape[1]
+            extra_flops = 2 * batch * H * gate_out + 5 * batch * gate_out
+            flops_str = f"4·N+2·batch·H·gate_out+5·batch·gate_out"
+            flops_num = f"4·{N}+{extra_flops}"
+            read_str = "(N+|W|+|gate_w|)·b"
+            read_num = f"({N}+{W})·{bw}+{gate.mem_bytes}"
+        else:
+            flops_str = "9·N"
+            flops_num = f"9·{N}"
+            read_str = "(N+|W|+|gate|)·b"
+            read_num = f"({N}+{W}+{gate_n})·{bw}"
+    else:
+        # 无 gate 输入，自 gating
+        flops_str = "9·N"
+        flops_num = f"9·{N}"
+        read_str = "(N+|W|)·b"
+        read_num = f"({N}+{W})*{bw}"
+    
+    return _mk(flops_str, flops_num, read_str, read_num, "N·b", f"{N}·{bw}")
 
 
 def _fs_layer_norm(node: "OpNode") -> dict:
@@ -932,6 +1467,16 @@ def _fs_softmax(node: "OpNode") -> dict:
     inp = node.inputs[0]
     N, bw = _numel(inp.shape), _bw(node)
     return _mk("5·N", f"5·{N}", "N·b", f"{N}·{bw}", "N·b", f"{N}·{bw}")
+
+
+def _fs_sort(node: "OpNode") -> dict:
+    if not node.inputs: return _fs_default(node)
+    inp = node.inputs[0]
+    N, bw = _numel(inp.shape), _bw(node)
+    log_n = max(1.0, math.log2(max(N, 1)))
+    ri, wo = node.total_input_bytes(), node.total_output_bytes()
+    return _mk("2·N·log2(N)", f"2·{N}·log2({N})={int(2*N*log_n)}",
+               "N·b", str(ri), "values+indices·b", str(wo))
 
 
 def _fs_elementwise(node: "OpNode", k: float, ks: str) -> dict:
@@ -978,6 +1523,22 @@ def _fs_mlp(node: "OpNode") -> dict:
                "|output|·b", str(wo))
 
 
+def _fs_swiglu(node: "OpNode") -> dict:
+    if len(node.inputs) < 4: return _fs_default(node)
+    h = node.inputs[0]
+    gate_w, up_w, down_w = node.inputs[1], node.inputs[2], node.inputs[3]
+    if len(h.shape) < 1 or len(gate_w.shape) < 2: return _fs_default(node)
+    batch, H, bw = _numel(h.shape[:-1]), h.shape[-1], _bw(node)
+    I = max(gate_w.shape[0] if gate_w.shape[1] == H else gate_w.shape[1],
+            up_w.shape[0] if up_w.shape[1] == H else up_w.shape[1])
+    ri = h.mem_bytes + gate_w.mem_bytes + up_w.mem_bytes + down_w.mem_bytes
+    wo = node.outputs[0].mem_bytes if node.outputs else batch * H * bw
+    return _mk("4·batch·H·I+2·batch·I·H+5·batch·I",
+               f"4·{batch}·{H}·{I}+2·{batch}·{I}·{H}+5·{batch}·{I}",
+               "hidden+3·weights·b", str(ri),
+               "|output|·b", str(wo))
+
+
 def _fs_comm(node: "OpNode") -> dict:
     vol = sum(t.mem_bytes for t in node.outputs)
     return _mk("0 (comm)", "0", "comm_vol·b", str(vol), "comm_vol·b", str(vol))
@@ -991,7 +1552,8 @@ def _fs_default(node: "OpNode") -> dict:
 
 _EW_DISPATCH: dict[str, tuple] = {
     "aten.add.Tensor": (1.0, "1"), "aten.add_.Tensor": (1.0, "1"),
-    "aten.add.Scalar": (1.0, "1"), "aten.sub.Tensor": (1.0, "1"),
+    "aten.add.Scalar": (1.0, "1"), "AddInplace": (1.0, "1"),
+    "aten.sub.Tensor": (1.0, "1"),
     "aten.sub.Scalar": (1.0, "1"), "aten.rsub.Scalar": (1.0, "1"),
     "aten.rsub.default": (1.0, "1"), "aten.mul.Tensor": (1.0, "1"),
     "aten.mul.Scalar": (1.0, "1"), "aten.div.Tensor": (1.0, "1"),
@@ -1006,6 +1568,10 @@ _EW_DISPATCH: dict[str, tuple] = {
     "aten.mean.dim": (1.0, "1"), "aten.mean.default": (1.0, "1"),
     "aten.sum.dim_IntList": (1.0, "1"), "aten.sum.default": (1.0, "1"),
     "aten.amax.default": (1.0, "1"), "aten.amin.default": (1.0, "1"),
+    "aten.cumsum.default": (1.0, "1"), "aten.cumsum.dim": (1.0, "1"),
+    "cumsum": (1.0, "1"),
+    "aten.cumprod.default": (1.0, "1"), "aten.cumprod.dim": (1.0, "1"),
+    "cumprod": (1.0, "1"),
     "aten.reciprocal.default": (2.0, "2"), "aten.clamp.default": (2.0, "2"),
     "aten.clamp.Scalar": (2.0, "2"), "aten.clamp.Tensor": (2.0, "2"),
     "aten.clamp_min.default": (2.0, "2"), "aten.clamp_max.default": (2.0, "2"),
@@ -1022,13 +1588,30 @@ _FORMULA_DISPATCH: dict[str, "callable"] = {
     "aten.bmm.default": _fs_bmm, "aten.bmm": _fs_bmm,
     "aten.matmul.default": _fs_mm, "aten.matmul": _fs_mm,
     "aten.linear.default": _fs_linear, "aten.linear": _fs_linear,
+    "aten.convolution.default": _fs_convolution,
+    "aten._convolution.default": _fs_convolution,
+    "aten.conv2d.default": _fs_convolution,
+    "aten.conv3d.default": _fs_convolution,
+    "conv2d": _fs_convolution,
+    "conv3d": _fs_convolution,
+    "Conv": _fs_convolution,
     "aten._scaled_dot_product_flash_attention.default": _fs_sdpa,
     "aten.scaled_dot_product_attention.default": _fs_sdpa,
     "aten._scaled_dot_product_efficient_attention.default": _fs_sdpa,
+    "PageAttentionFP16": _fs_paged_attention,
+    "paged_attention": _fs_paged_attention,
+    "paged_attention_fp16": _fs_paged_attention,
+    "SparseFlashAttention": _fs_sparse_flash_attention,
+    "sparse_attention": _fs_sparse_flash_attention,
+    "sparse_flash_attention": _fs_sparse_flash_attention,
+    "local_attention": _fs_sparse_flash_attention,
     "aten.layer_norm.default": _fs_layer_norm, "aten.layer_norm": _fs_layer_norm,
     "aten.native_layer_norm.default": _fs_layer_norm,
     "aten._softmax.default": _fs_softmax, "aten.softmax.int": _fs_softmax,
     "aten.special_softmax.int": _fs_softmax,
+    "aten.sort.default": _fs_sort, "aten.sort.values": _fs_sort,
+    "aten.sort.indices": _fs_sort, "aten.topk.default": _fs_sort,
+    "aten.argsort.default": _fs_sort,
     "aten.embedding.default": _fs_embedding,
     "aten.index.Tensor": _fs_gather, "aten.index_select.default": _fs_gather,
     "aten.gather.default": _fs_gather, "aten.scatter.src": _fs_gather,
@@ -1048,13 +1631,17 @@ _FORMULA_DISPATCH: dict[str, "callable"] = {
     "aten.zero_.default": lambda n: _mk(
         "0 (zero)", "0", "0", "0", "|output|·b", str(n.total_output_bytes())),
     # fused semantic labels
-    "rms_norm": _fs_rms_norm, "layer_norm": _fs_layer_norm,
+    "rms_norm": _fs_rms_norm, "GemmaRMSNorm": _fs_rms_norm, "gemma_rms_norm": _fs_rms_norm,
+    "RMSNormGated": _fs_rms_norm_gated, "rms_norm_gated": _fs_rms_norm_gated,
+    "layer_norm": _fs_layer_norm,
     "add_rms_norm": _fs_add_norm, "add_layer_norm": _fs_add_norm,
     "npu_add_rms_norm": _fs_add_norm, "norm_backward": _fs_add_norm,
     "flash_attn": _fs_sdpa, "sdpa": _fs_sdpa, "sdpa_backward": _fs_sdpa,
     "npu_fusion_attention": _fs_sdpa, "attn": _fs_sdpa, "attn_grad": _fs_sdpa,
     "mla_attn": _fs_sdpa,
+    "paged_attn": _fs_paged_attention,
     "gated_mlp": _fs_mlp, "gated_mlp_backward": _fs_mlp,
+    "swiglu": _fs_swiglu,
     "mlp": _fs_mlp, "mlp_backward": _fs_mlp,
     "moe_block": _fs_mlp, "moe_expert": _fs_mlp, "moe_shared": _fs_mlp,
     "moe_gate": _fs_linear, "moe_gate_topk": _fs_linear,

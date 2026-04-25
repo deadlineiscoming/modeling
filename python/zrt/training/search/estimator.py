@@ -26,6 +26,8 @@ class Report:
     total_flops: float = 0.0
     warnings: list[str] = field(default_factory=list)
     config_summary: dict = field(default_factory=dict)
+    bubble_fraction: float = 0.0
+    schedule_name: str = "1f1b"
 
 
 def estimate(
@@ -68,6 +70,8 @@ def estimate(
         total_flops=total_flops,
         warnings=warnings,
         config_summary=config_summary,
+        bubble_fraction=step_result.bubble_fraction,
+        schedule_name=step_result.schedule_name,
     )
 
 
@@ -105,15 +109,32 @@ def grid_search(
 
 
 def pareto_frontier(reports: list[Report]) -> list[Report]:
-    """Extract Pareto frontier (step_time vs memory).
+    """Extract Pareto frontier (step_time_ms, peak_hbm) with deterministic ordering.
 
-    A config is on the Pareto frontier if no other config has both
-    lower step_time AND lower memory.
+    A config is on the Pareto frontier if no other config has both:
+      - lower step_time_ms AND lower peak_hbm
+
+    Deterministic ordering: sort by (step_time_ms, peak_hbm) to ensure
+    reproducible frontier construction. When two configs have identical
+    step_time and memory, the first one in sorted order is preferred.
+
+    TODO Phase 3: Pruning rules below depend on CP/EP implementation status:
+      - no cross-node TP (requires NVLink topology awareness)
+      - CP only when seq_len >= 32768 (depends on CP comm cost model)
+      - EP only when num_experts > 1 (requires EP dispatch/all-to-all)
+      - ZeRO stage requires dp > 1 (already enforced)
+
+    These should become feature flags in SearchSpace once phase 3 provides
+    the missing communication and memory semantics.
     """
     if not reports:
         return []
 
-    sorted_reports = sorted(reports, key=lambda r: r.step_time_ms)
+    # Deterministic sort: by step_time, then by memory (asc)
+    sorted_reports = sorted(
+        reports,
+        key=lambda r: (r.step_time_ms, r.memory.total / 1e9 if r.memory else float("inf"))
+    )
 
     frontier = []
     min_memory = float("inf")

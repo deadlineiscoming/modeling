@@ -9,6 +9,21 @@ if TYPE_CHECKING:
     from zrt.training.spec.system import SystemSpec
 
 
+def rank_product(tp: int, cp: int, pp: int, ep: int, dp: int) -> int:
+    """Calculate the rank product for a parallel configuration.
+
+    NOTE: This is a phase-3 adaptation point. Currently, EP is treated as
+    "inside" the rank product (i.e., EP does not consume distinct ranks),
+    which matches SearchSpace.strategies() behavior where dp is derived
+    from world_size / (tp * cp * pp * ep).
+
+    Phase-3 decision: If EP dispatch/all-to-all implementation shows that
+    expert parallelism consumes distinct ranks, EP should be added to the
+    product: tp * cp * pp * ep * dp. For now, we follow the current policy.
+    """
+    return tp * cp * pp * dp
+
+
 class PPSched(Enum):
     ONE_F_ONE_B = "1f1b"
     INTERLEAVED = "i1f1b"
@@ -95,7 +110,7 @@ class Strategy:
         """Raise ValueError on invalid strategy + model + system combos."""
         errors: list[str] = []
 
-        total = self.tp * self.cp * self.pp * self.dp
+        total = rank_product(self.tp, self.cp, self.pp, self.ep, self.dp)
         if total != system.world_size:
             errors.append(
                 f"TP({self.tp})*CP({self.cp})*PP({self.pp})*DP({self.dp})="

@@ -5,12 +5,26 @@ from dataclasses import dataclass, field
 
 from zrt.training.spec.strategy import (
     CPKind, OffloadPolicy, OptKind, PPSched, RecomputePolicy, TPOverlap,
+    rank_product,
 )
 
 
 @dataclass
 class SearchSpace:
-    """Defines the dimensions and constraints for parallel config search."""
+    """Defines the dimensions and constraints for parallel config search.
+
+    Feature flags for pruning (phase-3 adaptation points):
+      - enable_cross_node_tp_pruning: Skip TP > gpus_per_node (requires NVLink topology)
+      - enable_cp_pruning: Only enable CP when seq_len >= threshold
+      - enable_ep_pruning: Only enable EP when num_experts > threshold
+      - cp_seq_len_threshold: Minimum seq_len for CP to be beneficial (default: 32768)
+
+    TODO Phase 3: These pruning rules depend on CP/EP implementation status:
+      - CP requires correct communication cost model (Ring vs Ulysses)
+      - EP requires expert dispatch/all-to-all semantics
+      - Cross-node TP requires topology awareness
+      - Current defaults are conservative; adjust based on phase 3 findings
+    """
 
     tp_values: list[int] = field(default_factory=lambda: [1, 2, 4, 8])
     cp_values: list[int] = field(default_factory=lambda: [1])
@@ -25,6 +39,12 @@ class SearchSpace:
     micro_batch: int = 1
     global_batch: int = 0
     max_memory_gb: float = 80.0
+
+    # Pruning feature flags (phase-3 adaptation points)
+    enable_cross_node_tp_pruning: bool = False
+    enable_cp_pruning: bool = False
+    enable_ep_pruning: bool = True
+    cp_seq_len_threshold: int = 32768
 
     def strategies(self, world_size: int) -> list["Strategy"]:
         """Generate all valid Strategy instances for the given world_size."""

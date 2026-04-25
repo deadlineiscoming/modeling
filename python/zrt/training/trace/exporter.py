@@ -22,8 +22,20 @@ def export_chrome_trace(
     timeline: "Timeline",
     path: str | Path,
     graph_name: str = "",
+    stage_metadata: dict | None = None,
 ) -> Path:
     """Export a Timeline to Chrome Trace JSON format.
+
+    Timeline-based trace format:
+      - All events come from Timeline.scheduled_ops (actual scheduler output)
+      - No synthetic schedule generation — trace reflects reality
+      - Compatible with chrome://tracing viewer
+
+    TODO Phase 3: Add optional stage/timeline metadata when graph-native
+    per-stage timelines are available:
+      - stage_id: Which PP stage this event belongs to
+      - phase: "fwd" or "bwd" (from stitched graph phase annotations)
+      - CP/DP/EP overlap visualization tags (when those comm nodes exist)
 
     Parameters
     ----------
@@ -33,6 +45,8 @@ def export_chrome_trace(
         Output file path (.json).
     graph_name
         Optional process name.
+    stage_metadata
+        Optional dict of stage_id → metadata (phase 3 extension point)
 
     Returns
     -------

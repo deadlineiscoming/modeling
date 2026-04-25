@@ -77,3 +77,36 @@ def test_dualpipev_vpp1_equals_dualpipe():
     dp_result = DualPipeComposer().compose(st, M, 4, 0.0, s)
 
     assert dpv_result.step_time == pytest.approx(dp_result.step_time, rel=1e-9)
+
+
+def test_dualpipe_schedule_identity():
+    """Regression: DualPipeComposer should return schedule_name='dualpipe'."""
+    st = _make_stage_times(4)
+    s = _make_strategy(pp=4)
+    M = s.num_microbatches()
+
+    result = DualPipeComposer().compose(st, M, 4, 0.0, s)
+
+    assert result.schedule_name == "dualpipe"
+
+
+def test_dualpipev_schedule_identity():
+    """Regression: DualPipeVComposer should return schedule_name='dualpipev'."""
+    st = _make_stage_times(4)
+    s = _make_strategy(pp=4, vpp_chunks=2, schedule=PPSched.DUALPIPE_V)
+    M = s.num_microbatches()
+
+    result = DualPipeVComposer().compose(st, M, 4, 0.0, s)
+
+    assert result.schedule_name == "dualpipev"
+
+
+def test_standard_1f1b_schedule_identity():
+    """Regression: OneF1BComposer should return schedule_name='1f1b'."""
+    st = _make_stage_times(4)
+    s = Strategy(pp=4, dp=1, micro_batch=1, global_batch=32)
+    M = s.num_microbatches()
+
+    result = OneF1BComposer().compose(st, M, 4, 0.0, s)
+
+    assert result.schedule_name == "1f1b"

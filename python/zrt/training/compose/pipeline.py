@@ -28,6 +28,7 @@ class StepResult:
     dp_ar_exposed: float = 0.0
     memory: MemBreakdown | None = None
     mfu: float = 0.0
+    schedule_name: str = "1f1b"    # Pipeline schedule identifier
 
 
 class PipelineComposer(ABC):
@@ -78,6 +79,7 @@ class OneF1BComposer(PipelineComposer):
                 steady=step * M,
                 cooldown=0.0,
                 dp_ar_exposed=dp_exposed,
+                schedule_name="1f1b",
             )
 
         # With pipeline parallelism
@@ -107,6 +109,7 @@ class OneF1BComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
+            schedule_name="1f1b",
         )
 
 
@@ -158,6 +161,7 @@ class Interleaved1F1BComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
+            schedule_name="i1f1b",
         )
 
 
@@ -205,6 +209,7 @@ class DualPipeComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
+            schedule_name="dualpipe",
         )
 
 
@@ -251,6 +256,7 @@ class DualPipeVComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
+            schedule_name="dualpipev",
         )
 
 
@@ -270,7 +276,21 @@ def pipeline_step_time(
 ) -> StepResult:
     """Compute full training step time from IR + strategy.
 
-    Phase 1: 1F1B schedule only.
+    TODO Phase 3: Integrate with graph-native per-stage timelines from executor/.
+
+    Graph-native path (phase 3):
+      1. Run DAGScheduler per PP stage on stitched fwd+bwd OpGraph
+      2. Extract (t_fwd[s], t_bwd[s]) from timeline.phase_latency("fwd")/("bwd")
+      3. Pass per-stage timelines to VPP/DualPipe/DualPipeV composers
+      4. Compute DP-in-bubble from actual overlap windows
+      5. Replace formula-based stage_time() with timeline-derived values
+
+    Current path (reference implementation):
+      - Use IR-level stage_time() from graph.ops_for_stage()
+      - Apply 1F1B/VPP/DualPipe formulas on aggregated times
+      - DP overlap uses simple bubble-window heuristic
+
+    Both paths should converge to the same StepResult interface for compatibility.
     """
     pp = strategy.pp
     M = strategy.num_microbatches()

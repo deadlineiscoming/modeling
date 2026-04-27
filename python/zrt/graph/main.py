@@ -1,16 +1,25 @@
-"""Entry point: load model, trace forward, write Excel + JSON + computation graph.
+"""Entry point: load model, trace forward/backward, write Excel + JSON + computation graph.
 
 Public API::
 
     from python.zrt.graph import run_trace, run_trace_phases, build_config_summary, load_model
 
-    # Trace both prefill and decode in one call (recommended)
+    # Inference: trace both prefill and decode in one call (recommended)
     output_dir, phase_records = run_trace_phases(
         model_id="deepseek-ai/DeepSeek-V3-0324",
         num_layers=4,
         batch_size=1,
         seq_len=128,
         output_dir="output/graph/DeepSeek-V3-0324",  # optional
+    )
+
+    # Training: trace forward + backward (gradient ops included)
+    output_dir, phase_records = run_trace_phases(
+        model_id="deepseek-ai/DeepSeek-V3-0324",
+        num_layers=4,
+        batch_size=1,
+        seq_len=128,
+        phases=("train_forward", "train_backward"),
     )
 
     # Trace a single phase
@@ -24,7 +33,6 @@ Public API::
 """
 from __future__ import annotations
 
-import argparse
 import logging
 import re
 from pathlib import Path
@@ -33,15 +41,76 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import torch
 
 from python.zrt.graph.dispatch import RecordingDispatch, TensorTracker
-from python.zrt.graph.excel_writer import ExcelWriter
+from python.zrt.report.excel_writer import ExcelWriter
 from python.zrt.graph.graph_builder import build_op_graph, build_fused_op_graph
-from python.zrt.graph.graph_exporter import export_all
+from python.zrt.report.onnx_exporter import export_all
 from python.zrt.graph.model_loader import load_model
-from python.zrt.graph.tracker import ModuleTracker
+from python.zrt.graph.tracker import ModuleTracker, NullModuleTracker
+from python.zrt.ir.adapter import (
+    records_to_opgraph,
+    fused_records_to_opgraph,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 logger = logging.getLogger(__name__)
+
+
+# ── Backward-compatible result types ──────────────────────────────────────────
+
+class TracePhaseResult(tuple):
+    """Return value of :func:`run_trace_phases`.
+
+    Behaves as a 2-tuple ``(output_dir, phase_records)`` for backward
+    compatibility.  New code can also access ``.graphs`` for the
+    ``OpGraph`` IR objects.
+
+    Attributes
+    ----------
+    graphs : Dict[str, Tuple[OpGraph, OpGraph]]
+        Maps each phase name to ``(raw_opgraph, fused_opgraph)``.
+    """
+
+    def __new__(cls, output_dir: Path, phase_records: Dict, phase_graphs: Dict):
+        instance = super().__new__(cls, (output_dir, phase_records))
+        instance.graphs: Dict[str, Tuple[Any, Any]] = phase_graphs
+        return instance
+
+    @property
+    def output_dir(self) -> Path:
+        return self[0]
+
+    @property
+    def phase_records(self) -> Dict:
+        return self[1]
+
+
+class TraceResult(tuple):
+    """Return value of :func:`run_trace`.
+
+    Behaves as a 2-tuple ``(output_dir, records)`` for backward
+    compatibility.  New code can also access ``.graphs``.
+
+    Attributes
+    ----------
+    graphs : Tuple[OpGraph, OpGraph] | None
+        ``(raw_opgraph, fused_opgraph)`` for the traced phase, or
+        ``None`` if graph building was skipped.
+    """
+
+    def __new__(cls, output_dir: Path, records: List, graphs):
+        instance = super().__new__(cls, (output_dir, records))
+        instance.graphs = graphs  # Tuple[OpGraph, OpGraph] | None
+        return instance
+
+    @property
+    def output_dir(self) -> Path:
+        return self[0]
+
+    @property
+    def records(self) -> List:
+        return self[1]
+
 
 # Backward-compat map for --model v3 / v3.2 shorthand
 _MODEL_DIRS = {
@@ -49,8 +118,11 @@ _MODEL_DIRS = {
     "v3.2": "deepseek_v3_2",
 }
 
-# Normalise legacy "forward" phase name
-_PHASE_ALIASES = {"forward": "prefill"}
+# Normalise legacy phase names
+_PHASE_ALIASES = {"forward": "prefill", "train": "train_forward"}
+
+# Phases that run with gradients enabled and model in train() mode
+_TRAINING_PHASES = {"train_forward", "train_backward"}
 
 
 # ── Layer-type inference ───────────────────────────────────────────────────────
@@ -221,6 +293,9 @@ def _trace_phase(
     seq_len: int,
     phase: str,
     past_key_values: Any = None,
+    target_layers: Optional[List[int]] = None,
+    gradient_checkpointing: bool = False,
+    tensor_tracker: Optional["TensorTracker"] = None,
 ) -> Tuple[List[Dict[str, Any]], "ModuleTracker", Any]:
     """Run one forward pass for *phase* and return ``(records, tracker, output)``.
 
@@ -278,20 +353,336 @@ def _trace_phase(
     if past_key_values is not None:
         forward_kwargs["past_key_values"] = past_key_values
 
-    tensor_tracker = TensorTracker()
+    is_training = phase in _TRAINING_PHASES
+    # train_backward: pause recording during forward, only capture backward ops
+    is_backward_only = phase == "train_backward"
+    if is_training:
+        model.train()
+        if gradient_checkpointing:
+            model.gradient_checkpointing_enable()
+            logger.info("Gradient checkpointing enabled.")
+
+    tensor_tracker = tensor_tracker or TensorTracker()
     tracker = ModuleTracker(model)
     recorder = RecordingDispatch(
         tensor_tracker=tensor_tracker,
         module_tracker=tracker,
         skip_reshapes=True,
+        active=not is_backward_only,
+        target_layers=target_layers,
     )
     try:
-        with recorder, torch.no_grad():
-            output = model(**forward_kwargs)
+        if is_training:
+            with recorder:
+                output = model(**forward_kwargs)
+                if phase == "train_backward":
+                    tracker._forward_depth = 0       # reset any accumulated state
+                    tracker._in_backward_phase = True
+                    recorder.active = True  # start capturing backward ops
+                    logits = getattr(output, "logits", None)
+                    if logits is None:
+                        logits = getattr(output, "last_hidden_state", None)
+                    if logits is not None:
+                        loss = logits.sum()
+                        try:
+                            loss.backward()
+                        except Exception as e:
+                            logger.warning("backward() failed (FakeTensor limitation): %s", e)
+                    else:
+                        logger.warning("No logits/last_hidden_state found; skipping backward.")
+        else:
+            with recorder, torch.no_grad():
+                output = model(**forward_kwargs)
     finally:
         tracker.remove()
+        if is_training:
+            if gradient_checkpointing:
+                model.gradient_checkpointing_disable()
+            model.eval()
 
     return recorder.records, tracker, output
+
+
+# ── torch.compile graph-mode helpers ──────────────────────────────────────────
+
+def _compile_graph_to_records(
+    gm: Any,
+    skip_reshapes: bool = True,
+    id_to_path: Optional[Dict[int, str]] = None,
+    target_layers: Optional[Set[int]] = None,
+) -> List[Dict[str, Any]]:
+    """Convert a torch.compile-captured GraphModule to op-record dicts.
+
+    The output format is identical to :class:`RecordingDispatch` records so
+    that all downstream writers work without modification.  When Dynamo
+    preserved ``nn_module_stack`` metadata, ``module_path`` and
+    ``module_class`` are populated; otherwise they are left empty.
+
+    Parameters
+    ----------
+    id_to_path:
+        Mapping from ``id(module)`` to the full dotted module path (e.g.
+        ``"model.layers.0.self_attn"``).  Built once by
+        :func:`_trace_compile_phase` from ``model.named_modules()`` so that
+        ``nn_module_stack`` keys (which are ``id()`` strings of the original
+        modules) can be resolved to their full hierarchical paths even when
+        graph breaks strip the ``layers.N`` prefix from the path strings.
+    """
+    import torch.fx
+    from python.zrt.graph.tensor_utils import SKIP_OPS
+    from python.zrt.graph.classifier import extract_layer_idx, classify_component
+
+    name_to_id: Dict[str, int] = {}
+    for node in gm.graph.nodes:
+        if node.op == "call_function":
+            name_to_id[node.name] = len(name_to_id)
+
+    records: List[Dict[str, Any]] = []
+
+    for node in gm.graph.nodes:
+        if node.op != "call_function":
+            continue
+
+        target = node.target
+        if hasattr(target, "_overloadpacket"):
+            # Proper aten OpOverload → "aten.mm.default"
+            target_str = str(target)
+        elif hasattr(target, "__name__"):
+            module = getattr(target, "__module__", "") or ""
+            target_str = f"{module}.{target.__name__}".lstrip(".")
+        else:
+            try:
+                target_str = str(target)
+            except Exception:
+                target_str = repr(target)
+
+        if skip_reshapes and target_str in SKIP_OPS:
+            continue
+
+        parts = target_str.split(".")
+        op_short = parts[1] if len(parts) >= 2 else target_str
+
+        # Output tensors from meta['val']
+        out_val = node.meta.get("val")
+        if isinstance(out_val, torch.Tensor):
+            out_vals = [out_val]
+        elif isinstance(out_val, (tuple, list)):
+            out_vals = [v for v in out_val if isinstance(v, torch.Tensor)]
+        else:
+            out_vals = []
+
+        # Input tensors and IDs from arg nodes' meta['val']
+        in_vals: List[Any] = []
+        in_ids: List[int] = []
+
+        def _collect(arg: Any) -> None:
+            if isinstance(arg, torch.fx.Node):
+                v = arg.meta.get("val")
+                if isinstance(v, torch.Tensor):
+                    in_vals.append(v)
+                if arg.name in name_to_id:
+                    in_ids.append(name_to_id[arg.name])
+            elif isinstance(arg, (list, tuple)):
+                for a in arg:
+                    _collect(a)
+            elif isinstance(arg, torch.Tensor):
+                # Direct tensor input (not from another node)
+                in_vals.append(arg)
+            elif isinstance(arg, dict):
+                # Handle dictionary inputs
+                for value in arg.values():
+                    _collect(value)
+
+        for arg in node.args:
+            _collect(arg)
+
+        # Module context — Dynamo preserves nn_module_stack
+        # nn_module_stack structure:
+        #   key   = str(id(module)) — e.g. "2587068077728"
+        #   value = (path_str, class_type) tuple
+        #     path_str  = e.g. "L['self'].layers.0.self_attn"  (may lose
+        #                 layers.N after graph breaks)
+        #     class_type = e.g. <class 'DeepseekV3Attention'>
+        # When id_to_path is available we resolve the key to the *full*
+        # module path via model.named_modules(), which always includes
+        # the layers.N prefix.
+        module_path, module_class = "", ""
+        layer = ""
+        stack = node.meta.get("nn_module_stack")
+        if stack:
+            try:
+                items = list(stack.items())
+                if items:
+                    last_key, last_val = items[-1]
+                    if isinstance(last_val, tuple) and len(last_val) >= 2:
+                        raw_path, cls_obj = last_val[0], last_val[1]
+                        module_class = getattr(cls_obj, "__name__", str(cls_obj))
+                        # Prefer id_to_path resolution (full path with layers.N)
+                        if id_to_path and isinstance(last_key, str):
+                            try:
+                                resolved = id_to_path.get(int(last_key))
+                                if resolved:
+                                    module_path = re.sub(
+                                        r"^model\.", "", resolved
+                                    )
+                            except (ValueError, TypeError):
+                                pass
+                        # Fallback to raw_path from nn_module_stack
+                        if not module_path and isinstance(raw_path, str):
+                            module_path = re.sub(
+                                r"^L\['self'\]\.", "", raw_path
+                            )
+                        layer = extract_layer_idx(module_path)
+                    else:
+                        module_class = str(last_val)
+                        module_path = module_class
+                        layer = extract_layer_idx(module_path)
+            except Exception as exc:
+                logger.debug("nn_module_stack parse failed: %s", exc)
+
+        if target_layers is not None:
+            layer_str = extract_layer_idx(module_path)
+            if layer_str and int(layer_str) not in target_layers:
+                continue
+
+        out_id = [name_to_id[node.name]] if node.name in name_to_id else []
+
+        records.append({
+            "node_id": len(records),
+            "op_short": op_short,
+            "aten_op": target_str,
+            "module_path": module_path,
+            "module_class": module_class,
+            "layer": layer,
+            "component": classify_component(module_path, target_str),
+            "src_file": "", "src_line": 0, "src_code": "", "src_func": "",
+            "extra_args": "",
+            "input_shapes":  ", ".join(str(list(v.shape)) for v in in_vals),
+            "input_dtypes":  ", ".join(str(v.dtype) for v in in_vals),
+            "output_shapes": ", ".join(str(list(v.shape)) for v in out_vals),
+            "output_dtypes": ", ".join(str(v.dtype) for v in out_vals),
+            "num_inputs":  len(in_vals),
+            "num_outputs": len(out_vals),
+            "_input_ids":  in_ids,
+            "_output_ids": out_id,
+        })
+
+    return records
+
+
+def _trace_compile_phase(
+    model: Any,
+    config: Any,
+    batch_size: int,
+    seq_len: int,
+    phase: str,
+    fake_mode: Any = None,
+    target_layers: Optional[Set[int]] = None,
+) -> Tuple[List[Dict[str, Any]], NullModuleTracker]:
+    """Capture one phase via ``torch.compile`` with a graph-capturing backend.
+
+    A custom backend collects every ``GraphModule`` that Dynamo produces
+    (there may be multiple due to graph breaks).  For ``train_backward``,
+    ``loss.backward()`` is called inside the same compile context so gradient
+    subgraphs are captured as well.
+
+    Returns ``(records, NullModuleTracker())`` — same shape as
+    :func:`_trace_phase` minus the model output.
+    """
+    phase = _PHASE_ALIASES.get(phase, phase)
+    is_training = phase in _TRAINING_PHASES
+
+    query_len = 1 if phase == "decode" else seq_len
+    pos_start = seq_len if phase == "decode" else 0
+
+    input_ids = torch.randint(0, config.vocab_size, (batch_size, query_len))
+    position_ids = (
+        torch.arange(pos_start, pos_start + query_len)
+        .unsqueeze(0)
+        .expand(batch_size, -1)
+    )
+
+    if phase == "decode":
+        mask = torch.zeros(1, 1, 1, query_len)
+    else:
+        mask = torch.full((1, 1, seq_len, seq_len), float("-inf"))
+        mask = torch.triu(mask, diagonal=1)
+
+    captured: List[Any] = []
+
+    _fm = fake_mode
+    if _fm is not None and not getattr(_fm, "allow_non_fake_inputs", False):
+        from torch._subclasses.fake_tensor import FakeTensorMode as _FTM
+        _fm = _FTM(allow_non_fake_inputs=True)
+
+    class _ValCapture(torch.fx.Interpreter):
+        def run_node(self, node: Any) -> Any:
+            if _fm is not None:
+                with _fm:
+                    result = super().run_node(node)
+            else:
+                result = super().run_node(node)
+            node.meta["val"] = result
+            return result
+
+    def _backend(gm: Any, example_inputs: Any) -> Any:
+        try:
+            _ValCapture(gm).run(*example_inputs)
+        except Exception as exc:
+            logger.debug("Shape propagation failed for captured subgraph: %s", exc)
+        captured.append(gm)
+        return gm.forward
+
+    if is_training:
+        model.train()
+
+    compiled = torch.compile(model, backend=_backend, fullgraph=False)
+    fwd_kwargs: Dict[str, Any] = dict(
+        input_ids=input_ids,
+        attention_mask=mask,
+        position_ids=position_ids,
+        use_cache=False,
+    )
+
+    try:
+        if is_training:
+            with torch.enable_grad():
+                out = compiled(**fwd_kwargs)
+                if phase == "train_backward":
+                    logits = getattr(out, "logits", None)
+                    if logits is None:
+                        logits = getattr(out, "last_hidden_state", None)
+                    if logits is not None:
+                        try:
+                            logits.sum().backward()
+                        except Exception as exc:
+                            logger.warning("backward() skipped in compile mode: %s", exc)
+                    else:
+                        logger.warning("No logits found; skipping backward.")
+        else:
+            with torch.no_grad():
+                compiled(**fwd_kwargs)
+    finally:
+        if is_training:
+            model.eval()
+        torch._dynamo.reset()
+
+    id_to_path: Dict[int, str] = {
+        id(mod): name for name, mod in model.named_modules()
+    }
+
+    all_records: List[Dict[str, Any]] = []
+    for gm in captured:
+        all_records.extend(_compile_graph_to_records(gm, id_to_path=id_to_path,
+                                                     target_layers=target_layers))
+    for i, rec in enumerate(all_records):
+        rec["node_id"] = i
+
+    logger.info(
+        "  compile-mode captured %d ops from %d subgraph(s).",
+        len(all_records), len(captured),
+    )
+    return all_records, NullModuleTracker()
 
 
 def _save_phase_outputs(
@@ -301,23 +692,40 @@ def _save_phase_outputs(
     slug: str,
     output_dir: Path,
     config_summary: Dict[str, Any],
-) -> None:
-    """Write Excel + JSON + ONNX graph files for one phase."""
+    platform: str = "generic",
+) -> Tuple[Any, Any]:
+    """Write Excel + JSON + ONNX graph files for one phase.
+
+    Returns
+    -------
+    (raw_opgraph, fused_opgraph)
+        Both are :class:`~python.zrt.ir.graph.OpGraph` instances built
+        from the raw and fused records respectively.
+    """
     from python.zrt.graph.fusion import FusionEngine
 
     excel_path = output_dir / f"{slug}_{phase}_ops.xlsx"
-    writer = ExcelWriter(tracker)
+    writer = ExcelWriter(tracker, platform=platform)
     writer.write(records, excel_path, config_summary)
     logger.info("Excel saved to %s", excel_path)
 
-    raw_graph = build_op_graph(records)
-    fusion_engine = FusionEngine(tracker)
+    # Build OpGraph IR (primary representation)
+    graph_name = f"{slug}_{phase}"
+    raw_opgraph = records_to_opgraph(records, name=graph_name, phase=phase)
+
+    fusion_engine = FusionEngine(tracker, platform=platform)
     fused_with_children = fusion_engine.fuse_keep_children(records)
-    fused_graph = build_fused_op_graph(fused_with_children, records)
+    fused_opgraph = fused_records_to_opgraph(
+        fused_with_children, name=f"{graph_name}_fused", phase=phase
+    )
+
+    # Build NX graphs for export (existing exporter expects nx.DiGraph)
+    raw_nx = build_op_graph(records)
+    fused_nx = build_fused_op_graph(fused_with_children, records)
 
     graph_paths = export_all(
-        raw_graph=raw_graph,
-        fused_graph=fused_graph,
+        raw_graph=raw_nx,
+        fused_graph=fused_nx,
         raw_records=records,
         fused_records=fused_with_children,
         output_dir=output_dir,
@@ -326,6 +734,8 @@ def _save_phase_outputs(
     )
     for artifact, path in graph_paths.items():
         logger.info("  %s: %s", artifact, path)
+
+    return raw_opgraph, fused_opgraph
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -339,6 +749,9 @@ def run_trace_phases(
     phases: Tuple[str, ...] = ("prefill", "decode"),
     target_layers: Optional[List[int]] = None,
     auto_layers: bool = True,
+    platform: str = "generic",
+    graph_mode: bool = False,
+    gradient_checkpointing: bool = False,
 ) -> Tuple[Path, Dict[str, List[Dict[str, Any]]]]:
     """Load *model_id* once, trace each requested phase, write separate files.
 
@@ -346,13 +759,28 @@ def run_trace_phases(
     the KV cache produced by prefill (fake tensors) can be passed directly
     into the decode forward pass.
 
+    Training phases (``train_forward``, ``train_backward``) run with
+    ``model.train()`` and gradient computation enabled, so dropout and other
+    training-specific ops are captured.  ``train_backward`` additionally
+    triggers a ``loss.backward()`` call (via ``logits.sum()``) to capture
+    all gradient aten ops.  Training phases are independent — they do not
+    participate in KV-cache chaining and can be freely mixed with inference
+    phases in the same call.
+
     Parameters
     ----------
     phases:
-        Ordered sequence of phases to trace.  Each element must be
-        ``"prefill"`` or ``"decode"``.  When both are given, prefill runs
-        first and its ``past_key_values`` are fed to the decode pass so that
-        attention shapes reflect the actual KV-cache layout.
+        Ordered sequence of phases to trace.  Supported values:
+
+        * ``"prefill"`` — full-sequence inference pass (default KV-cache source).
+        * ``"decode"``  — single-token inference pass; uses prefill KV cache
+          when both phases are requested together.
+        * ``"train_forward"`` — training forward pass (``model.train()``,
+          gradients enabled).
+        * ``"train_backward"`` — training forward + backward pass; captures
+          all gradient ops emitted by ``loss.backward()``.
+        * ``"forward"`` / ``"train"`` — aliases for ``"prefill"`` /
+          ``"train_forward"`` respectively.
     target_layers:
         Optional explicit list of layer indices to keep in the output.
         For example ``[0, 3]`` retains only ops from layer 0 and layer 3.
@@ -364,6 +792,19 @@ def run_trace_phases(
         the first dense and first sparse (MoE) layer indices from the model
         config and use those as *target_layers*.  Ignored when
         *target_layers* is already set.
+    graph_mode:
+        When ``True``, use ``torch.fx``-based graph capture
+        (:mod:`python.zrt.graph.fx_capture`) instead of the default
+        ``TorchDispatchMode`` eager path.  Key differences:
+
+        * Explicit producer-consumer edges from FX graph structure.
+        * Unified GEMM representation (``aten.linear.default``).
+        * Training backward ops captured in a single ``make_fx`` pass.
+        * Module-path annotations may be absent (fusion still works, but
+          component labels fall back to bare aten op names).
+
+        The output format is identical to the eager path; all downstream
+        writers (Excel, JSON, ONNX) work without modification.
 
     Returns
     -------
@@ -401,7 +842,11 @@ def run_trace_phases(
             )
             effective_num_layers = min_required
 
-    logger.info("Loading model %s (%d layers) …", model_id, effective_num_layers)
+    logger.info(
+        "Loading model %s (%d layers, graph_mode=%s) …",
+        model_id, effective_num_layers, graph_mode,
+    )
+
     model, config, fake_mode = load_model(model_id, num_hidden_layers=effective_num_layers)
 
     slug = _make_model_slug(model_id)
@@ -416,47 +861,59 @@ def run_trace_phases(
     )
 
     all_records: Dict[str, List[Dict[str, Any]]] = {}
+    all_graphs: Dict[str, Tuple[Any, Any]] = {}
     past_key_values: Any = None
     canonical_phases = [_PHASE_ALIASES.get(p, p) for p in phases]
 
+    # Create a shared TensorTracker for training phases so that tensor IDs are
+    # globally unique across train_forward and train_backward.  This enables
+    # exact tensor-ID matching in stitch_fwd_bwd.
+    has_training = any(p in _TRAINING_PHASES for p in canonical_phases)
+    shared_tracker = TensorTracker() if has_training else None
+
     try:
         for phase in canonical_phases:
-            query_len = 1 if phase == "decode" else seq_len
-            logger.info(
-                "Tracing %s phase (batch=%d, query_len=%d) …",
-                phase, batch_size, query_len,
-            )
-            records, tracker, output = _trace_phase(
-                model, config, batch_size, seq_len, phase, past_key_values)
-            logger.info("  Captured %d ops.", len(records))
-
-            # Pass KV cache from prefill into the subsequent decode pass.
-            if phase == "prefill" and "decode" in canonical_phases:
-                past_key_values = getattr(output, "past_key_values", None)
-                if past_key_values is None:
-                    logger.warning(
-                        "Prefill output contains no past_key_values; "
-                        "decode pass will run without KV cache "
-                        "(attention shapes may differ from a real decode step)")
-
-            # Filter to requested layers (if any).
-            if target_layers is not None:
-                before = len(records)
-                records = _filter_records_by_layers(records, target_layers)
+            if graph_mode:
+                # ── torch.compile graph-mode path ─────────────────────────
+                records, tracker = _trace_compile_phase(
+                    model, config, batch_size, seq_len, phase, fake_mode,
+                    target_layers=set(target_layers) if target_layers else None)
+            else:
+                # ── Eager TorchDispatchMode path ──────────────────────────
+                query_len = 1 if phase == "decode" else seq_len
                 logger.info(
-                    "  Layer filter %s: %d → %d ops.",
-                    target_layers, before, len(records),
+                    "Tracing %s phase (batch=%d, query_len=%d, grad=%s) …",
+                    phase, batch_size, query_len, phase in _TRAINING_PHASES,
                 )
+                # Pass shared tracker for training phases so IDs are unique
+                phase_tracker = shared_tracker if phase in _TRAINING_PHASES else None
+                records, tracker, output = _trace_phase(
+                    model, config, batch_size, seq_len, phase, past_key_values,
+                    target_layers=target_layers,
+                    gradient_checkpointing=gradient_checkpointing,
+                    tensor_tracker=phase_tracker)
+                logger.info("  Captured %d ops.", len(records))
 
-            _save_phase_outputs(
-                records, tracker, phase, slug, output_dir, config_summary)
+                # Pass KV cache from prefill into the subsequent decode pass.
+                if phase == "prefill" and "decode" in canonical_phases:
+                    past_key_values = getattr(output, "past_key_values", None)
+                    if past_key_values is None:
+                        logger.warning(
+                            "Prefill output contains no past_key_values; "
+                            "decode pass will run without KV cache "
+                            "(attention shapes may differ from a real decode step)")
+
+            raw_opgraph, fused_opgraph = _save_phase_outputs(
+                records, tracker, phase, slug, output_dir, config_summary,
+                platform=platform)
             all_records[phase] = records
+            all_graphs[phase] = (raw_opgraph, fused_opgraph)
 
     finally:
         fake_mode.__exit__(None, None, None)
 
     logger.info("All outputs saved to %s", output_dir)
-    return output_dir, all_records
+    return TracePhaseResult(output_dir, all_records, all_graphs)
 
 
 def run_trace(
@@ -468,6 +925,8 @@ def run_trace(
     phase: str = "prefill",
     target_layers: Optional[List[int]] = None,
     auto_layers: bool = False,
+    platform: str = "generic",
+    graph_mode: bool = False,
 ) -> Tuple[Path, List[Dict[str, Any]]]:
     """Load *model_id*, trace a single phase, write Excel + graph outputs.
 
@@ -492,7 +951,7 @@ def run_trace(
     -------
     (output_dir, records)
     """
-    output_dir, phase_records = run_trace_phases(
+    result = run_trace_phases(
         model_id=model_id,
         num_layers=num_layers,
         batch_size=batch_size,
@@ -501,102 +960,21 @@ def run_trace(
         phases=(_PHASE_ALIASES.get(phase, phase),),
         target_layers=target_layers,
         auto_layers=auto_layers,
+        platform=platform,
+        graph_mode=graph_mode,
     )
     canonical = _PHASE_ALIASES.get(phase, phase)
-    return output_dir, phase_records[canonical]
+    phase_graphs = result.graphs.get(canonical)
+    return TraceResult(result.output_dir, result.phase_records[canonical], phase_graphs)
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
+# The full CLI lives in python.zrt.cli.  This shim keeps
+# `python -m python.zrt.graph.main` working as before.
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Trace LLM operator sequences and write Excel + computation graph.")
-    parser.add_argument(
-        "model_id", nargs="?",
-        help="HF Hub model ID or local directory (e.g. deepseek-ai/DeepSeek-V3-0324)")
-    parser.add_argument(
-        "--model", choices=_MODEL_DIRS.keys(),
-        help="Shorthand for local DeepSeek model: v3 or v3.2 (backward compat)")
-    parser.add_argument("--layers", type=int, default=4,
-                        help="Number of transformer layers to trace (default: 4)")
-    parser.add_argument("--batch-size", type=int, default=1,
-                        help="Dummy input batch size (default: 1)")
-    parser.add_argument("--seq-len", type=int, default=128,
-                        help="Prefill sequence length (default: 128)")
-    parser.add_argument("--output-dir", "-o",
-                        help="Output directory (default: output/graph/<model_slug>)")
-    parser.add_argument(
-        "--phases", nargs="+", default=["prefill", "decode"],
-        choices=["prefill", "decode", "forward"],
-        metavar="PHASE",
-        help="Phases to trace: prefill, decode, or both (default: prefill decode). "
-             "'forward' is an alias for 'prefill'.")
-    # Legacy single-phase flag kept for backward compat
-    parser.add_argument(
-        "--phase", default=None,
-        help="(legacy) Trace a single phase. Overrides --phases when set.")
-
-    # Layer selection
-    _layer_group = parser.add_mutually_exclusive_group()
-    _layer_group.add_argument(
-        "--target-layers",
-        metavar="IDX",
-        help="Comma-separated layer indices to trace, e.g. '0,3'.  "
-             "The model is loaded with enough layers to reach the highest index.",
-    )
-    _layer_group.add_argument(
-        "--auto-layers",
-        action="store_true",
-        default=False,
-        help="Automatically select the first dense layer and the first sparse "
-             "(MoE) layer based on the model config.  Mutually exclusive with "
-             "--target-layers.",
-    )
-    args = parser.parse_args()
-
-    # Resolve model_id: positional takes precedence over --model shorthand
-    if args.model_id:
-        model_id = args.model_id
-    elif args.model:
-        model_dir_name = _MODEL_DIRS[args.model]
-        model_id = str(
-            Path(__file__).parent.parent.parent / "hf_models" / model_dir_name)
-    else:
-        parser.error("Provide a model_id argument or --model v3/v3.2")
-
-    output_dir = Path(args.output_dir) if args.output_dir else None
-
-    # --phase (legacy) overrides --phases
-    if args.phase is not None:
-        phases = [args.phase]
-    else:
-        phases = args.phases
-
-    # Parse --target-layers "0,3" → [0, 3]
-    target_layers: Optional[List[int]] = None
-    if args.target_layers:
-        try:
-            target_layers = [int(x.strip()) for x in args.target_layers.split(",")]
-        except ValueError:
-            parser.error(
-                f"--target-layers must be comma-separated integers, "
-                f"got: {args.target_layers!r}"
-            )
-
-    # When neither --target-layers nor --auto-layers is given, default to
-    # auto_layers=True so the CLI behaves the same as the function default.
-    effective_auto_layers = args.auto_layers or (target_layers is None)
-
-    run_trace_phases(
-        model_id=model_id,
-        num_layers=args.layers,
-        batch_size=args.batch_size,
-        seq_len=args.seq_len,
-        output_dir=output_dir,
-        phases=tuple(phases),
-        target_layers=target_layers,
-        auto_layers=effective_auto_layers,
-    )
+    from python.zrt.cli import main as _main
+    _main()
 
 
 if __name__ == "__main__":

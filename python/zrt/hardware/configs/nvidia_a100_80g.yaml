@@ -1,0 +1,35 @@
+name: "NVIDIA A100 80G SXM"
+vendor: "nvidia"
+device_type: "gpu"
+
+compute:
+  # Dense (no sparsity). With 2:4 sparsity all values double.
+  fp16_tflops: 312
+  bf16_tflops: 312
+  fp32_tflops: 19.5
+  int8_tops: 624
+  int4_tops: 1248
+  fp8_tops: 0       # A100 does not support FP8
+
+memory:
+  capacity_gb: 80
+  hbm_bandwidth_gbps: 2000    # HBM2e
+  l2_cache_mb: 40
+  tiers:
+    - { name: "L2",  bandwidth_gbps: 5120, capacity_mb: 40 }
+    - { name: "HBM", bandwidth_gbps: 2000, capacity_mb: 0  }
+
+interconnect:
+  intra_node:
+    type: "NVLink3"
+    # 12 NVLink 3.0 links, 50 GB/s bidirectional each → 600 GB/s total
+    bandwidth_gbps: 600
+    latency_us: 1
+    topology: "all_to_all"
+    num_devices: 8
+  inter_node:
+    type: "InfiniBand_HDR"
+    bandwidth_gbps: 200       # HDR IB: 200 Gb/s ≈ 25 GB/s per port; 8-port = 200 GB/s
+    latency_us: 2
+    topology: "fat_tree"
+    num_devices: 0

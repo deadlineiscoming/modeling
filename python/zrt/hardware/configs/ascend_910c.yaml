@@ -1,0 +1,37 @@
+name: "Ascend 910C"
+vendor: "huawei"
+device_type: "npu"
+
+compute:
+  # Estimated ~2x 910B; exact specs not fully public as of mid-2025
+  fp16_tflops: 640
+  bf16_tflops: 640
+  fp32_tflops: 320
+  int8_tops: 1280
+  int4_tops: 2560
+  fp8_tops: 1280
+
+memory:
+  capacity_gb: 96
+  hbm_bandwidth_gbps: 3200
+  l2_cache_mb: 96
+  tiers:
+    - { name: "L2",  bandwidth_gbps: 12800, capacity_mb: 96 }
+    - { name: "HBM", bandwidth_gbps: 3200,  capacity_mb: 0  }
+
+interconnect:
+  intra_node:
+    type: "HCCS"
+    # 7 HCCS links per card, ~112 GB/s unidirectional each (2x 910B)
+    # Registry computes bidirectional total: 7 * 112 * 2 = 1568 GB/s
+    unidirectional_bw_gbps: 112
+    num_links: 7
+    latency_us: 2
+    topology: "full_mesh"
+    num_devices: 8
+  inter_node:
+    type: "RoCE"
+    bandwidth_gbps: 400
+    latency_us: 4
+    topology: "fat_tree"
+    num_devices: 0

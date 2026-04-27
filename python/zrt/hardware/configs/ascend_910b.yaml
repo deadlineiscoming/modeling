@@ -1,0 +1,37 @@
+name: "Ascend 910B"
+vendor: "huawei"
+device_type: "npu"
+
+compute:
+  # Peak throughput (theoretical, no sparsity)
+  fp16_tflops: 320
+  bf16_tflops: 320
+  fp32_tflops: 160
+  int8_tops: 640
+  int4_tops: 1280
+  fp8_tops: 0       # 910B does not support FP8
+
+memory:
+  capacity_gb: 64
+  hbm_bandwidth_gbps: 1600
+  l2_cache_mb: 48
+  tiers:
+    - { name: "L2",  bandwidth_gbps: 6400, capacity_mb: 48 }
+    - { name: "HBM", bandwidth_gbps: 1600, capacity_mb: 0  }
+
+interconnect:
+  intra_node:
+    type: "HCCS"
+    # 7 HCCS links per card, 56 GB/s unidirectional each
+    # Registry computes bidirectional total: 7 * 56 * 2 = 784 GB/s
+    unidirectional_bw_gbps: 56
+    num_links: 7
+    latency_us: 3
+    topology: "full_mesh"
+    num_devices: 8
+  inter_node:
+    type: "RoCE"
+    bandwidth_gbps: 200      # 200 GbE ≈ 25 GB/s per port; 8-port = 200 GB/s aggregate
+    latency_us: 5
+    topology: "fat_tree"
+    num_devices: 0           # cluster-scale, no fixed upper bound

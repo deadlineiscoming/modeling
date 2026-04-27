@@ -1,0 +1,36 @@
+name: "NVIDIA H800"
+vendor: "nvidia"
+device_type: "gpu"
+
+compute:
+  # Same compute die as H100; export restrictions reduce interconnect only
+  fp16_tflops: 989
+  bf16_tflops: 989
+  fp32_tflops: 66.9
+  int8_tops: 1978
+  int4_tops: 3958
+  fp8_tops: 3958
+
+memory:
+  capacity_gb: 80
+  hbm_bandwidth_gbps: 3350    # HBM3
+  l2_cache_mb: 50
+  tiers:
+    - { name: "L2",  bandwidth_gbps: 12288, capacity_mb: 50 }
+    - { name: "HBM", bandwidth_gbps: 3350,  capacity_mb: 0  }
+
+interconnect:
+  intra_node:
+    type: "NVLink4"
+    # H800 export-restricted: NVLink bandwidth reduced to ~400 GB/s
+    # (vs 900 GB/s for H100 SXM)
+    bandwidth_gbps: 400
+    latency_us: 1
+    topology: "all_to_all"
+    num_devices: 8
+  inter_node:
+    type: "InfiniBand_NDR"
+    bandwidth_gbps: 400
+    latency_us: 2
+    topology: "fat_tree"
+    num_devices: 0

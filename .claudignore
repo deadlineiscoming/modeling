@@ -1,0 +1,38 @@
+# 输出目录
+output/
+screenshot_ops/output/
+
+# 配置目录
+.idea/
+.claude/
+
+# 大型文件
+*.xlsx
+*.onnx
+*.log
+
+# Python相关
+__pycache__/
+*.pyc
+venv/
+env/
+
+# 临时文件
+*.tmp
+*.temp
+~$*.xlsx
+
+# 日志目录
+logs/
+
+# 图片
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
+
+# 弃用的目录/文件
+screenshot_ops/
+screenshot_ops.py

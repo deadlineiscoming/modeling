@@ -1,0 +1,48 @@
+{
+  "title": "Fix Stage 4 Analyze: Merge FlopsPass+TrainFlopsPass, RooflinePass dedup, delete dead modules",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Issue A: RooflinePass reads FlopsPass annotations instead of recomputing _fmr()",
+      "acceptanceCriteria": [
+        "RooflinePass.run() reads node.annotations['flops'], ['read_bytes'], ['write_bytes'] before calling sim._fmr()",
+        "Falls back to sim._fmr(node) only when flops==0 and read_bytes==0 (FlopsPass didn't run)",
+        "All existing tests still pass after the change",
+        "No behavioral change when FlopsPass runs before RooflinePass (the normal pipeline order)"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "Issue B: Merge TrainFlopsPass into FlopsPass (user-requested fusion)",
+      "acceptanceCriteria": [
+        "FlopsPass.run() checks ctx.training — when set, adds flops_fwd/flops_dx/flops_dw annotations",
+        "flops key always contains raw forward FLOPs (never overwritten for RooflinePass compatibility)",
+        "Phase gating (fwd/bwd) and recompute multiplier applied in training mode",
+        "_calculate_grad_flops moved to FlopsPass as static method",
+        "flops_train.py deleted, pipeline.py updated, __init__.py updated",
+        "All existing tests pass after the merge"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-003",
+      "title": "Issue C: Delete dead module memory_train.py",
+      "acceptanceCriteria": [
+        "python/zrt/transform/analysis/memory_train.py is deleted",
+        "No import or reference to memory_train or TrainMemoryPass exists in the codebase",
+        "All existing tests pass after the deletion"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-004",
+      "title": "Full regression gate: all training tests pass",
+      "acceptanceCriteria": [
+        "PYTHONPATH=python pytest tests/training/ -q shows 0 new failures (218 passed)",
+        "PYTHONPATH=python pytest tests/test_transform.py tests/test_executor.py -q shows 0 new failures"
+      ],
+      "passes": true
+    }
+  ]
+}

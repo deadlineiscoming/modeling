@@ -26,7 +26,7 @@ class TrainingFlopsPass(GraphPass):
 
     Strategy (priority order):
     1. Per-node annotations: sum flops_fwd / flops_dx / flops_dw from
-       ``TrainFlopsPass`` when available (more accurate for MoE, comm, etc.)
+       ``FlopsPass`` when available (more accurate for MoE, comm, etc.)
     2. 6P rule fallback: 6 * total_params * tokens (dense transformers)
 
     Adds to graph.metadata:
@@ -98,7 +98,7 @@ class TrainingFlopsPass(GraphPass):
         g.metadata["layer_scale"] = layer_scale
 
         # Recompute overhead: for nodes with recompute annotation, flops_fwd
-        # already includes 2x multiplier (flops_train.py:37), so base fwd = flops_fwd / 2
+        # already includes 2x multiplier (passes.py FlopsPass), so base fwd = flops_fwd / 2
         # Only fwd-phase nodes can be recomputed (bwd-phase nodes are not recomputed)
         recompute_flops = sum(
             n.annotations.get("flops_fwd", 0) // 2

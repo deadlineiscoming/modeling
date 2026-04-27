@@ -1,0 +1,41 @@
+## Phase 3 Ralph Session — CP/DP Remediation + Overlap/Memory
+
+### Task
+Implement Phase 3 plan from .omc/plans/phase3_31_34_plan.md: CP/DP remediation (R1-R6), overlap semantics (I1-I3), graph-native memory (I4-I6).
+
+### Baseline
+- 137 training tests pass
+- Key files read: context_parallel.py, data_parallel.py, comm_inserter.py, training.py, passes.py, pipeline.py
+- All PRD stories created (US-001 through US-009)
+
+### Execution Order
+1. US-001: CP comm metadata + ring overlap (R1+R2)
+2. US-002: CP regression tests (R3)
+3. US-003: DP per-group placement + latency accounting (R4+R5)
+4. US-004: DP regression tests (R6)
+5. US-005: Stream overlap + exposed comm-time (I1+I2)
+6. US-006: Overlap semantics tests (I3)
+7. US-007: Graph-native memory + stage-aware inflight (I4+I5)
+8. US-008: Memory regression tests (I6)
+9. US-009: Full regression gate
+
+### Files Changed
+
+**Source (4 files modified):**
+1. `python/zrt/transform/parallel/comm_inserter.py` — Added message_size_bytes to CP comm nodes; ring overlap_target uses fa_tile: format; ring attrs include round/scope/layer
+2. `python/zrt/transform/parallel/data_parallel.py` — Rewrote from single tail node to per-gradient-group placement with layer-based grouping, ZeRO mapping, _insert_after helper
+3. `python/zrt/transform/analysis/training.py` — Added compute_exposed_comm_time() helper; latency-based DP accounting; graph-native memory path (fwd_bwd_stitched); stage-aware inflight depth (pp - stage_id); overlap integration into step_time; removed stale TODO
+4. `python/zrt/transform/analysis/passes.py` — Added overlap_type detection (coc/mc2/ring_cp/none) to StreamAssignPass
+
+**Tests (4 new files, 38 new tests):**
+5. `tests/training/test_context_parallel.py` — 8 tests for Ulysses A2A, Ring P2P, metadata
+6. `tests/training/test_data_parallel.py` — 8 tests for DP ZeRO stages, overlap, group idx
+7. `tests/training/test_stream_overlap.py` — 14 tests for CoC/MC2/Ring-CP formulas and detection
+8. `tests/training/test_memory_graph_native.py` — 8 tests for graph-native activation, recompute, ZeRO, inflight
+
+### Results
+- 175/175 tests pass (137 original + 38 new)
+- 0 regressions
+- Architect review: APPROVED
+- Deslop pass: removed stale TODO in TrainingMemoryPass
+- Post-deslop regression: 175/175 pass

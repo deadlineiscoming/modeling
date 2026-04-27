@@ -16,11 +16,18 @@ if TYPE_CHECKING:
 class FlopsPass(GraphPass):
     """Annotate every node with theoretical FLOPs, read_bytes, write_bytes.
 
-    Reuses the Roofline simulator's per-op formula dispatch (hardware-agnostic).
-    Adds:
-      node.annotations["flops"]       : int
+    In training mode (ctx.training is set), also annotates gradient FLOPs
+    (flops_dx, flops_dw) and applies the recompute 2x multiplier.
+
+    Always writes:
+      node.annotations["flops"]       : int  (raw forward FLOPs)
       node.annotations["read_bytes"]  : int
       node.annotations["write_bytes"] : int
+
+    Training-only additions:
+      node.annotations["flops_fwd"]   : int  (flops * recompute_multiplier)
+      node.annotations["flops_dx"]    : int
+      node.annotations["flops_dw"]    : int
     """
 
     name = "flops"
@@ -29,12 +36,75 @@ class FlopsPass(GraphPass):
         from python.zrt.simulator.backends.roofline import RooflineSimulator
         sim = RooflineSimulator()
         g = graph.clone()
+
+        is_train = ctx.training is not None
+
         for node in g.nodes.values():
             flops, read_b, write_b = sim._fmr(node)
             node.annotations["flops"]       = int(flops)
             node.annotations["read_bytes"]  = int(read_b)
             node.annotations["write_bytes"] = int(write_b)
+
+            if is_train:
+                phase = node.annotations.get("phase", "fwd")
+                is_bwd = phase in {"bwd", "backward", "train_backward"}
+
+                # For attention ops, apply compression ratio to FLOPs accounting
+                train_flops = flops
+                if _is_attention_op(node.op_type):
+                    ratio = _attn_compression_ratio(node, g)
+                    train_flops = flops * ratio
+
+                if is_bwd:
+                    dx_flops, dw_flops = 0.0, 0.0
+                else:
+                    dx_flops, dw_flops = self._calculate_grad_flops(node, train_flops)
+
+                rec_mult = 2.0 if node.annotations.get("recompute") and not is_bwd else 1.0
+                node.annotations["flops_fwd"] = int(train_flops * rec_mult)
+                node.annotations["flops_dx"]  = int(dx_flops)
+                node.annotations["flops_dw"]  = int(dw_flops)
+
         return g
+
+    @staticmethod
+    def _calculate_grad_flops(node, fwd_flops: float) -> tuple[float, float]:
+        op_type = node.op_type
+        dx_flops = 0.0
+        dw_flops = 0.0
+
+        if op_type.startswith("aten.mm") or op_type.startswith("aten.linear") or op_type.startswith("aten.addmm"):
+            dx_flops = fwd_flops
+            dw_flops = fwd_flops
+        elif _is_attention_op(op_type):
+            dx_flops = 2.5 * fwd_flops
+        elif "layer_norm" in op_type.lower() or "ln" in op_type.lower():
+            dx_flops = fwd_flops
+        elif "softmax" in op_type.lower():
+            dx_flops = fwd_flops
+        elif "swiglu" in op_type.lower() or "gelu" in op_type.lower():
+            dx_flops = fwd_flops
+
+        return dx_flops, dw_flops
+
+
+def _is_attention_op(op_type: str) -> bool:
+    return "attention" in op_type.lower() or "attn" in op_type.lower()
+
+
+def _attn_compression_ratio(node, graph) -> float:
+    value = node.annotations.get("attn_compression_ratio")
+    if value is None:
+        value = node.attrs.get("attn_compression_ratio")
+    if value is None:
+        value = graph.metadata.get("attn_compression_ratio", 1.0)
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not (0.0 < ratio <= 1.0):
+        return 1.0
+    return ratio
 
 
 # ── RooflinePass ──────────────────────────────────────────────────────────────
@@ -60,7 +130,11 @@ class RooflinePass(GraphPass):
         g   = graph.clone()
 
         for node in g.nodes.values():
-            flops, read_b, write_b = sim._fmr(node)
+            flops  = node.annotations.get("flops", 0)
+            read_b = node.annotations.get("read_bytes", 0)
+            write_b = node.annotations.get("write_bytes", 0)
+            if flops == 0 and read_b == 0:   # FlopsPass didn't run — fall back
+                flops, read_b, write_b = sim._fmr(node)
             total_b = read_b + write_b
 
             # Use primary dtype for peak throughput lookup

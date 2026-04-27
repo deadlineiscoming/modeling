@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"PYTHONPATH=python python3 -c \\\"\\nfrom python.zrt.ir.graph import OpGraph\\nfrom python.zrt.ir.node import OpNode\\nfrom python.zrt.ir.types import TensorMeta, DType\\nfrom python.zrt.transfor...",
+  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<string>\", line 17, in <module>\n    inputs=[_tm((128, 4096)), _tm((4096, 4096))],\n            ~~~^^^^^^^^^^^^^\n  File \"<string>\", line 10, in _tm\n    t = TensorMeta(id=f't{tid}', shape=shape, dtype=DType.BF16, mem_bytes=math.prod(shape) * 2)\n                          ^^^\nUnboundLocalError: cannot access local variable 'tid' where it is not associated with a value",
+  "timestamp": "2026-04-27T06:01:08.259Z",
+  "retry_count": 2
+}

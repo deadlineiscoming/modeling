@@ -71,7 +71,6 @@ def build_pipeline() -> TransformPipeline:
     )
     from python.zrt.transform.analysis import (
         FlopsPass, RooflinePass, CommLatencyPass, StreamAssignPass,
-        TrainFlopsPass,
         TrainingFlopsPass, TrainingMemoryPass, TrainingPipelinePass,
     )
     from python.zrt.transform.training.zero_fsdp import ZeroFSDPPass
@@ -113,7 +112,6 @@ def build_pipeline() -> TransformPipeline:
     pipe.add("analyze", RooflinePass())
     pipe.add("analyze", CommLatencyPass())
     pipe.add("analyze", StreamAssignPass())
-    pipe.add("analyze", TrainFlopsPass(),       condition=is_train)
     pipe.add("analyze", TrainingFlopsPass(),    condition=is_train)
     pipe.add("analyze", TrainingMemoryPass(),   condition=is_train)
     pipe.add("analyze", TrainingPipelinePass(), condition=is_train)

@@ -55,7 +55,7 @@ _2026-04-23。参考文档：`docs/ai_infra_modeller_design.md`。_
 │                          标注 state_bytes、step_flops                │
 │                                                                     │
 │  ── ANALYZE 阶段 ─────────────────────────────────────────────────   │
-│  TrainFlopsPass          每节点：flops_fwd、flops_dx、flops_dw        │
+│  FlopsPass（训练模式）   每节点：flops_fwd、flops_dx、flops_dw        │
 │  RooflinePass            每节点：compute_us、memory_us、bound         │
 │  CommLatencyPass         每通信节点：latency_us（α-β 模型，分层）       │
 │  StreamAssignPass        分配 stream_id；应用 CoC/MC2 重叠             │
@@ -174,8 +174,8 @@ _2026-04-23。参考文档：`docs/ai_infra_modeller_design.md`。_
 - **修复**：读取 `ZeroFSDPPass` 写入的 `g.metadata["zero"]`；应用重计算零化；在可用时用实际节点输出大小替换系数。
 
 **1.3 —— 总 FLOPs（training.py:56）**
-`TrainingFlopsPass` 计算 `6 * count_params(g) * tokens` 并覆盖 `TrainFlopsPass`（flops_train.py）已正确标注的逐节点 `flops_fwd/dx/dw`。
-- **修复**：对所有节点求和 `node.annotations.get("flops_fwd", 0) + flops_dx + flops_dw`；删除覆盖逻辑；仅在 `TrainFlopsPass` 未运行时将 `6P` 作为回退。
+`TrainingFlopsPass` 计算 `6 * count_params(g) * tokens` 并覆盖 `FlopsPass`（passes.py，训练模式）已正确标注的逐节点 `flops_fwd/dx/dw`。
+- **修复**：对所有节点求和 `node.annotations.get("flops_fwd", 0) + flops_dx + flops_dw`；删除覆盖逻辑；仅在 `FlopsPass` 未运行时将 `6P` 作为回退。
 
 ---
 

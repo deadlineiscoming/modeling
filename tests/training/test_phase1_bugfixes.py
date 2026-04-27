@@ -3,7 +3,7 @@
 Bug 1.1: 1F1B step-time formula
 Bug 1.2: Activation memory (Korthikanti + recompute + ZeRO metadata)
 Bug 1.3: TrainingFlopsPass per-node annotation priority
-Bug 3: TrainFlopsPass gates _calculate_grad_flops on node phase
+Bug 3: FlopsPass gates _calculate_grad_flops on node phase
 Bug 4: TrainingFlopsPass phase-aware aggregation on stitched graphs
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ import pytest
 
 from python.zrt.ir.graph import OpGraph
 from python.zrt.ir.node import OpNode
-from python.zrt.transform.analysis.flops_train import TrainFlopsPass
+from python.zrt.transform.analysis.passes import FlopsPass
 from python.zrt.transform.analysis.training import (
     TrainingFlopsPass,
     TrainingMemoryPass,
@@ -234,7 +234,7 @@ def test_steady_steps_equals_num_microbatches():
     assert metrics.cooldown_steps == pp - 1
 
 
-# ── Bug 3: TrainFlopsPass gates _calculate_grad_flops on node phase ───────────
+# ── Bug 3: FlopsPass gates _calculate_grad_flops on node phase ───────────
 
 def test_train_flops_pass_zeros_dx_dw_for_backward_phase_nodes():
     """Bug 3: Bwd-phase nodes should have dx_flops=0 and dw_flops=0.
@@ -278,7 +278,7 @@ def test_train_flops_pass_zeros_dx_dw_for_backward_phase_nodes():
     n_bwd.annotations["phase"] = "bwd"
 
     g = _make_graph([n_fwd, n_bwd])
-    result = TrainFlopsPass().run(g, _make_ctx())
+    result = FlopsPass().run(g, _make_ctx())
 
     # Forward node: should have dx/dw FLOPs from ratio-based calculation
     fwd_result = result.nodes["mm_fwd"]
@@ -316,7 +316,7 @@ def test_train_flops_pass_defaults_to_fwd_phase():
     )
 
     g = _make_graph([n_no_phase])
-    result = TrainFlopsPass().run(g, _make_ctx())
+    result = FlopsPass().run(g, _make_ctx())
 
     # Should calculate dx/dw for forward-phase nodes
     assert result.nodes["mm"].annotations["flops_dx"] > 0
@@ -494,12 +494,12 @@ def test_recompute_flops_only_for_fwd_phase_nodes():
     assert result.metadata["recompute_flops"] == 1000
 
 
-# ── Integration: TrainFlopsPass → TrainingFlopsPass full pipeline ────────────
+# ── Integration: FlopsPass → TrainingFlopsPass full pipeline ────────────
 
 def test_integration_train_flops_then_training_flops_stitched():
-    """Integration: TrainFlopsPass then TrainingFlopsPass on a stitched graph.
+    """Integration: FlopsPass then TrainingFlopsPass on a stitched graph.
 
-    Verifies the full pipeline: TrainFlopsPass annotates per-node FLOPs,
+    Verifies the full pipeline: FlopsPass annotates per-node FLOPs,
     then TrainingFlopsPass aggregates them with phase-aware splitting.
     """
     from python.zrt.ir.types import TensorMeta, DType
@@ -537,11 +537,11 @@ def test_integration_train_flops_then_training_flops_stitched():
 
     g = _make_graph([n_fwd, n_bwd], metadata={"fwd_bwd_stitched": True, "num_layers": 4, "num_layers_traced": 4})
 
-    # Run full pipeline: TrainFlopsPass → TrainingFlopsPass
-    g_annotated = TrainFlopsPass().run(g, _make_ctx())
+    # Run full pipeline: FlopsPass → TrainingFlopsPass
+    g_annotated = FlopsPass().run(g, _make_ctx())
     result = TrainingFlopsPass().run(g_annotated, _make_ctx(micro_batch=1, global_batch=4))
 
-    # Both nodes should have flops_fwd > 0 (computed by TrainFlopsPass)
+    # Both nodes should have flops_fwd > 0 (computed by FlopsPass)
     assert g_annotated.nodes["mm_fwd"].annotations["flops_fwd"] > 0
     assert g_annotated.nodes["mm_bwd"].annotations["flops_fwd"] > 0
 
@@ -597,7 +597,7 @@ def test_integration_recompute_multiplier_not_applied_to_bwd_nodes():
     n_bwd.annotations["recompute"] = True  # Should be ignored for bwd
 
     g = _make_graph([n_fwd, n_bwd])
-    result = TrainFlopsPass().run(g, _make_ctx())
+    result = FlopsPass().run(g, _make_ctx())
 
     # Both nodes have same input shapes, so base flops should be equal
     # Fwd node: flops_fwd = base * 2 (recompute multiplier applied)
@@ -610,8 +610,8 @@ def test_integration_recompute_multiplier_not_applied_to_bwd_nodes():
     )
 
 
-def test_integration_flops_pass_annotations_used_by_train_flops():
-    """TrainFlopsPass should use existing FlopsPass annotations when present."""
+def test_integration_flops_pass_computes_training_annotations():
+    """FlopsPass in training mode computes raw flops + gradient annotations."""
     from python.zrt.ir.types import TensorMeta, DType
 
     tid = [0]
@@ -621,7 +621,6 @@ def test_integration_flops_pass_annotations_used_by_train_flops():
         tid[0] += 1
         return t
 
-    # Create a node with pre-existing FlopsPass annotations
     n = OpNode(
         id="mm",
         op_type="aten.mm.default",
@@ -630,15 +629,137 @@ def test_integration_flops_pass_annotations_used_by_train_flops():
         scope="model.layers.0.mlp",
         category="compute",
     )
-    # Pre-annotate as if FlopsPass/RooflinePass already ran
-    n.annotations["flops"] = 99999
-    n.annotations["read_bytes"] = 50000
-    n.annotations["write_bytes"] = 30000
 
     g = _make_graph([n])
-    result = TrainFlopsPass().run(g, _make_ctx())
+    result = FlopsPass().run(g, _make_ctx())
 
-    # TrainFlopsPass should use the existing annotation, not recompute
-    assert result.nodes["mm"].annotations["flops_fwd"] == 99999
-    assert result.nodes["mm"].annotations["read_bytes"] == 50000
-    assert result.nodes["mm"].annotations["write_bytes"] == 30000
+    # Raw forward FLOPs computed by sim._fmr()
+    expected_flops = 2 * 128 * 4096 * 4096
+    assert result.nodes["mm"].annotations["flops"] == expected_flops
+    # Training mode: flops_fwd = raw (no recompute), flops_dx/dw from grad ratios
+    assert result.nodes["mm"].annotations["flops_fwd"] == expected_flops
+    assert result.nodes["mm"].annotations["flops_dx"] == expected_flops
+    assert result.nodes["mm"].annotations["flops_dw"] == expected_flops
+
+
+# ── Reviewer HIGH-1 regression: aten.addmm / aten.linear gradient FLOPs ──────
+
+def test_flops_pass_addmm_default_produces_gradient_flops():
+    """aten.addmm.default nodes must produce non-zero flops_dx/dw."""
+    from python.zrt.ir.types import TensorMeta, DType
+
+    tid = [0]
+    def _tm(shape, dtype=DType.BF16):
+        import math
+        t = TensorMeta(id=f"t{tid[0]}", shape=shape, dtype=dtype, mem_bytes=math.prod(shape) * 2)
+        tid[0] += 1
+        return t
+
+    n = OpNode(
+        id="addmm",
+        op_type="aten.addmm.default",
+        inputs=[_tm((128,)), _tm((128, 4096)), _tm((4096, 4096))],
+        outputs=[_tm((128, 4096))],
+        scope="model.layers.0.mlp.gate_proj",
+        category="compute",
+    )
+    g = _make_graph([n])
+    result = FlopsPass().run(g, _make_ctx())
+
+    assert result.nodes["addmm"].annotations["flops_fwd"] > 0
+    assert result.nodes["addmm"].annotations["flops_dx"] > 0, \
+        "aten.addmm.default must produce gradient dx FLOPs"
+    assert result.nodes["addmm"].annotations["flops_dw"] > 0, \
+        "aten.addmm.default must produce gradient dw FLOPs"
+
+
+def test_flops_pass_linear_default_produces_gradient_flops():
+    """aten.linear.default nodes must produce non-zero flops_dx/dw."""
+    from python.zrt.ir.types import TensorMeta, DType
+
+    tid = [0]
+    def _tm(shape, dtype=DType.BF16):
+        import math
+        t = TensorMeta(id=f"t{tid[0]}", shape=shape, dtype=dtype, mem_bytes=math.prod(shape) * 2)
+        tid[0] += 1
+        return t
+
+    n = OpNode(
+        id="linear",
+        op_type="aten.linear.default",
+        inputs=[_tm((128, 4096)), _tm((4096, 4096))],
+        outputs=[_tm((128, 4096))],
+        scope="model.layers.0.mlp.gate_proj",
+        category="compute",
+    )
+    g = _make_graph([n])
+    result = FlopsPass().run(g, _make_ctx())
+
+    assert result.nodes["linear"].annotations["flops_fwd"] > 0
+    assert result.nodes["linear"].annotations["flops_dx"] > 0, \
+        "aten.linear.default must produce gradient dx FLOPs"
+    assert result.nodes["linear"].annotations["flops_dw"] > 0, \
+        "aten.linear.default must produce gradient dw FLOPs"
+
+
+# ── Reviewer HIGH-2 regression: attention compression ratio ──────────────────
+
+def test_flops_pass_attention_compression_ratio_applied():
+    """Attention nodes with compression ratio should scale flops_fwd/dx."""
+    from python.zrt.ir.types import TensorMeta, DType
+
+    tid = [0]
+    def _tm(shape, dtype=DType.BF16):
+        import math
+        t = TensorMeta(id=f"t{tid[0]}", shape=shape, dtype=dtype, mem_bytes=math.prod(shape) * 2)
+        tid[0] += 1
+        return t
+
+    n = OpNode(
+        id="attn",
+        op_type="aten.scaled_dot_product_attention",
+        inputs=[_tm((1, 1024, 4096))],
+        outputs=[_tm((1, 1024, 4096))],
+        scope="model.layers.0.self_attn",
+        category="compute",
+    )
+    n.annotations["attn_compression_ratio"] = 0.5
+
+    g = _make_graph([n], metadata={"attn_compression_ratio": 0.27})
+    result = FlopsPass().run(g, _make_ctx())
+
+    # Node-level ratio (0.5) should override graph-level (0.27)
+    raw_flops = result.nodes["attn"].annotations["flops"]
+    fwd_flops = result.nodes["attn"].annotations["flops_fwd"]
+    assert fwd_flops == int(raw_flops * 0.5), \
+        f"Expected flops_fwd={int(raw_flops * 0.5)}, got {fwd_flops}"
+    assert result.nodes["attn"].annotations["flops_dx"] == int(2.5 * raw_flops * 0.5)
+
+
+def test_flops_pass_attention_graph_compression_ratio():
+    """Graph-level compression ratio should apply when node has none."""
+    from python.zrt.ir.types import TensorMeta, DType
+
+    tid = [0]
+    def _tm(shape, dtype=DType.BF16):
+        import math
+        t = TensorMeta(id=f"t{tid[0]}", shape=shape, dtype=dtype, mem_bytes=math.prod(shape) * 2)
+        tid[0] += 1
+        return t
+
+    n = OpNode(
+        id="attn",
+        op_type="aten.scaled_dot_product_attention",
+        inputs=[_tm((1, 512, 1024))],
+        outputs=[_tm((1, 512, 1024))],
+        scope="model.layers.0.self_attn",
+        category="compute",
+    )
+
+    g = _make_graph([n], metadata={"attn_compression_ratio": 0.27})
+    result = FlopsPass().run(g, _make_ctx())
+
+    raw_flops = result.nodes["attn"].annotations["flops"]
+    fwd_flops = result.nodes["attn"].annotations["flops_fwd"]
+    assert fwd_flops == int(raw_flops * 0.27), \
+        f"Expected flops_fwd={int(raw_flops * 0.27)}, got {fwd_flops}"

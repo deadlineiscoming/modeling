@@ -1,0 +1,433 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1777268992944,
+  "projectRoot": "/mnt/d/work/git/modeling",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "doc": {
+      "path": "doc",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1777268992912,
+      "keyFiles": [
+        "deepseek_v4_analysis.html",
+        "implementation.md"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 4,
+      "lastAccessed": 1777268992915,
+      "keyFiles": [
+        "ai_infra_modeller_design.md",
+        "phase0_improvement_plan.md",
+        "training_integration_design.md",
+        "training_modeller_zh.md"
+      ]
+    },
+    "hf_models": {
+      "path": "hf_models",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1777268992918,
+      "keyFiles": []
+    },
+    "output": {
+      "path": "output",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1777268992921,
+      "keyFiles": []
+    },
+    "python": {
+      "path": "python",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1777268992924,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 12,
+      "lastAccessed": 1777268992927,
+      "keyFiles": [
+        "README.md",
+        "__init__.py",
+        "test_all_operators.py",
+        "test_executor.py",
+        "test_fusion_pass.py"
+      ]
+    },
+    "validation": {
+      "path": "validation",
+      "purpose": null,
+      "fileCount": 6,
+      "lastAccessed": 1777268992930,
+      "keyFiles": [
+        "QUICKSTART.md",
+        "README.md",
+        "__init__.py",
+        "cli.py",
+        "public_benchmark_data.json"
+      ]
+    },
+    "validation/models": {
+      "path": "validation/models",
+      "purpose": "Data models",
+      "fileCount": 3,
+      "lastAccessed": 1777268992944,
+      "keyFiles": [
+        "__init__.py",
+        "result.py",
+        "scenario.py"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "python/zrt/transform/analysis/training.py",
+      "accessCount": 110,
+      "lastAccessed": 1777273437850,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/analysis/modeller.py",
+      "accessCount": 60,
+      "lastAccessed": 1777251746441,
+      "type": "file"
+    },
+    {
+      "path": "tests/training/test_captured_graph_modelling.py",
+      "accessCount": 60,
+      "lastAccessed": 1777269059377,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/pipeline.py",
+      "accessCount": 24,
+      "lastAccessed": 1777273329261,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/analysis/passes.py",
+      "accessCount": 22,
+      "lastAccessed": 1777273794262,
+      "type": "file"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 20,
+      "lastAccessed": 1777181778429,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/io/config_loader.py",
+      "accessCount": 19,
+      "lastAccessed": 1777106233510,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/main.py",
+      "accessCount": 18,
+      "lastAccessed": 1777182754038,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/executor/scheduler.py",
+      "accessCount": 18,
+      "lastAccessed": 1777215227079,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/cli.py",
+      "accessCount": 17,
+      "lastAccessed": 1776929349603,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/search/estimator.py",
+      "accessCount": 17,
+      "lastAccessed": 1777182684569,
+      "type": "file"
+    },
+    {
+      "path": "tests/training/test_transform_integration.py",
+      "accessCount": 17,
+      "lastAccessed": 1777272969872,
+      "type": "file"
+    },
+    {
+      "path": "tests/training/test_flops.py",
+      "accessCount": 15,
+      "lastAccessed": 1777110066783,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/cli.py",
+      "accessCount": 15,
+      "lastAccessed": 1777262132921,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/analysis/__init__.py",
+      "accessCount": 15,
+      "lastAccessed": 1777273329217,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/context.py",
+      "accessCount": 14,
+      "lastAccessed": 1777262203777,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/__init__.py",
+      "accessCount": 11,
+      "lastAccessed": 1776917784166,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/ir/__init__.py",
+      "accessCount": 11,
+      "lastAccessed": 1776953357538,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 11,
+      "lastAccessed": 1777014864261,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/hardware/spec.py",
+      "accessCount": 10,
+      "lastAccessed": 1776944562133,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/models/flops.py",
+      "accessCount": 9,
+      "lastAccessed": 1777109797956,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/analysis/memory_train.py",
+      "accessCount": 9,
+      "lastAccessed": 1777271269703,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/__init__.py",
+      "accessCount": 8,
+      "lastAccessed": 1776951693867,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/fusion/pass_.py",
+      "accessCount": 8,
+      "lastAccessed": 1777013192509,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/__main__.py",
+      "accessCount": 7,
+      "lastAccessed": 1776929424489,
+      "type": "file"
+    },
+    {
+      "path": "tests/training/test_memory.py",
+      "accessCount": 7,
+      "lastAccessed": 1777100393571,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/fusion_rules.py",
+      "accessCount": 6,
+      "lastAccessed": 1776915324235,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/__main__.py",
+      "accessCount": 6,
+      "lastAccessed": 1776944578921,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/compose/stage.py",
+      "accessCount": 6,
+      "lastAccessed": 1777251722594,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/dispatch.py",
+      "accessCount": 5,
+      "lastAccessed": 1776953912597,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/models/memory.py",
+      "accessCount": 5,
+      "lastAccessed": 1777086877618,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/search/report.py",
+      "accessCount": 5,
+      "lastAccessed": 1777109930645,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/report/summary.py",
+      "accessCount": 5,
+      "lastAccessed": 1777181971386,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/simulator/backends/roofline.py",
+      "accessCount": 5,
+      "lastAccessed": 1777273725289,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/ir/param_count.py",
+      "accessCount": 4,
+      "lastAccessed": 1776913693942,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/transform/analysis/comm_latency.py",
+      "accessCount": 4,
+      "lastAccessed": 1776944559008,
+      "type": "file"
+    },
+    {
+      "path": "configs/training/deepseek_v3.yaml",
+      "accessCount": 3,
+      "lastAccessed": 1776928975266,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/training/__init__.py",
+      "accessCount": 3,
+      "lastAccessed": 1776929548967,
+      "type": "file"
+    },
+    {
+      "path": "docs/training_integration_design.md",
+      "accessCount": 3,
+      "lastAccessed": 1776944838183,
+      "type": "file"
+    },
+    {
+      "path": "requirements.txt",
+      "accessCount": 3,
+      "lastAccessed": 1777014878423,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_transform.py",
+      "accessCount": 2,
+      "lastAccessed": 1776910235072,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/simulator/hub.py",
+      "accessCount": 2,
+      "lastAccessed": 1776925851041,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/memory/model.py",
+      "accessCount": 2,
+      "lastAccessed": 1776925858848,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/tracker.py",
+      "accessCount": 2,
+      "lastAccessed": 1776951693706,
+      "type": "file"
+    },
+    {
+      "path": "e2e_check.py",
+      "accessCount": 2,
+      "lastAccessed": 1777014894439,
+      "type": "file"
+    },
+    {
+      "path": "docs/ai_infra_modeller_design.md",
+      "accessCount": 1,
+      "lastAccessed": 1776910155386,
+      "type": "file"
+    },
+    {
+      "path": "tests/test_executor.py",
+      "accessCount": 1,
+      "lastAccessed": 1776910235222,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/executor/__init__.py",
+      "accessCount": 1,
+      "lastAccessed": 1776910256165,
+      "type": "file"
+    },
+    {
+      "path": "validation/cli.py",
+      "accessCount": 1,
+      "lastAccessed": 1776916126349,
+      "type": "file"
+    },
+    {
+      "path": "python/zrt/graph/pattern_extractor.py",
+      "accessCount": 1,
+      "lastAccessed": 1776916133346,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

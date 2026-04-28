@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import math
 from python.zrt.ir.graph import OpGraph
 from python.zrt.ir.node import OpNode
 from python.zrt.ir.edge import Edge
 from python.zrt.ir.param_count import count_params
 from python.zrt.transform.base import GraphPass
 from python.zrt.transform.context import TransformContext
+from python.zrt.training.models.optimizer import (
+    adam_step_flops,
+    muon_optimizer_step_flops,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +79,14 @@ class OptimizerPass(GraphPass):
             params //= tp
 
         opt = ctx.training.optimizer if ctx.training else "adam"
+        muon_ns_steps = ctx.training.muon_ns_steps if ctx.training else None
+        muon_fraction = ctx.training.muon_param_fraction if ctx.training else None
 
         # Optimizer runs in the last stage (after all backward ops complete)
         optimizer_stage_id = max(0, pp - 1)
+
+        # Estimate hidden dimension from graph metadata
+        hidden = g.metadata.get("hidden", None)
 
         # Create optimizer step node
         step_node = OpNode(
@@ -87,8 +97,8 @@ class OptimizerPass(GraphPass):
             attrs={
                 "optimizer": opt,
                 "params": params,
-                "state_bytes": self._opt_state_bytes(opt, params),
-                "step_flops": self._opt_step_flops(opt, params),
+                "state_bytes": self._opt_state_bytes(opt, params, muon_fraction=muon_fraction),
+                "step_flops": self._opt_step_flops(opt, params, muon_ns_steps, muon_fraction, hidden),
             },
             scope="optimizer.step",
             category="compute",
@@ -102,48 +112,53 @@ class OptimizerPass(GraphPass):
 
         return g
 
-    def _opt_state_bytes(self, optimizer: str, params: int, master_bytes: int = 4) -> int:
+    def _opt_state_bytes(self, optimizer: str, params: int, master_bytes: int = 4, muon_fraction: float | None = None) -> int:
         """Calculate optimizer state bytes.
 
         Args:
             optimizer: Optimizer name
             params: Number of parameters
             master_bytes: Bytes per parameter in master dtype (default FP32=4)
+            muon_fraction: Fraction of params using Muon (default 0.85)
 
         Returns:
             Optimizer state bytes.
-            - Adam: master copy + momentum (m) + variance (v) = 3 × P × master_dtype
-            - Muon: master copy + momentum matrix ≈ 2 × P × master_dtype
+            - Adam: master copy + momentum (m) + variance (v) = 12B/param
+            - Muon: P_muon × 8B + P_adam × 12B = P × (12 - f_muon × 4)
         """
         if optimizer in ("adam", "adamw"):
-            # Adam: master copy + m + v = 3 × P × master_dtype
             return params * master_bytes * 3
         elif optimizer == "muon":
-            # Muon: master copy + momentum matrix ≈ 2.1 × P × master_dtype
-            return int(params * master_bytes * 2.1)
+            f_muon = muon_fraction if muon_fraction is not None else 0.85
+            return int(params * master_bytes * (12 - f_muon * 4) / master_bytes)
         else:
-            # Default: 3 × P × master_dtype
             return params * master_bytes * 3
 
-    def _opt_step_flops(self, optimizer: str, params: int) -> int:
+    def _opt_step_flops(self, optimizer: str, params: int, muon_ns_steps: int | None = None, muon_fraction: float | None = None, hidden: int | None = None) -> int:
         """Calculate optimizer step FLOPs.
 
         Args:
             optimizer: Optimizer name
             params: Number of parameters
+            muon_ns_steps: Newton-Schulz iterations for Muon
+            muon_fraction: Fraction of params using Muon
+            hidden: Model hidden dimension (estimated from params if None)
 
         Returns:
             Optimizer step FLOPs
+            - Adam: 16 FLOPs per parameter
+            - Muon: K × 4 × hidden × hidden² + other ops (mixed with Adam)
         """
         if optimizer in ("adam", "adamw"):
-            # Adam: ~12 FLOPs per parameter (updates + momentum)
-            return params * 12
+            return adam_step_flops(params)
         elif optimizer == "muon":
-            # Muon: ~6 FLOPs per parameter (simpler update)
-            return params * 6
+            K = muon_ns_steps if muon_ns_steps is not None else 5
+            f_muon = muon_fraction if muon_fraction is not None else 0.85
+            if hidden is None:
+                hidden = int(math.sqrt(params / 100)) if params > 0 else 128
+            return muon_optimizer_step_flops(params, K, hidden, f_muon)
         else:
-            # Default: ~8 FLOPs per parameter
-            return params * 8
+            return params * 16
 
     def _append_at_end(self, graph: OpGraph, new_node: OpNode) -> None:
         """Append a node at the end of the graph.

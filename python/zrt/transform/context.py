@@ -68,6 +68,8 @@ class TrainingConfig:
     # Optimizer settings
     optimizer: str = "adam"  # "adam", "adamw", "muon"
     zero_stage: int = 1  # 0=none, 1=opt_state, 2=grads+opt, 3=weights+grads+opt
+    muon_ns_steps: int | None = None  # Newton-Schulz iterations for Muon
+    muon_param_fraction: float | None = None  # Fraction of params using Muon
 
     # Batch size
     micro_batch: int = 1

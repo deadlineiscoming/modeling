@@ -67,14 +67,14 @@ W_t = W_{t-1} - lr · m̂_t / (√v̂_t + ε)
 
 ```
 M_t = β · M_{t-1} + G_t                         # 动量（与 Adam m 类似）
-M̂_t = NewtonSchulz5(M_t)                         # NS 迭代正交化
+M̂_t = NewtonSchulzK(M_t, K)                        # K步 NS 迭代正交化
 W_t = W_{t-1} - lr · M̂_t
 ```
 
-其中 Newton-Schulz 迭代（5步 Zolo-PD 近似）：
+其中 Newton-Schulz 迭代（K步 Zolo-PD 近似，K 可配置）：
 
 ```
-for k in range(5):
+for k in range(K):           # K 默认为 5；DeepSeek-V4 官方报告 §2.4 使用 K=10
     A = Xₖᵀ Xₖ              # n×n 矩阵
     Xₖ₊₁ = α·Xₖ + β·Xₖ·A   # 正交化更新
 ```
@@ -143,9 +143,9 @@ Step 1 — AllGather 动量分片
   每 rank 广播自己的 M 行分片 → 每 rank 获得完整 M ∈ R^{m×n}
   通信量（per rank）= (DP-1)/DP × m×n × 4B
 
-Step 2 — 本地 NS 迭代（5步）
+Step 2 — 本地 NS 迭代（K步）
   每 rank 独立执行完整正交化 → 得到 M̂ ∈ R^{m×n}
-  计算量 = 5 × (2mn² + 2mn²) = 20mn²   # 见 §3.3
+  计算量 = K × (2mn² + 2mn²) = K×4mn²   # 见 §3.3；K 由配置决定
 
 Step 3 — ReduceScatter 结果（或直接按行切片）
   每 rank 只取自己负责的行更新 W
@@ -228,10 +228,24 @@ python/zrt/training/models/comm.py
 ```python
 # python/zrt/training/spec/strategy.py
 
+# 各模型的 NS 迭代步数默认值（基于官方报告）
+_MUON_NS_STEPS_DEFAULTS: dict[str, int] = {
+    "deepseek_v4": 10,    # DSV4 官方报告 §2.4 明确使用 10 步
+    "deepseek_v3": 5,     # 原始 Muon 论文默认值
+    "default":     5,     # 其他模型回退值
+}
+
 @dataclass
 class MuonConfig:
     """Muon-specific configuration for performance modeling."""
-    ns_steps: int = 5                      # Newton-Schulz 迭代步数
+    # Newton-Schulz 迭代步数。
+    # 优先级（从高到低）：
+    #   1. 显式设置此字段（训练 YAML 中 strategy.muon_config.ns_steps）
+    #   2. ModelSpec.muon_ns_steps（模型 YAML 中声明，若存在）
+    #   3. _MUON_NS_STEPS_DEFAULTS 按 model_type 查表
+    #   4. 全局默认值 5
+    # DSV4 官方报告 §2.4 使用 10 步；原始 Muon 论文使用 5 步。
+    ns_steps: int = 5
     ns_variant: str = "zolo_pd"            # "zolo_pd" | "power_iter"
     rotation: bool = True                  # 是否使用 Moonshot 轮转分工优化
     # 使用 Adam 的参数类型（不做 NS 正交化）
@@ -240,6 +254,32 @@ class MuonConfig:
     )
     # Muon 参数的近似覆盖比例（若无法静态分析时用于估算）
     muon_param_fraction: float = 0.85      # 约 85% 参数使用 Muon（DSV4 参考值）
+
+
+def resolve_muon_ns_steps(
+    muon_config: "MuonConfig",
+    model: "ModelSpec | None" = None,
+) -> int:
+    """按优先级解析最终使用的 NS 迭代步数。
+
+    优先级：
+      1. muon_config.ns_steps（显式覆盖，YAML 中 strategy.muon_config.ns_steps）
+      2. model.muon_ns_steps（ModelSpec 字段，从模型 YAML 加载）
+      3. _MUON_NS_STEPS_DEFAULTS[model.model_type]（按模型类型查表）
+      4. _MUON_NS_STEPS_DEFAULTS["default"] = 5
+    """
+    # 若用户显式设置了非默认值，直接使用
+    if muon_config.ns_steps != MuonConfig.__dataclass_fields__["ns_steps"].default:
+        return muon_config.ns_steps
+    # 从 ModelSpec 读取（需 ModelSpec 新增 muon_ns_steps 可选字段）
+    if model is not None and getattr(model, "muon_ns_steps", None) is not None:
+        return model.muon_ns_steps
+    # 按模型类型查表
+    if model is not None and hasattr(model, "model_type"):
+        steps = _MUON_NS_STEPS_DEFAULTS.get(model.model_type)
+        if steps is not None:
+            return steps
+    return _MUON_NS_DEFAULTS["default"]
 ```
 
 在 `Strategy` 中加入：
@@ -254,17 +294,72 @@ class Strategy:
 
 #### 5.1.2 `TransformContext.TrainingConfig` 扩展
 
+`TrainingConfig` 中的 `muon_ns_steps` 不写死默认值，而是在运行时通过 `resolve_muon_ns_steps()` 解析：
+
 ```python
 # python/zrt/transform/context.py
 
 @dataclass
 class TrainingConfig:
     optimizer: str = "adam"
-    muon_ns_steps: int = 5
+    muon_ns_steps: int | None = None   # None = 交由 resolve_muon_ns_steps() 决定
     muon_rotation: bool = True
     muon_param_fraction: float = 0.85
     zero_stage: int = 1
     ...
+
+    def effective_ns_steps(self, model_type: str | None = None) -> int:
+        """返回实际使用的 NS 步数，处理 None 回退逻辑。"""
+        if self.muon_ns_steps is not None:
+            return self.muon_ns_steps
+        # 按模型类型查表
+        from zrt.training.spec.strategy import _MUON_NS_STEPS_DEFAULTS
+        if model_type is not None:
+            return _MUON_NS_STEPS_DEFAULTS.get(model_type, 5)
+        return 5
+```
+
+**`config_loader._parse_strategy()` 扩展**（`training/io/config_loader.py`）：
+
+```python
+def _parse_strategy(d: dict) -> Strategy:
+    ...
+    # 解析 muon_config（若存在）
+    muon_cfg = MuonConfig()
+    if "muon_config" in d:
+        mc = d["muon_config"]
+        muon_cfg = MuonConfig(
+            ns_steps=mc.get("ns_steps", 5),   # YAML 显式设置优先
+            rotation=mc.get("rotation", True),
+            muon_param_fraction=mc.get("muon_param_fraction", 0.85),
+        )
+
+    return Strategy(
+        ...
+        optimizer=OptKind(d.get("optimizer", "adam")),
+        muon_config=muon_cfg,
+    )
+```
+
+**`ModelSpec` 新增可选字段**（`training/spec/model.py`）：
+
+```python
+@dataclass
+class ModelSpec:
+    ...
+    # Muon 优化器专属字段（可选，从模型 YAML 加载）
+    muon_ns_steps: int | None = None    # 若模型 YAML 指定则优先于全局默认
+    model_type: str = "default"         # 用于 _MUON_NS_STEPS_DEFAULTS 查表
+```
+
+对应的模型 YAML（`configs/models/deepseek_v4_pro.yaml`）新增：
+
+```yaml
+# DeepSeek-V4-Pro 模型配置
+model_type: deepseek_v4
+muon_ns_steps: 10        # DSV4 官方报告 §2.4 明确使用 10 步 NS 迭代
+hidden: 7168
+...
 ```
 
 ### 5.2 内存模型
@@ -336,18 +431,24 @@ A = Xₖᵀ Xₖ    GEMM(n×m, m×n) → n×n:  2mn²   FLOPs
 B = Xₖ · A    GEMM(m×n, n×n) → m×n:  2mn²   FLOPs
 --------------------------------------------
 每步合计：                               4mn²   FLOPs
-5步合计：                               20mn²  FLOPs
+K步合计：                               K×4mn² FLOPs
 ```
 
-若 m < n（fat matrix），交换维度：20m²n FLOPs。
+若 m < n（fat matrix），交换维度：K×4m²n FLOPs。
 
-统一表达：`NS_FLOPs(m, n) = 20 × max(m,n) × min(m,n)² = 20 × P × min(m,n)`
+统一表达：`NS_FLOPs(m, n, K) = K×4 × max(m,n) × min(m,n)²`
+
+> **K 的取值**：默认 K=5（原始 Muon 论文）；DeepSeek-V4 官方报告 §2.4 使用 K=10。
+> K=10 使 NS FLOPs 精确翻倍，对大矩阵（hidden=7168）计算开销影响显著。
 
 ```python
 # 新增文件：python/zrt/training/models/optimizer.py
 
 def ns_flops(m: int, n: int, steps: int = 5) -> float:
-    """Newton-Schulz 正交化 FLOPs（步数 × 2个GEMM）。"""
+    """Newton-Schulz 正交化 FLOPs（K步 × 2个GEMM）。
+    
+    steps 从调用方传入，不写死；DSV4 传 10，其他模型传 5。
+    """
     # 约定 m >= n（tall matrix）；fat matrix 对称处理
     long_dim, short_dim = max(m, n), min(m, n)
     # 每步：2个 GEMM: short×long × long×short + long×short × short×short
@@ -366,8 +467,8 @@ def adam_step_flops(P: int) -> float:
 
 | 参数矩阵 | 形状 | P | Adam FLOPs | Muon NS FLOPs | 倍数 |
 |---------|------|---|------------|--------------|------|
-| q_proj | (8192, 8192) | 67M | 805M | 20×8192×8192² ≈ **11T** | ~13,700× |
-| up_proj | (28672, 8192) | 235M | 2.8G | 20×28672×8192² ≈ **38T** | ~13,700× |
+| q_proj | (8192, 8192) | 67M | 805M | K×4×8192³（K=5: 11T, K=10: 22T）| K=5: ~13,700×，K=10: ~27,400× |
+| up_proj | (28672, 8192) | 235M | 2.8G | K×4×28672×8192²（K=5: 38T, K=10: 77T）| K=5: ~13,700×，K=10: ~27,400× |
 | embed | (vocab, 8192) | - | 用 Adam | N/A | - |
 
 > **建模含义**：Muon 的计算开销比 Adam 大 4 个数量级，但全部为矩阵乘法，可被 H100 的 GEMM 单元高效执行。优化器步骤从 memory-bound（Adam）变为 **compute-bound**（Muon）。
@@ -378,23 +479,29 @@ def adam_step_flops(P: int) -> float:
 # python/zrt/transform/training/optimizer.py
 
 def _opt_step_flops(self, optimizer: str, params: int,
+                    ns_steps: int = 5,
                     weight_shapes: list[tuple[int, int]] | None = None) -> int:
+    """计算优化器步骤 FLOPs。
+
+    ns_steps 由调用方通过 ctx.training.effective_ns_steps() 传入，
+    不在此函数内写死。DSV4 传 10，其他模型传 5。
+    """
     if optimizer == "adam":
         return params * 12
 
     elif optimizer == "muon":
         if weight_shapes:
-            # 精确模式：逐矩阵计算 NS FLOPs
-            ns_total = sum(ns_flops(m, n) for m, n in weight_shapes)
+            # 精确模式：逐矩阵计算 NS FLOPs，步数由 ns_steps 决定
+            ns_total = sum(ns_flops(m, n, steps=ns_steps) for m, n in weight_shapes)
             # Adam 参数（embed/head）额外 FLOPs
             P_adam = params - sum(m * n for m, n in weight_shapes)
             return int(ns_total + P_adam * 12)
         else:
             # 近似模式：假设平均矩阵维度（基于 hidden_size 估算）
-            # NS FLOPs ≈ 20 × P × sqrt(P) for square-ish matrices
+            # NS FLOPs ≈ K×4 × P × sqrt(P) for square-ish matrices
             import math
             avg_dim = int(math.sqrt(params * 0.85))
-            return int(20 * params * 0.85 * avg_dim + params * 0.15 * 12)
+            return int(ns_steps * 4 * params * 0.85 * avg_dim + params * 0.15 * 12)
 
     return params * 12
 ```
@@ -529,9 +636,19 @@ step_node = OpNode(
         "params_muon": int(params * muon_fraction) if opt == "muon" else 0,
         "params_adam": params if opt == "adam" else int(params * (1 - muon_fraction)),
         "state_bytes": self._opt_state_bytes(opt, params, muon_fraction),
-        "step_flops": self._opt_step_flops(opt, params),
+        # ns_steps 从 ctx 动态读取，不写死：
+        #   优先 ctx.training.muon_ns_steps（YAML 显式配置）
+        #   否则按 model_type 查表（DSV4→10, others→5）
+        "step_flops": self._opt_step_flops(
+            opt, params,
+            ns_steps=ctx.training.effective_ns_steps(
+                getattr(ctx.profile, "model_type", None)
+            ) if ctx.training else 5,
+        ),
         # Muon 专属属性
-        "ns_steps": 5 if opt == "muon" else 0,
+        "ns_steps": ctx.training.effective_ns_steps(
+            getattr(ctx.profile, "model_type", None)
+        ) if (opt == "muon" and ctx.training) else 0,
         "ns_rotation": True if opt == "muon" else False,
         "muon_ag_bytes": self._muon_ag_bytes(opt, params, muon_fraction, dp),
     },
@@ -643,7 +760,7 @@ strategy:
   zero_stage: 1
   optimizer: muon             # 新字段值
   muon_config:
-    ns_steps: 5
+    ns_steps: 10              # DSV4 官方报告 §2.4 使用 10 步；若不填则从模型 YAML 或默认值读取
     rotation: true
     muon_param_fraction: 0.85
     adam_param_types: [embed, lm_head, router, bias]
@@ -708,9 +825,9 @@ PYTHONPATH=python pytest tests/training/test_captured_graph_modelling.py -v -k "
 **涉及文件**：
 
 - `python/zrt/training/models/optimizer.py`（**新建**）
-  - `ns_flops(m, n, steps=5)`
+  - `ns_flops(m, n, steps: int)` — 步数由调用方传入，不写死
   - `adam_step_flops(P)`
-  - `muon_step_flops(weight_shapes, muon_fraction)`
+  - `muon_step_flops(weight_shapes, muon_fraction, ns_steps: int)`
 - `python/zrt/transform/training/optimizer.py`
   - `OptimizerPass._opt_step_flops()` 接入 NS FLOPs
   - 节点属性扩展（`params_muon`, `ns_steps`, `muon_ag_bytes`）
@@ -719,9 +836,11 @@ PYTHONPATH=python pytest tests/training/test_captured_graph_modelling.py -v -k "
 
 **验收标准**：
 ```python
-# 单元测试验证 NS FLOPs 计算
-assert ns_flops(4096, 4096) == 20 * 4096 * 4096 * 4096    # = 1.37T
-assert ns_flops(28672, 8192) == 20 * 28672 * 8192 * 8192  # = 38.5T
+# 单元测试验证 NS FLOPs 计算（steps 必须显式传入）
+assert ns_flops(4096, 4096, steps=5)  == 20 * 4096**3      # K=5（默认）= 1.37T
+assert ns_flops(4096, 4096, steps=10) == 40 * 4096**3      # K=10（DSV4）= 2.75T
+assert ns_flops(28672, 8192, steps=5) == 20 * 28672 * 8192**2   # = 38.5T
+assert ns_flops(28672, 8192, steps=10) == 40 * 28672 * 8192**2  # DSV4 = 77T
 ```
 
 ---
@@ -821,13 +940,32 @@ def test_muon_memory_vs_adam():
     """Muon 优化器状态内存比 Adam 少 ~28%（85% muon_fraction 下）。"""
     ...
 
-def test_ns_flops_square_matrix():
-    """正方形矩阵 NS FLOPs = 20 × dim³。"""
+def test_ns_flops_square_matrix_k5():
+    """正方形矩阵 K=5 时 NS FLOPs = 20 × dim³（K×4 = 20）。"""
     assert ns_flops(4096, 4096, steps=5) == 20 * 4096**3
 
+def test_ns_flops_square_matrix_k10():
+    """DSV4 K=10 时 NS FLOPs 精确翻倍 = 40 × dim³。"""
+    assert ns_flops(4096, 4096, steps=10) == 40 * 4096**3
+
 def test_ns_flops_tall_matrix():
-    """高矩阵 NS FLOPs = 20 × m × n²（m > n）。"""
+    """高矩阵 K=5 时 NS FLOPs = 20 × m × n²（m > n）。"""
     assert ns_flops(28672, 8192, steps=5) == 20 * 28672 * 8192**2
+
+def test_ns_steps_resolved_for_dsv4():
+    """DSV4 模型类型下 resolve_muon_ns_steps 应返回 10。"""
+    from zrt.training.spec.strategy import MuonConfig, resolve_muon_ns_steps
+    assert resolve_muon_ns_steps(MuonConfig(), model_type="deepseek_v4") == 10
+
+def test_ns_steps_explicit_overrides_table():
+    """YAML 显式设置 ns_steps=7 应覆盖模型类型查表（DSV4 本应返回 10）。"""
+    from zrt.training.spec.strategy import MuonConfig, resolve_muon_ns_steps
+    assert resolve_muon_ns_steps(MuonConfig(ns_steps=7), model_type="deepseek_v4") == 7
+
+def test_ns_steps_default_non_dsv4():
+    """非 DSV4 模型默认返回 5。"""
+    from zrt.training.spec.strategy import MuonConfig, resolve_muon_ns_steps
+    assert resolve_muon_ns_steps(MuonConfig()) == 5
 
 def test_muon_ag_comm_dp1():
     """DP=1 时 Muon 无额外通信。"""
@@ -884,7 +1022,7 @@ tolerance: 0.05
 
 | 公式 | 说明 |
 |------|------|
-| `NS_FLOPs(m,n) = 20 × max(m,n) × min(m,n)²` | 5步 NS 迭代 FLOPs（tall/fat 矩阵）|
+| `NS_FLOPs(m,n,K) = K×4 × max(m,n) × min(m,n)²` | K步 NS 迭代 FLOPs；K=5（默认）或 10（DSV4）|
 | `Adam opt_state = 3P × 4B` | master + m + v |
 | `Muon opt_state = P_muon × 8B + P_adam × 12B` | 混合参数 |
 | `Muon AG bytes = (DP-1)/DP × P_muon × 4B` | ZeRO-1 momentum AllGather |

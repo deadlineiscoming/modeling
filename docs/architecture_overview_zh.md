@@ -349,7 +349,7 @@ CLAUDE.md 描述了 `python/zrt/training/builtins/`，但仓库中只剩下空 `
 见 §3.5（OpGraph 版三 Pass）。
 
 ### 4.4 优化 Pass（`optim/passes.py`）
-- `QuantizationPass`：给 compute 节点写 `quant_weight/quant_act` 注解；不真正换 op_type。
+- `QuantizationPass`：给 compute 节点写 `quant_weight/quant_act` 注解；不真正换 op_type。通过 `--quant DTYPE` CLI 参数激活（内部构造 `QuantConfig(weight=dtype, activation=dtype)` 注入 `TransformContext`）；`ctx.quant is None` 时 Pass 永久跳过。
 - `SharedExpertPass`：scope 含 `shared_expert` → `shared_expert_external=True`。
 - `EPLBPass / MTPPass`：**stub，只 return 输入图**（见 TODO 总览）。
 
@@ -368,7 +368,8 @@ CLAUDE.md 描述了 `python/zrt/training/builtins/`，但仓库中只剩下空 `
 
 - **RooflinePass**（`passes.py:112`）  
   `compute_us = flops/peak`，`memory_us = (R+W)/bw`，`latency_us=max(...)`，分类 `bound∈{compute,memory,latency}`。  
-  保留预先注入的 `latency_us`（测试或 profiling 注入场景）。
+  保留预先注入的 `latency_us`（测试或 profiling 注入场景）。  
+  compute 节点的 peak TFLOPS dtype 由 `_effective_compute_dtype()` 确定：优先读 `quant_act` 注解（假设量化分析路径），其次用 `inputs[0].dtype`（激活 dtype 决定张量核算子类），最后回退到输出 dtype（非 compute 节点或无输入节点）。
 
 - **CommLatencyPass**（`comm_latency.py`）  
   通信节点用 α-β + 集合形 ring/ tree 公式（`_estimate_comm_latency`）覆盖通用 Roofline 估计；自动判断是否跨节点（`group_size > intra_node.num_devices`）。
@@ -493,6 +494,13 @@ CLAUDE.md 描述了 `python/zrt/training/builtins/`，但仓库中只剩下空 `
 ---
 
 ## 7. TODO / 未完成项总览（精确定位）
+
+### 7.0 已解决项
+
+| 问题 | 修复方案 | 文件 |
+|------|---------|------|
+| `QuantizationPass` 永久被跳过：所有 `TransformContext` 构造点均未设 `ctx.quant`，无 CLI 入口 | 新增 `--quant DTYPE` CLI 参数；`QuantConfig` 注入推理和训练路径的 `TransformContext` | `python/zrt/cli.py` |
+| `RooflinePass` 对量化节点使用错误 dtype（输出 BF16）查询 peak TFLOPS，应为输入 INT8/FP8 | 新增 `_effective_compute_dtype()` 辅助函数：compute 节点优先读 `quant_act` 注解，其次用 `inputs[0].dtype`；FP8 别名归一化为 `fp8_e4m3` | `python/zrt/transform/analysis/passes.py` |
 
 ### 7.1 显式 `TODO Phase 3` 标注（5 处）
 | 文件:行 | 内容 |

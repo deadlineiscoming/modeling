@@ -30,6 +30,7 @@ from python.zrt.graph.fusion_rules import (
     get_subpatterns,
     get_platform_settings,
     PATTERN_SKIP,
+    CONTAINER_SEMANTICS,
 )
 
 
@@ -183,17 +184,36 @@ def _make_fused_entry(
     aten_ops = list(dict.fromkeys(r["aten_op"] for r in ops))
 
     short_path    = _strip_layer_prefix(path) if path else ""
-    semantic      = get_semantic_label(module_class) if module_class else None
 
-    if semantic:
-        label = semantic
-    elif module_class and len(ops) > 1:
-        label = f"{short_path} ({module_class})"
-    elif short_path:
-        label = short_path
+    # Path-based override: lm_head is always "lm_head" regardless of class
+    # name.  Some models use a weight-tied nn.Embedding for the output
+    # projection, whose class would otherwise match the "embedding" semantic.
+    _path_lower = path.lower()
+    if _path_lower == "lm_head" or _path_lower.endswith(".lm_head"):
+        semantic = "lm_head"
     else:
-        fn_parts = first["aten_op"].split(".")
-        label    = fn_parts[1] if len(fn_parts) >= 2 else first["aten_op"]
+        semantic = get_semantic_label(module_class) if module_class else None
+
+    # effective_ops: exclude shape/transparent/init ops for display purposes.
+    effective_ops = [r["aten_op"] for r in ops if r["aten_op"] not in PATTERN_SKIP]
+
+    # Build an aten-op–based fallback label from the first effective op.
+    # For container modules (attn/mlp/moe) this becomes the actual display label
+    # until Pass-3a subpattern matching replaces it with a specific kernel name.
+    ref_op = effective_ops[0] if effective_ops else first["aten_op"]
+    fn_parts   = ref_op.split(".")
+    aten_label = fn_parts[1] if len(fn_parts) >= 2 else ref_op
+
+    if semantic and semantic not in CONTAINER_SEMANTICS:
+        # Terminal semantics (rms_norm, rope, embedding, lm_head, …) are
+        # unambiguous even for single-op groups — always use them.
+        label = semantic
+    else:
+        # Container semantics (attn, mlp, moe_*) or no semantic at all:
+        # show the actual first-effective-op name.  Pass-3a will upgrade this
+        # to a specific kernel label (flash_attn, sdpa, gated_mlp, …) if the
+        # op sequence matches a platform subpattern.
+        label = aten_label
 
     io = _compute_fused_io(ops)
 
@@ -331,6 +351,52 @@ def _detect_add_norm(
     return result
 
 
+def _make_individual_entry(op: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a singleton fused-op record from one raw dispatch record."""
+    fn_parts   = op["aten_op"].split(".")
+    label      = fn_parts[1] if len(fn_parts) >= 2 else op["aten_op"]
+    io         = _compute_fused_io([op])
+    return {
+        "fused_op":      label,
+        "_semantic":     None,
+        "module_path":   op["module_path"],
+        "module_class":  op.get("module_class", ""),
+        "fusion_level":  "unfused",
+        "aten_ops":      op["aten_op"],
+        "num_sub_ops":   1,
+        "layer":         op["layer"],
+        "input_shapes":  op["input_shapes"],
+        "input_dtypes":  op["input_dtypes"],
+        "output_shapes": op["output_shapes"],
+        "output_dtypes": op["output_dtypes"],
+        **io,
+        "_children":     [op],
+    }
+
+
+def _expand_unfused_containers(
+    groups: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Pass 4: expand multi-op container groups that were not matched by any
+    hardware subpattern back into one row per constituent op.
+
+    After Pass-3a, a group's ``_semantic`` is updated to the matched pattern
+    name (e.g. ``"npu_fusion_attention"``), which is NOT in CONTAINER_SEMANTICS.
+    Groups that *still* carry a CONTAINER_SEMANTICS ``_semantic`` were not
+    recognised as any specific kernel, so the individual ops inside them are
+    not truly fused and must be visible in the output graph.
+    """
+    result: List[Dict[str, Any]] = []
+    for g in groups:
+        if (g.get("_semantic") in CONTAINER_SEMANTICS
+                and g.get("num_sub_ops", 1) > 1):
+            for child in g.get("_children", []):
+                result.append(_make_individual_entry(child))
+        else:
+            result.append(g)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FusionEngine
 # ─────────────────────────────────────────────────────────────────────────────
@@ -417,6 +483,12 @@ class FusionEngine:
         groups = _apply_subpatterns(groups, self._platform)
         # Pass 3b: cross-boundary Add+Norm → AddRMSNorm
         groups = _detect_add_norm(groups, self._add_norm_fusion)
+        # Pass 4: expand unfused container groups back to individual op rows.
+        # Groups that still carry a CONTAINER_SEMANTICS _semantic after Pass-3a
+        # were not matched by any hardware kernel pattern, so their constituent
+        # ops are NOT truly fused.  Show each op as its own row so the fused
+        # operator list is a complete computation graph (fused + unfused ops).
+        groups = _expand_unfused_containers(groups)
         return groups
 
     def _pass1_leaf(
@@ -497,7 +569,12 @@ class FusionEngine:
                         r["aten_op"] for r in merged_ops))
                     io           = _compute_fused_io(merged_ops)
                     semantic     = get_semantic_label(parent_class)
-                    label        = semantic or f"{short} ({parent_class})"
+                    # Container semantics (attn/mlp/moe) stay hidden until a
+                    # subpattern match in Pass-3a upgrades to a kernel name.
+                    if semantic and semantic not in CONTAINER_SEMANTICS:
+                        label = semantic
+                    else:
+                        label = f"{short} ({parent_class})" if parent_class else short
                     result.append({
                         "fused_op":      label,
                         "_semantic":     semantic,

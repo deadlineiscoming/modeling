@@ -131,6 +131,18 @@ def get_semantic_label(module_class: str) -> Optional[str]:
     return None
 
 
+# Semantics for "container" modules (attention, MLP, MoE blocks) whose ops
+# should only appear as fused_op when a platform subpattern explicitly matches
+# them (e.g. "npu_fusion_attention", "flash_attn", "sdpa").  Without a
+# subpattern match the display falls back to the actual aten op names so that
+# unfused ops are never hidden behind a generic module label.
+CONTAINER_SEMANTICS: Set[str] = {
+    "attn", "mla_attn",
+    "mlp",
+    "moe_gate", "moe_block", "moe_shared", "moe_expert",
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sub-patterns  (platform-specific op-sequence matching within a fused group)
 # ─────────────────────────────────────────────────────────────────────────────

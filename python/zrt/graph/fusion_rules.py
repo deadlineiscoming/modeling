@@ -133,6 +133,9 @@ SEMANTIC_LABELS: List[Tuple[str, str]] = [
     (r".*MLA.*|.*MultiLatentAttn.*",                           "mla_attn"),
     (r".*Attention.*|.*SelfAttn.*|.*MultiHead.*Attn.*",        "attn"),
     # ── MoE gate / router ────────────────────────────────────────────────────
+    # DeepSeek-V4: Gate class is named exactly "Gate" (no MoE/Expert prefix).
+    # Must precede the compound regex so it wins on exact match.
+    (r"Gate",                                                      "moe_gate"),
     (r".*(MoE|Moe|Expert|TopK|Top1|Top2|Sparse|Switch).*(Gate|Router).*", "moe_gate"),
     # ── MoE container / shared expert ────────────────────────────────────────
     (r".*SparseMoeBlock.*|.*MoEBlock.*",                        "moe_block"),
@@ -263,6 +266,11 @@ _CUDA_PATTERNS: List[SubPattern] = [
                [r"threshold_backward|silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=24),
     # ── Forward patterns ─────────────────────────────────────────────────────
+    # DeepSeek-V4 sparse attention: gather(topk KV) → bmm(QK) → softmax → bmm(AV)
+    # 'gather' before the first bmm distinguishes it from dense flash_attn.
+    SubPattern("v4_sparse_attn", _ATTN_RE,
+               [r"\bgather\b", r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
+               priority=45),
     # SDPA aten 级展开: QK mm → softmax → AV mm (展示为融合后的 SDPA 大算子)
     SubPattern("flash_attn", _ATTN_RE,
                [r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
@@ -272,12 +280,13 @@ _CUDA_PATTERNS: List[SubPattern] = [
                [r"scaled_dot_product_attention"],
                priority=35),
     # MoE gating with top-k selection
+    # softplus covers DeepSeek-V4 default score_func="sqrtsoftplus" (F.softplus().sqrt())
     SubPattern("moe_gate_topk", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid", r"topk"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus", r"topk"],
                priority=30),
-    # MoE gating without top-k (just scoring)
+    # MoE gating without top-k (just scoring; also covers hash-routing layers)
     SubPattern("moe_gate", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus"],
                priority=25),
     # SwiGLU / GeGLU gated MLP
     SubPattern("gated_mlp", _MLP_RE,
@@ -315,6 +324,10 @@ _ASCEND_PATTERNS: List[SubPattern] = [
     SubPattern("npu_add_rms_norm", _NORM_RE,
                [r"\badd\b", r"pow|mean|rsqrt|mul"],
                priority=50),
+    # DeepSeek-V4 sparse attention (same gather→bmm→softmax→bmm pattern as CUDA)
+    SubPattern("v4_sparse_attn", _ATTN_RE,
+               [r"\bgather\b", r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
+               priority=45),
     # 同 CUDA 平台: SDPA aten 级展开 (非真实 NPU 融合核)
     SubPattern("npu_sdpa_decomposed", _ATTN_RE,
                [r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
@@ -323,10 +336,10 @@ _ASCEND_PATTERNS: List[SubPattern] = [
                [r"scaled_dot_product_attention"],
                priority=35),
     SubPattern("npu_moe_gate_topk", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid", r"topk"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus", r"topk"],
                priority=30),
     SubPattern("npu_moe_gate", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus"],
                priority=25),
     SubPattern("gated_mlp", _MLP_RE,
                [r"\bmm\b", r"silu|gelu|relu", r"\bmul\b", r"\b(mm|addmm)\b"],
@@ -362,10 +375,10 @@ _CPU_PATTERNS: List[SubPattern] = [
                [r"scaled_dot_product_attention"],
                priority=25),
     SubPattern("moe_gate_topk", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid", r"topk"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus", r"topk"],
                priority=25),
     SubPattern("moe_gate", _GATE_RE,
-               [r"\b(mm|linear)\b", r"softmax|sigmoid"],
+               [r"\b(mm|linear)\b", r"softmax|sigmoid|softplus"],
                priority=20),
 ]
 

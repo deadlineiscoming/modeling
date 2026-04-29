@@ -147,12 +147,17 @@ def sparse_attn(
     idx_expanded = idx.unsqueeze(-1).expand(-1, -1, -1, d)  # (b, s, k, d)
     kv_gathered = torch.gather(kv_expanded, 2, idx_expanded)
 
-    # Attention: q (b,s,h,d) · k (b,s,k,d).T  → (b,s,h,k)
-    scores = torch.einsum("bshd,bskd->bshk", q, kv_gathered) * softmax_scale
+    # Attention via bmm (not einsum) so fusion_rules patterns can match.
+    # q (b,s,h,d) · k (b,s,k,d).T → scores (b,s,h,k)
+    k = kv_gathered.shape[2]
+    q_2d = q.reshape(b * s, h, d)          # (bs, h, d)
+    kv_2d = kv_gathered.reshape(b * s, k, d)  # (bs, k, d)
+    scores = torch.bmm(q_2d, kv_2d.transpose(1, 2)).reshape(b, s, h, k) * softmax_scale
     # attn_sink: per-head additive bias on the sink position
     scores = scores + attn_sink.view(1, 1, h, 1).to(scores.dtype)
     weights = scores.softmax(dim=-1).to(kv_gathered.dtype)
-    out = torch.einsum("bshk,bskd->bshd", weights, kv_gathered)
+    # AV product: weights (b,s,h,k) · v (b,s,k,d) → out (b,s,h,d)
+    out = torch.bmm(weights.reshape(b * s, h, k), kv_2d).reshape(b, s, h, d)
     return out.to(q.dtype)
 
 

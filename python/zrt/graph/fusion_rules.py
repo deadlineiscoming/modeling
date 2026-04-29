@@ -22,26 +22,24 @@ from typing import Dict, List, Optional, Set, Tuple
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Always transparent: pure metadata / autograd book-keeping, zero compute.
-# These are *never* used as pattern anchors.
 ALWAYS_TRANSPARENT: Set[str] = {
     "aten.detach.default",
-    "aten.detach_.default",
     "aten.alias.default",
-    "aten.lift_fresh_copy.default",
     "aten.is_same_size.default",
-    "aten._version.default",
     "prim.device.default",
+    # MOVED:  "aten.lift_fresh_copy.default"  -> LIFT_OPS (performs memory copy)
+    # REMOVED: "aten.detach_.default"   (in-place, not dispatched)
+    # REMOVED: "aten._version.default"  (internal metadata, not dispatched)
 }
 
 # Shape-only ops: change stride/size metadata but do not move data.
 # Treated as wildcards during pattern matching; absorbed into adjacent group.
 # NOTE: some of these CAN carry semantic meaning in specific modules (e.g.
 # transpose/view in MLA weight absorption).  The matching function skips them
-# as wildcards, so they never *break* a pattern; they just don't anchor one.
 SHAPE_OPS: Set[str] = {
     "aten.view.default",
     "aten._unsafe_view.default",
-    "aten.reshape.default",
+    # MOVED:  "aten.reshape.default"             -> POTENTIAL_COPY_OPS (may trigger copy)
     "aten.expand.default",
     "aten.expand_as.default",
     "aten.squeeze.default",
@@ -49,17 +47,20 @@ SHAPE_OPS: Set[str] = {
     "aten.unsqueeze.default",
     "aten.permute.default",
     "aten.transpose.int",
-    "aten.contiguous.memory_format",
-    "aten.flatten.using_ints",
+    # MOVED:  "aten.contiguous.memory_format"   -> POTENTIAL_COPY_OPS (triggers copy on non-contiguous input)
+    # REMOVED: "aten.flatten.using_ints"        (C-level only)
     "aten.as_strided.default",
     "aten.select.int",
     "aten.slice.Tensor",
-    "aten.clone.default",
     "aten.t.default",
-    "aten.chunk.default",
+    # REMOVED: "aten.chunk.default"             (C-level only)
     "aten.split.Tensor",
     "aten.split_with_sizes.default",
     "aten.unbind.int",
+    # ADDED: common view/shape ops confirmed dispatched
+    "aten.diagonal.default",
+    # NOTE: aten.narrow.default is NOT added — narrow decomposes to aten.slice.Tensor
+    #       before dispatch, so aten.narrow.default never appears in traces.
 }
 
 # Memory-initialisation ops: real (tiny) compute; kept in records but do not
@@ -69,18 +70,41 @@ INIT_OPS: Set[str] = {
     "aten.ones_like.default",
     "aten.full_like.default",
     "aten.empty_like.default",
-    "aten.zeros.memory_format",
-    "aten.ones.memory_format",
+    "aten.zeros.default",        # FIXED: was .memory_format (wrong dispatch name)
+    "aten.ones.default",         # FIXED: was .memory_format (wrong dispatch name)
     "aten.full.default",
     "aten.empty.memory_format",
     "aten.arange.start",
     "aten.arange.default",
+    "aten.arange.start_step",    # ADDED: torch.arange(start, end, step)
     "aten.scalar_tensor.default",
 }
 
-# Union used during pattern matching: ops to skip when building the
-# "effective" sequence that patterns are matched against.
-PATTERN_SKIP: Set[str] = ALWAYS_TRANSPARENT | SHAPE_OPS | INIT_OPS
+# Constant-lifting ops: perform memory copy (Inductor lowers to clone) but
+# should still be skipped as wildcards during pattern matching.  They are NOT
+# fully transparent (they do move data) so they are kept separate from
+# ALWAYS_TRANSPARENT for correct FLOP accounting.
+LIFT_OPS: Set[str] = {
+    "aten.lift_fresh_copy.default",
+    "aten.lift_fresh.default",
+}
+
+# Ops that always allocate new memory and copy data.
+# Kept separate from SHAPE_OPS (guaranteed view-only) so that FLOP/memory
+# accounting can distinguish the two classes.  Still skipped as wildcards
+# during pattern matching.
+#
+# DEAD KEYS (kept as documentation, never appear in dispatch traces):
+#   "aten.reshape.default"          — contiguous input → dispatches as view.default;
+#                                     non-contiguous → clone.default + _unsafe_view.default
+#   "aten.contiguous.memory_format" — dispatches as clone.default on non-contiguous input;
+#                                     no-op (returns self) on already-contiguous input
+# The real copy cost of reshape/contiguous is captured via aten.clone.default.
+POTENTIAL_COPY_OPS: Set[str] = {
+    "aten.repeat.default",     # always copies: allocates new memory + copies data
+    "aten.flip.default",       # always copies: allocates new memory + reorders data
+}
+PATTERN_SKIP: Set[str] = ALWAYS_TRANSPARENT | SHAPE_OPS | INIT_OPS | LIFT_OPS | POTENTIAL_COPY_OPS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +125,7 @@ SEMANTIC_LABELS: List[Tuple[str, str]] = [
     # ── Norm variants ────────────────────────────────────────────────────────
     (r".*RMSNorm.*|.*RmsNorm.*|.*NormHead.*",                  "rms_norm"),
     (r".*LayerNorm.*",                                          "layer_norm"),
+    (r".*L2Norm.*",                                            "rms_norm"),
     # ── Position encoding ────────────────────────────────────────────────────
     (r".*RotaryEmb.*|.*RoPE.*|.*RotaryPosition.*|.*YarnRotary.*"
      r"|.*LlamaRotary.*|.*DynamicNTKScaling.*",                "rope"),
@@ -108,11 +133,10 @@ SEMANTIC_LABELS: List[Tuple[str, str]] = [
     (r".*MLA.*|.*MultiLatentAttn.*",                           "mla_attn"),
     (r".*Attention.*|.*SelfAttn.*|.*MultiHead.*Attn.*",        "attn"),
     # ── MoE gate / router ────────────────────────────────────────────────────
-    (r".*MoEGate.*|.*MoeGate.*|.*TopKGate.*|.*MoeTopK.*"
-     r"|.*RouterTopK.*|.*MoeRouter.*|.*TopkRouter.*",          "moe_gate"),
-    (r".*Router.*",                                             "moe_gate"),
+    (r".*(MoE|Moe|Expert|TopK|Top1|Top2|Sparse|Switch).*(Gate|Router).*", "moe_gate"),
     # ── MoE container / shared expert ────────────────────────────────────────
     (r".*SparseMoeBlock.*|.*MoEBlock.*",                        "moe_block"),
+    (r".*MoE.*",                                                 "moe_block"),  # ADDED: DeepseekV2MoE 等纯 MoE 类名
     (r".*SharedExpert.*",                                       "moe_shared"),
     (r".*Expert.*",                                             "moe_expert"),
     # ── Dense FFN / MLP ──────────────────────────────────────────────────────
@@ -139,7 +163,7 @@ def get_semantic_label(module_class: str) -> Optional[str]:
 CONTAINER_SEMANTICS: Set[str] = {
     "attn", "mla_attn",
     "mlp",
-    "moe_gate", "moe_block", "moe_shared", "moe_expert",
+    "moe_block", "moe_shared", "moe_expert",
 }
 
 
@@ -195,7 +219,7 @@ def match_subsequence(op_names: List[str], pattern: List[str]) -> bool:
 
 _ATTN_RE    = r".*Attention.*|.*SelfAttn.*|.*MultiHead.*|.*MLA.*"
 _GATE_RE    = r".*Gate.*|.*Router.*|.*MoEGate.*|.*MoeGate.*|.*TopkRouter.*"
-_MLP_RE     = r".*MLP.*|.*FFN.*|.*FeedForward.*"
+_MLP_RE     = r".*MLP.*|.*FFN.*|.*FeedForward.*|.*PointwiseFF.*"
 _MOE_RE     = r".*MoE.*|.*SparseMoe.*|.*Expert.*"
 _NORM_RE    = r".*RMSNorm.*|.*LayerNorm.*|.*RmsNorm.*"
 _EMBED_RE   = r".*Embed.*"
@@ -215,7 +239,7 @@ _CUDA_PATTERNS: List[SubPattern] = [
     # ── Backward patterns (priority 50+) ─────────────────────────────────────
     # SDPA backward (single composite op) — use broad regex, op is uniquely backward
     SubPattern("sdpa_backward", _ATTN_BWD_RE,
-               [r"scaled_dot_product_attention_backward"],
+               [r"_scaled_dot_product.*_backward"],
                priority=50),
     # Attention backward: dQ/dK/dV via mm + softmax_backward + mm
     # Use broad regex: _softmax_backward_data is uniquely diagnostic of attn backward
@@ -224,7 +248,7 @@ _CUDA_PATTERNS: List[SubPattern] = [
                priority=42),
     # Native norm backward (fused kernel: LayerNorm / GroupNorm)
     SubPattern("norm_backward", _NORM_RE,
-               [r"native_layer_norm_backward|native_group_norm_backward"],
+               [r"native_layer_norm_backward|native_group_norm_backward|_fused_rms_norm_backward"],
                priority=38),
     # Embedding backward
     SubPattern("embedding_backward", _EMBED_RE,
@@ -232,14 +256,14 @@ _CUDA_PATTERNS: List[SubPattern] = [
                priority=35),
     # Gated MLP backward (SwiGLU / GeGLU): silu/gelu_backward → mul → mm
     SubPattern("gated_mlp_backward", _MLP_RE,
-               [r"silu_backward|gelu_backward", r"\bmul\b", r"\bmm\b"],
+               [r"\bmul\b", r"silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=28),
     # Dense MLP backward: activation_backward → mm
     SubPattern("mlp_backward", _MLP_RE,
-               [r"threshold_backward|silu_backward|gelu_backward", r"\bmm\b"],
+               [r"threshold_backward|silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=24),
     # ── Forward patterns ─────────────────────────────────────────────────────
-    # FlashAttention: QK matmul → softmax → AV matmul (inside Attention module)
+    # SDPA aten 级展开: QK mm → softmax → AV mm (展示为融合后的 SDPA 大算子)
     SubPattern("flash_attn", _ATTN_RE,
                [r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
                priority=40),
@@ -269,7 +293,7 @@ _CUDA_PATTERNS: List[SubPattern] = [
 _ASCEND_PATTERNS: List[SubPattern] = [
     # ── Backward patterns ─────────────────────────────────────────────────────
     SubPattern("sdpa_backward", _ATTN_BWD_RE,
-               [r"scaled_dot_product_attention_backward"],
+               [r"_scaled_dot_product.*_backward"],
                priority=55),
     SubPattern("attn_grad", _ATTN_BWD_RE,
                [r"\b(mm|bmm|matmul)\b", r"_softmax_backward_data", r"\b(mm|bmm|matmul)\b"],
@@ -281,17 +305,18 @@ _ASCEND_PATTERNS: List[SubPattern] = [
                [r"embedding_dense_backward"],
                priority=38),
     SubPattern("gated_mlp_backward", _MLP_RE,
-               [r"silu_backward|gelu_backward", r"\bmul\b", r"\bmm\b"],
+               [r"\bmul\b", r"silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=32),
     SubPattern("mlp_backward", _MLP_RE,
-               [r"threshold_backward|silu_backward|gelu_backward", r"\bmm\b"],
+               [r"threshold_backward|silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=28),
     # ── Forward patterns ─────────────────────────────────────────────────────
     # AddRMSNorm: residual add fused into norm (cross-boundary, see fusion.py)
     SubPattern("npu_add_rms_norm", _NORM_RE,
                [r"\badd\b", r"pow|mean|rsqrt|mul"],
                priority=50),
-    SubPattern("npu_fusion_attention", _ATTN_RE,
+    # 同 CUDA 平台: SDPA aten 级展开 (非真实 NPU 融合核)
+    SubPattern("npu_sdpa_decomposed", _ATTN_RE,
                [r"\b(mm|bmm|matmul)\b", r"softmax", r"\b(mm|bmm|matmul)\b"],
                priority=40),
     SubPattern("sdpa", _ATTN_RE,
@@ -304,10 +329,10 @@ _ASCEND_PATTERNS: List[SubPattern] = [
                [r"\b(mm|linear)\b", r"softmax|sigmoid"],
                priority=25),
     SubPattern("gated_mlp", _MLP_RE,
-               [r"\bmm\b", r"silu|gelu", r"\bmul\b", r"\bmm\b"],
+               [r"\bmm\b", r"silu|gelu|relu", r"\bmul\b", r"\b(mm|addmm)\b"],
                priority=20),
     SubPattern("npu_moe_dispatch", _MOE_RE,
-               [r"topk", r"scatter|gather"],
+               [r"topk", r"index_select|scatter|gather"],
                priority=15),
 ]
 
@@ -315,8 +340,11 @@ _ASCEND_PATTERNS: List[SubPattern] = [
 _CPU_PATTERNS: List[SubPattern] = [
     # ── Backward patterns ─────────────────────────────────────────────────────
     SubPattern("sdpa_backward", _ATTN_BWD_RE,
-               [r"scaled_dot_product_attention_backward"],
+               [r"_scaled_dot_product.*_backward"],
                priority=50),
+    SubPattern("attn_grad", _ATTN_BWD_RE,
+               [r"\b(mm|bmm|matmul)\b", r"_softmax_backward_data", r"\b(mm|bmm|matmul)\b"],
+               priority=30),
     SubPattern("norm_backward", _NORM_RE,
                [r"native_layer_norm_backward|native_group_norm_backward"],
                priority=38),
@@ -324,10 +352,10 @@ _CPU_PATTERNS: List[SubPattern] = [
                [r"embedding_dense_backward"],
                priority=35),
     SubPattern("gated_mlp_backward", _MLP_RE,
-               [r"silu_backward|gelu_backward", r"\bmul\b", r"\bmm\b"],
+               [r"\bmul\b", r"silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=28),
     SubPattern("mlp_backward", _MLP_RE,
-               [r"threshold_backward|silu_backward|gelu_backward", r"\bmm\b"],
+               [r"threshold_backward|silu_backward|gelu_backward", r"\b(mm|addmm)\b"],
                priority=24),
     # ── Forward patterns ─────────────────────────────────────────────────────
     SubPattern("sdpa", _ATTN_RE,
@@ -358,7 +386,7 @@ PLATFORM_SUBPATTERNS: Dict[str, List[SubPattern]] = {
 PLATFORM_SETTINGS: Dict[str, Dict] = {
     "cuda":        {"max_parent_ops": 60, "max_children": 8,  "add_norm_fusion": True},
     "ascend_npu":  {"max_parent_ops": 50, "max_children": 8,  "add_norm_fusion": True},
-    "cpu":         {"max_parent_ops": 20, "max_children": 4,  "add_norm_fusion": False},
+    "cpu":         {"max_parent_ops": 20, "max_children": 6,  "add_norm_fusion": False},
     "generic":     {"max_parent_ops": 30, "max_children": 5,  "add_norm_fusion": False},
 }
 

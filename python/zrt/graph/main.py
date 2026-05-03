@@ -697,6 +697,7 @@ def _save_phase_outputs(
     output_dir: Path,
     config_summary: Dict[str, Any],
     platform: str = "generic",
+    fusion_debug: bool = False,
 ) -> Tuple[Any, Any]:
     """Write Excel + JSON + ONNX graph files for one phase.
 
@@ -717,7 +718,7 @@ def _save_phase_outputs(
     graph_name = f"{slug}_{phase}"
     raw_opgraph = records_to_opgraph(records, name=graph_name, phase=phase)
 
-    fusion_engine = FusionEngine(tracker, platform=platform)
+    fusion_engine = FusionEngine(tracker, platform=platform, debug=fusion_debug)
     fused_with_children = fusion_engine.fuse_keep_children(records)
     fused_opgraph = fused_records_to_opgraph(
         fused_with_children, name=f"{graph_name}_fused", phase=phase
@@ -757,6 +758,7 @@ def run_trace_phases(
     platform: str = "generic",
     graph_mode: bool = False,
     gradient_checkpointing: bool = False,
+    fusion_debug: bool = False,
 ) -> Tuple[Path, Dict[str, List[Dict[str, Any]]]]:
     """Load *model_id* once, trace each requested phase, write separate files.
 
@@ -917,7 +919,7 @@ def run_trace_phases(
 
             raw_opgraph, fused_opgraph = _save_phase_outputs(
                 records, tracker, phase, slug, output_dir, config_summary,
-                platform=platform)
+                platform=platform, fusion_debug=fusion_debug)
             all_records[phase] = records
             all_graphs[phase] = (raw_opgraph, fused_opgraph)
 

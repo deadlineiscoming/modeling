@@ -414,11 +414,16 @@ class FusionEngine:
         Controls parent-merge thresholds, sub-pattern library, and whether
         Add+Norm cross-boundary fusion is enabled.
         Default ``"generic"`` reproduces the original two-pass behaviour.
+    debug:
+        If True, log detailed fusion decisions (pass-level + per-group) at
+        DEBUG level.  Useful for ``--fusion-debug`` CLI flag.
     """
 
-    def __init__(self, tracker: ModuleTracker, platform: str = "generic"):
+    def __init__(self, tracker: ModuleTracker, platform: str = "generic",
+                 debug: bool = False):
         self._tracker  = tracker
         self._platform = platform
+        self._debug    = debug
         cfg = get_platform_settings(platform)
         self._max_parent_ops  = cfg["max_parent_ops"]
         self._max_children    = cfg["max_children"]
@@ -477,18 +482,81 @@ class FusionEngine:
     def _run_all_passes(
         self, records: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        groups = self._pass1_leaf(records)
-        groups = self._pass2_parent(groups)
-        # Pass 3a: platform sub-pattern relabelling
-        groups = _apply_subpatterns(groups, self._platform)
-        # Pass 3b: cross-boundary Add+Norm → AddRMSNorm
-        groups = _detect_add_norm(groups, self._add_norm_fusion)
+        """Run the full 5-pass pipeline with error boundaries.
+
+        Each pass is wrapped in try/except — a failure in one pass leaves the
+        groups from the previous pass intact and logs a warning so the pipeline
+        never silently degrades.
+        """
+        if self._debug:
+            logger.info("[fusion-debug] Platform: %s | Input records: %d",
+                        self._platform, len(records))
+
+        # Pass 1: Leaf grouping
+        try:
+            groups = self._pass1_leaf(records)
+            if self._debug:
+                logger.info("[fusion-debug] Pass 1 (leaf): %d → %d groups",
+                            len(records), len(groups))
+        except Exception as e:
+            logger.warning(
+                "Fusion Pass 1 (leaf) failed: %s.  Returning raw records "
+                "without fusion grouping.", e, exc_info=True)
+            # Fallback: each record becomes its own group
+            groups = [_make_fused_entry(
+                [r], self._tracker, "leaf_fallback") for r in records]
+            return groups
+
+        # Pass 2: Parent merge
+        try:
+            n_before = len(groups)
+            groups = self._pass2_parent(groups)
+            if self._debug:
+                logger.info("[fusion-debug] Pass 2 (parent): %d → %d groups",
+                            n_before, len(groups))
+        except Exception as e:
+            logger.warning(
+                "Fusion Pass 2 (parent) failed: %s.  Keeping leaf groups.", e,
+                exc_info=True)
+
+        # Pass 3a: Platform sub-pattern relabelling
+        try:
+            groups = _apply_subpatterns(groups, self._platform)
+            if self._debug:
+                sub_matched = sum(
+                    1 for g in groups
+                    if g.get("fused_op", "") not in (g.get("_semantic", ""),))
+                logger.info(
+                    "[fusion-debug] Pass 3a (sub-patterns): %d groups, "
+                    "%d sub-pattern matches", len(groups), sub_matched)
+        except Exception as e:
+            logger.warning(
+                "Fusion Pass 3a (sub-patterns) failed: %s.  Keeping "
+                "pre-pattern labels.", e, exc_info=True)
+
+        # Pass 3b: Cross-boundary Add+Norm → AddRMSNorm
+        try:
+            groups = _detect_add_norm(groups, self._add_norm_fusion)
+        except Exception as e:
+            logger.warning(
+                "Fusion Pass 3b (add_norm) failed: %s.  Continuing.", e,
+                exc_info=True)
+
         # Pass 4: expand unfused container groups back to individual op rows.
-        # Groups that still carry a CONTAINER_SEMANTICS _semantic after Pass-3a
-        # were not matched by any hardware kernel pattern, so their constituent
-        # ops are NOT truly fused.  Show each op as its own row so the fused
-        # operator list is a complete computation graph (fused + unfused ops).
-        groups = _expand_unfused_containers(groups)
+        try:
+            n_before = len(groups)
+            groups = _expand_unfused_containers(groups)
+            if self._debug:
+                logger.info("[fusion-debug] Pass 4 (expand): %d → %d groups",
+                            n_before, len(groups))
+        except Exception as e:
+            logger.warning(
+                "Fusion Pass 4 (expand) failed: %s.  Keeping merged groups.",
+                e, exc_info=True)
+
+        if self._debug:
+            logger.info("[fusion-debug] Final: %d fused operators", len(groups))
+
         return groups
 
     def _pass1_leaf(

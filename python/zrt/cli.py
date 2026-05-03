@@ -292,9 +292,7 @@ def _run_inference_pipeline(args, model_id: str, hw, result) -> None:
         ParallelConfig, StreamConfig,
     )
     from python.zrt.transform.context import QuantConfig
-    from python.zrt.executor import DAGScheduler
-    from python.zrt.simulator import SimulatorHub
-    from python.zrt.report import build_summary, export_html_report, export_chrome_trace
+    from python.zrt.report import export_reports
     from python.zrt.report.excel_writer import append_perf_summary
 
     quant = QuantConfig(weight=args.quant, activation=args.quant) if args.quant else None
@@ -307,60 +305,39 @@ def _run_inference_pipeline(args, model_id: str, hw, result) -> None:
         quant=quant,
     )
     pipe = build_default_pipeline()
-    hub = SimulatorHub.default()
-    scheduler = DAGScheduler(hw_spec=hw)
 
     slug = _make_model_slug(model_id)
-    report_dir = result.output_dir / "reports"
 
     for phase, (raw_graph, _) in result.graphs.items():
         g = pipe.run(raw_graph, ctx)
-        tl = scheduler.schedule(g)
-        sim_results = hub.simulate_graph(g, hw)
 
-        parallel_desc = ctx.parallel.describe()
-
-        summary = build_summary(
-            model=model_id,
-            hardware=args.hw,
-            phase=phase,
-            batch_size=args.batch_size,
-            seq_len=args.seq_len,
-            graph=g,
-            sim_results=sim_results,
-            timeline=tl,
-            hw_spec=hw,
-            parallel_desc=parallel_desc,
-        )
+        # Single call: schedule + simulate + all exports
         try:
-            print(f"\n{summary}")
-        except UnicodeEncodeError:
-            logger.info("Performance summary: %s", summary)
-
-        xlsx_path = result.output_dir / f"{slug}_{phase}_ops.xlsx"
-        if xlsx_path.exists():
-            append_perf_summary(xlsx_path, summary)
-            logger.info("Performance summary written to %s", xlsx_path)
-
-        # Auto-export HTML + Chrome Trace
-        try:
-            report_dir.mkdir(parents=True, exist_ok=True)
-            export_html_report(
-                summary, report_dir / f"{slug}_{phase}_report.html",
-                timeline_data=[
-                    {"start": op.start_us, "end": op.end_us,
-                     "stream": op.stream_id, "type": op.stream_type}
-                    for op in tl.scheduled_ops
-                ],
-            )
-            export_chrome_trace(
-                tl, report_dir / f"{slug}_{phase}_trace.json",
-                name=f"{model_id} | {phase}",
-                metadata={"model": model_id, "hardware": args.hw,
-                          "phase": phase, "parallel": parallel_desc},
+            rc, flat = export_reports(
+                model=model_id, hardware=args.hw, phase=phase,
+                batch_size=args.batch_size, seq_len=args.seq_len,
+                graph=g, hw_spec=hw, ctx=ctx,
+                output_dir=result.output_dir, slug=slug,
+                flat_summary=True,
             )
         except Exception as exc:
             logger.warning("Report export failed: %s", exc)
+            continue
+
+        # Print console summary + append Excel
+        if flat is not None:
+            try:
+                print(f"\n{flat}")
+            except UnicodeEncodeError:
+                logger.info("Performance summary: %s", flat)
+
+            xlsx_path = result.output_dir / f"{slug}_{phase}_ops.xlsx"
+            if xlsx_path.exists():
+                try:
+                    append_perf_summary(xlsx_path, flat)
+                    logger.info("Performance summary written to %s", xlsx_path)
+                except Exception as exc:
+                    logger.warning("Excel summary append failed: %s", exc)
 
 
 def _run_training_modelling(args, model_id: str, hw, result) -> None:
@@ -434,16 +411,40 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
     except Exception as exc:
         logger.warning("Training Excel export failed: %s", exc)
 
-    # Export training report JSON
+    # Export training report JSON + hierarchical HTML
     try:
         import json as _json
         report_dir = output_dir / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
+
+        # JSON dump
         json_path = report_dir / f"{slug}_training_report.json"
         json_path.write_text(_json.dumps(report.to_dict(), indent=2))
         logger.info("Training report written to %s", json_path)
+
+        # Hierarchical HTML + Chrome Trace (single export_reports call)
+        train_graph = transformed.get("unified") or transformed.get("train_forward")
+        if train_graph is not None:
+            from types import SimpleNamespace
+            from python.zrt.report import export_reports
+            cli_profile = SimpleNamespace(
+                num_layers=args.num_layers_full or args.layers or 0,
+                total_param_count=args.total_params or 0,
+                hidden_size=args.hidden or 7168,
+                is_moe=False,
+                num_experts=0,
+                moe_topk=0,
+            )
+            export_reports(
+                model=model_id, hardware=args.hw, phase="train",
+                batch_size=args.batch_size, seq_len=args.seq_len,
+                graph=train_graph, hw_spec=hw, ctx=ctx,
+                output_dir=output_dir, slug=slug,
+                flat_summary=False,
+                profile=cli_profile,
+            )
     except Exception as exc:
-        logger.warning("Report export failed: %s", exc)
+        logger.warning("Training report export failed: %s", exc)
 
 
 def _run_estimate(config_path: str, output_path: str | None) -> None:

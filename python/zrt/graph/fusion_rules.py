@@ -59,6 +59,7 @@ SHAPE_OPS: Set[str] = {
     "aten.unbind.int",
     # ADDED: common view/shape ops confirmed dispatched
     "aten.diagonal.default",
+    "aten.slice_backward.default",  # ADDED: backward of slice (reshape metadata only)
     # NOTE: aten.narrow.default is NOT added — narrow decomposes to aten.slice.Tensor
     #       before dispatch, so aten.narrow.default never appears in traces.
 }
@@ -74,6 +75,8 @@ INIT_OPS: Set[str] = {
     "aten.ones.default",         # FIXED: was .memory_format (wrong dispatch name)
     "aten.full.default",
     "aten.empty.memory_format",
+    "aten.new_empty.default",    # ADDED: allocates fresh memory on the same device as input
+    "aten.new_empty_strided.default",  # ADDED: allocates fresh memory with explicit strides
     "aten.arange.start",
     "aten.arange.default",
     "aten.arange.start_step",    # ADDED: torch.arange(start, end, step)
@@ -103,6 +106,9 @@ LIFT_OPS: Set[str] = {
 POTENTIAL_COPY_OPS: Set[str] = {
     "aten.repeat.default",     # always copies: allocates new memory + copies data
     "aten.flip.default",       # always copies: allocates new memory + reorders data
+    "aten.clone.default",      # always copies: allocates new memory + copies data
+    "aten._to_copy.default",   # device/dtype conversion: allocates new memory + copies data
+    "aten.copy_.default",      # in-place copy: allocates new memory + copies data into target
 }
 PATTERN_SKIP: Set[str] = ALWAYS_TRANSPARENT | SHAPE_OPS | INIT_OPS | LIFT_OPS | POTENTIAL_COPY_OPS
 

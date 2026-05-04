@@ -85,17 +85,34 @@ def render_topology_svg(
     gpu_w, gpu_h = 43, 18
     gpu_gap_x, gpu_gap_y = 6, 5
     cols_per_row = 4  # GPUs per row within a node
-    node_pad_x, node_pad_y = 26, 18
+    node_pad_x = 16
+    rows = max(1, gpus_per_node // cols_per_row)
+
     node_w = node_pad_x * 2 + cols_per_row * gpu_w + (cols_per_row - 1) * gpu_gap_x
-    node_h = node_pad_y * 2 + (gpus_per_node // cols_per_row) * (gpu_h + gpu_gap_y)
-    nvswitch_y_offset = 30
 
-    rack_margin = 16
+    # Vertical layout (top-to-bottom inside a node box):
+    #   title_h   — "Node N" + bandwidth label
+    #   gpu_area  — all GPU rows
+    #   nvs_gap   — spacing before NVSwitch
+    #   nvs_h     — NVSwitch bar
+    #   bottom    — padding below NVSwitch
+    title_h  = 36
+    gpu_area = rows * gpu_h + max(0, rows - 1) * gpu_gap_y
+    nvs_gap  = 10
+    nvs_h    = 16
+    bot_pad  = 10
+    node_h   = title_h + gpu_area + nvs_gap + nvs_h + bot_pad
+
+    # Y offsets relative to node_y
+    gpu_y0   = title_h                        # first GPU row top
+    nvs_y_off = title_h + gpu_area + nvs_gap  # NVSwitch top
+
     rack_w = node_w * nodes + (nodes + 1) * 26
-    rack_h = node_h + nvswitch_y_offset + 30
+    # Rack contains a 38px top margin (for rack title) + node content + 16px bottom
+    rack_h = 38 + node_h + 16
 
-    svg_w = rack_w + 180
-    svg_h = rack_h + 120
+    svg_w = rack_w + 200
+    svg_h = 96 + rack_h + 40  # 96px header area + rack + footer
     viewBox = f"0 0 {svg_w} {svg_h}"
 
     lines: list[str] = []
@@ -150,26 +167,26 @@ def render_topology_svg(
     # ── Nodes ──
     for node_i in range(nodes):
         node_x = rack_x + 24 + node_i * (node_w + 26)
-        node_y = rack_y + 50
+        node_y = rack_y + 38  # below rack title
 
         # Node background
         add(f'<rect fill="#f8fafc" height="{node_h}" rx="12" stroke="#cbd5e1" '
             f'width="{node_w}" x="{node_x}" y="{node_y}"/>')
         add(f'<text fill="#0f172a" font-size="12" font-weight="700" '
-            f'x="{node_x + 8}" y="{node_y + 16}">Node {node_i}</text>')
+            f'x="{node_x + 8}" y="{node_y + 14}">Node {node_i}</text>')
         add(f'<text fill="#475569" font-size="9" '
-            f'x="{node_x + 8}" y="{node_y + 29}">'
+            f'x="{node_x + 8}" y="{node_y + 26}">'
             f'NVSwitch / NVLink {intra_bw} GB/s</text>')
 
-        # NVSwitch bar
-        nvs_x = node_x + (node_w - 74) // 2
-        nvs_y = node_y + node_h - nvswitch_y_offset
-        add(f'<rect fill="#dcfce7" height="16" rx="7" stroke="#22c55e" width="74" '
+        # NVSwitch bar — positioned after all GPU rows
+        nvs_x = node_x + (node_w - 80) // 2
+        nvs_y = node_y + nvs_y_off
+        add(f'<rect fill="#dcfce7" height="{nvs_h}" rx="7" stroke="#22c55e" width="80" '
             f'x="{nvs_x}" y="{nvs_y}"/>')
-        add(f'<text fill="#166534" font-size="9" x="{nvs_x + 10}" '
+        add(f'<text fill="#166534" font-size="9" x="{nvs_x + 12}" '
             f'y="{nvs_y + 11}">NV Fabric</text>')
 
-        # Inter-node connection line
+        # Inter-node connection line (midpoint of node box)
         add(f'<line stroke="#94a3b8" stroke-dasharray="4 3" '
             f'x1="{node_x + node_w}" x2="{spine_x}" '
             f'y1="{node_y + node_h // 2}" y2="{spine_y}"/>')
@@ -180,7 +197,7 @@ def render_topology_svg(
             col = gpu_i % cols_per_row
             row = gpu_i // cols_per_row
             gx = node_x + node_pad_x + col * (gpu_w + gpu_gap_x)
-            gy = node_y + node_pad_y + 10 + row * (gpu_h + gpu_gap_y)
+            gy = node_y + gpu_y0 + row * (gpu_h + gpu_gap_y)
 
             # TP → fill, EP → border
             tp_idx = (global_gpu // ep) % tp if tp > 0 else 0

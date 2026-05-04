@@ -53,7 +53,10 @@ def render_structure_svg(
     width: int = 1200,
     height: int = 360,
 ) -> str:
-    """Generate a model structure SVG with Forward/Backward tab switching.
+    """Generate a model structure SVG.
+
+    Renders three zones left-to-right:
+        [Embedding]  →  [TransformerBlock × N (with sub-structure pills)]  →  [Output]
 
     Parameters
     ----------
@@ -62,7 +65,7 @@ def render_structure_svg(
     phase : str
         Phase label ("prefill" | "decode" | "train").
     width, height : int
-        SVG canvas dimensions.
+        Minimum SVG canvas dimensions (auto-expanded for tall content).
 
     Returns
     -------
@@ -74,7 +77,77 @@ def render_structure_svg(
     def add(s: str) -> None:
         lines.append(s)
 
-    viewBox = f"0 0 {width} {height}"
+    # ── Classify blocks by semantic type ──────────────────────────────────────
+    embed_blks  = [b for b in blocks if _block_type(b.name) == "embedding"]
+    layer_blks  = [b for b in blocks if _block_type(b.name) == "block"]
+    output_blks = [b for b in blocks if _block_type(b.name) == "output"]
+
+    # Fallback when classification yields nothing
+    if not layer_blks and not embed_blks and not output_blks:
+        if len(blocks) >= 3:
+            embed_blks  = [blocks[0]]
+            layer_blks  = blocks[1:-1]
+            output_blks = [blocks[-1]]
+        elif len(blocks) == 2:
+            layer_blks  = [blocks[0]]
+            output_blks = [blocks[-1]]
+        else:
+            layer_blks = blocks
+
+    # ── Layout constants ──────────────────────────────────────────────────────
+    margin_x  = 26
+    gap       = 22          # arrow gap between zones
+    box_y     = 90          # top of boxes
+    box_h_std = 130         # standard box height (embed / output)
+
+    # Sub-structure pills inside the layer block
+    sub_h, sub_gap = 24, 4
+    sub_cols        = 3
+    sub_pad_top     = 38    # room for block title inside box
+    sub_pad_bot     = 32    # room for ms label at bottom
+
+    # Arrow center Y (midpoint of the standard box)
+    arrow_y = box_y + box_h_std // 2
+
+    # ── X positions (left-to-right, variable-width per layer block) ──────────
+    embed_w  = 155 if embed_blks  else 0
+    output_w = 200 if output_blks else 0
+
+    # Compute per-layer-block widths based on sub-structure count.
+    # Each block gets its own width to accommodate its pill grid.
+    _layer_widths: list[int] = []
+    for b in layer_blks:
+        _sc = len([ss for ss in b.sub_structures if ss.name]) or 1
+        _cols = min(sub_cols, _sc)
+        _w = max(200, 82 * _cols + 32)
+        _layer_widths.append(_w)
+
+    # Compute per-block X coords (stacked left-to-right with gap between).
+    x = margin_x
+    embed_x = x
+    x += embed_w + (gap if embed_blks and (layer_blks or output_blks) else 0)
+
+    _layer_xs: list[int] = []
+    for i, _lw in enumerate(_layer_widths):
+        _layer_xs.append(x)
+        x += _lw + (gap if (i < len(_layer_widths) - 1) or output_blks else 0)
+
+    output_x = x
+    # Use first block for arrow_y (midpoint)
+    layer_x = _layer_xs[0] if _layer_xs else x
+
+    total_w = output_x + output_w + margin_x if output_blks else (output_x if not _layer_xs else _layer_xs[-1] + _layer_widths[-1] + margin_x)
+    svg_w   = max(width,  total_w)
+    # Compute max box height across all layer blocks (for SVG canvas sizing).
+    _max_layer_h = 0
+    for b in layer_blks:
+        _sc = max(len([ss for ss in b.sub_structures if ss.name]), 1)
+        _pr = (_sc + sub_cols - 1) // sub_cols
+        _h = sub_pad_top + _pr * (sub_h + sub_gap) + sub_pad_bot
+        _max_layer_h = max(_max_layer_h, _h)
+    svg_h   = max(height, box_y + max(_max_layer_h, box_h_std) + 50)
+
+    viewBox = f"0 0 {svg_w} {svg_h}"
 
     # ── Arrow marker def ──
     add('<defs>')
@@ -85,141 +158,80 @@ def render_structure_svg(
     add('</defs>')
 
     # ── Background ──
-    add(f'<rect fill="#fbfdff" height="{height - 16}" rx="28" stroke="#dbe4ee" '
-        f'width="{width - 16}" x="8" y="8"/>')
+    add(f'<rect fill="#fbfdff" height="{svg_h - 16}" rx="28" stroke="#dbe4ee" '
+        f'width="{svg_w - 16}" x="8" y="8"/>')
 
     # ── Title ──
     phase_label = phase.upper() if phase else ""
-    add(f'<text fill="#0f172a" font-size="20" font-weight="800" x="26" y="34">'
+    add(f'<text fill="#0f172a" font-size="18" font-weight="800" x="26" y="32">'
         f'Forward / Main Path — {phase_label}</text>')
-    add(f'<text fill="#64748b" font-size="12" font-weight="600" x="26" y="56">'
-        f'SVG 连线化模型结构图：展示主干流、重复层和子结构关系</text>')
+    add(f'<text fill="#64748b" font-size="12" x="26" y="52">'
+        f'模型主干结构图：Embedding → Transformer Blocks → Output</text>')
 
-    # ── Classify blocks ──
-    input_blocks = [b for b in blocks if _block_type(b.name) == "input" or _block_type(b.name) == "embedding"]
-    main_blocks = [b for b in blocks if _block_type(b.name) == "block"]
-    output_blocks = [b for b in blocks if _block_type(b.name) == "output"]
+    def _draw_arrow(x1: int, x2: int) -> None:
+        if x2 <= x1:
+            return
+        mid = (x1 + x2) // 2
+        add(f'<line marker-end="url(#arrowHead)" stroke="#94a3b8" stroke-width="2.5" '
+            f'x1="{x1}" x2="{x2 - 4}" y1="{arrow_y}" y2="{arrow_y}"/>')
 
-    # If no explicit classification, use first/last blocks
-    if not input_blocks and blocks:
-        input_blocks = [blocks[0]]
-    if not output_blocks and len(blocks) > 1:
-        output_blocks = [blocks[-1]]
-    if not main_blocks and len(blocks) > 2:
-        main_blocks = blocks[1:-1]
-
-    # ── Layout constants ──
-    box_y = 100
-    box_h = 140
-    arrow_y = box_y + box_h // 2
-    gap = 24
-
-    # ── Calculate X positions dynamically ──
-    input_w = 140
-    embed_w = 180 if input_blocks else 0
-    output_w = 210
-
-    # Main block area
-    main_count = len(main_blocks)
-    if main_count > 0:
-        main_w = 360
-        main_x_start = 26 + input_w + gap + embed_w + gap
-        sub_h = 24
-        sub_gap = 4
-        sub_pad_y = 10
-        # Adjust block height for substructures
-        subs_total = sum(
-            len([ss for ss in b.sub_structures if ss.name])
-            for b in main_blocks
-        )
-        # Use first main block's sub-structures
-        sub_count = max(
-            len([ss for ss in main_blocks[0].sub_structures if ss.name])
-            if main_blocks else 0, 1
-        )
-        main_h = box_h + sub_pad_y * 2 + (sub_h + sub_gap) * min(sub_count, 6) + 30
-    else:
-        main_w = 0
-        main_x_start = 26 + input_w + gap + embed_w + gap
-        main_h = box_h
-
-    output_x = main_x_start + main_w + gap if main_count > 0 else main_x_start
-
-    # ── Render blocks ──
-    prev_right = 26
-
-    # --- Input block ---
-    if input_blocks:
-        b = input_blocks[0]
-        fill, stroke = _MODULE_COLORS["input"]
-        x = prev_right
-        add(f'<rect fill="{fill}" height="{box_h}" rx="22" stroke="{stroke}" '
-            f'stroke-width="2" width="{input_w}" x="{x}" y="{box_y}"/>')
-        add(f'<text fill="#0f172a" font-size="20" font-weight="800" '
-            f'x="{x + 16}" y="{box_y + 30}">Input</text>')
-        add(f'<text fill="#475569" font-size="12" font-weight="600" '
-            f'x="{x + 16}" y="{box_y + 54}">B×S</text>')
-        add(f'<text fill="#0f172a" font-size="22" font-weight="850" '
-            f'x="{x + 16}" y="{box_y + 120}">{b.total_ms:.3f} ms</text>')
-        prev_right = x + input_w
-        # Arrow
-        next_x = prev_right + gap
-        add(f'<line marker-end="url(#arrowHead)" stroke="#94a3b8" stroke-width="3" '
-            f'x1="{prev_right}" x2="{next_x - gap}" y1="{arrow_y}" y2="{arrow_y}"/>')
-
-    # --- Embedding block ---
-    if input_blocks and len(input_blocks) > 1 and _block_type(input_blocks[1].name) == "embedding":
-        b = input_blocks[1]
+    # ── Embedding block ───────────────────────────────────────────────────────
+    if embed_blks:
+        b = embed_blks[0]
         fill, stroke = _MODULE_COLORS["embedding"]
-        x = prev_right + gap
-        add(f'<rect fill="{fill}" height="{box_h}" rx="22" stroke="{stroke}" '
-            f'stroke-width="2" width="{embed_w}" x="{x}" y="{box_y}"/>')
-        add(f'<text fill="#0f172a" font-size="20" font-weight="800" '
-            f'x="{x + 16}" y="{box_y + 30}">Embedding</text>')
-        add(f'<text fill="#475569" font-size="12" font-weight="600" '
-            f'x="{x + 16}" y="{box_y + 54}">hidden=7168</text>')
-        add(f'<text fill="#0f172a" font-size="22" font-weight="850" '
-            f'x="{x + 16}" y="{box_y + 120}">{b.total_ms:.3f} ms</text>')
-        prev_right = x + embed_w
-        # Arrow
-        add(f'<line marker-end="url(#arrowHead)" stroke="#94a3b8" stroke-width="3" '
-            f'x1="{prev_right}" x2="{main_x_start}" y1="{arrow_y}" y2="{arrow_y}"/>')
+        add(f'<rect fill="{fill}" height="{box_h_std}" rx="20" stroke="{stroke}" '
+            f'stroke-width="2" width="{embed_w}" x="{embed_x}" y="{box_y}"/>')
+        add(f'<text fill="#0f172a" font-size="16" font-weight="800" '
+            f'x="{embed_x + 14}" y="{box_y + 26}">Embedding</text>')
+        add(f'<text fill="#475569" font-size="11" '
+            f'x="{embed_x + 14}" y="{box_y + 46}">Vocab → Hidden</text>')
+        add(f'<text fill="#0f172a" font-size="19" font-weight="700" '
+            f'x="{embed_x + 14}" y="{box_y + box_h_std - 18}">{b.total_ms:.3f} ms</text>')
+        if layer_blks or output_blks:
+            _draw_arrow(embed_x + embed_w, layer_x if layer_blks else output_x)
 
-    # --- Main block(s) ---
-    for mi, b in enumerate(main_blocks):
+    # ── Layer block(s) ────────────────────────────────────────────────────────
+    for li, b in enumerate(layer_blks):
+        lx = _layer_xs[li]
+        lw = _layer_widths[li]
+
+        # Per-block box height based on its own sub-structure count
+        _b_sub_count = max(
+            len([ss for ss in b.sub_structures if ss.name]), 1)
+        _b_pills_rows = (_b_sub_count + sub_cols - 1) // sub_cols
+        _b_box_h = sub_pad_top + _b_pills_rows * (sub_h + sub_gap) + sub_pad_bot
+
         fill, stroke = _MODULE_COLORS["block"]
-        x = main_x_start
-
         repeat_label = f" × {b.repeat}" if b.repeat > 1 else ""
-        add(f'<rect fill="{fill}" height="{main_h}" rx="22" stroke="{stroke}" '
-            f'stroke-width="2" width="{main_w}" x="{x}" y="{box_y - 42}"/>')
-        add(f'<text fill="#0f172a" font-size="20" font-weight="800" '
-            f'x="{x + 16}" y="{box_y - 12}">{b.name}{repeat_label}</text>')
-        # Model params
-        params_text = ""
+
+        # Block box
+        add(f'<rect fill="{fill}" height="{_b_box_h}" rx="20" stroke="{stroke}" '
+            f'stroke-width="2" width="{lw}" x="{lx}" y="{box_y}"/>')
+        add(f'<text fill="#0f172a" font-size="16" font-weight="800" '
+            f'x="{lx + 14}" y="{box_y + 24}">{b.name}{repeat_label}</text>')
+
+        # Model-specific params (MoE experts)
         if b.model_params:
             pm = b.model_params
-            parts = []
+            parts: list[str] = []
             if pm.get("num_experts"):
-                parts.append(f"routed={pm['num_experts']}")
+                parts.append(f"experts={pm['num_experts']}")
             if pm.get("active_per_token"):
-                parts.append(f"active/token={pm['active_per_token']}")
-            params_text = " · ".join(parts)
-        add(f'<text fill="#475569" font-size="12" font-weight="600" '
-            f'x="{x + 16}" y="{box_y + 12}">{params_text}</text>')
-        add(f'<text fill="#0f172a" font-size="22" font-weight="850" '
-            f'x="{x + 16}" y="{box_y + main_h - 20}">{b.total_ms:.3f} ms</text>')
+                parts.append(f"top-k={pm['active_per_token']}")
+            if parts:
+                add(f'<text fill="#475569" font-size="10" '
+                    f'x="{lx + 14}" y="{box_y + 38}">{" · ".join(parts)}</text>')
 
-        # Sub-structures as pill boxes
-        sub_y = box_y + 36
-        col = 0
-        row = 0
-        cols_per_row = 3
-        sub_x_base = x + 16
+        # Sub-structure pills
+        pill_w   = max(78, (lw - 28 - (sub_cols - 1) * 8) // sub_cols)
+        pill_x0  = lx + 14
+        pill_y0  = box_y + sub_pad_top
 
+        col_i, row_i = 0, 0
         for ss in b.sub_structures:
-            name_lower = (ss.name or "").lower()
-            # Determine sub category
+            if not ss.name:
+                continue
+            name_lower = ss.name.lower()
             sub_cat = "attention"
             if "norm" in name_lower:
                 sub_cat = "norm"
@@ -239,64 +251,70 @@ def render_structure_svg(
                 sub_cat = "shared"
 
             sub_fill, sub_stroke = _SUB_COLORS.get(sub_cat, ("#f8fafc", "#cbd5e1"))
-            pill_w = 80
-            pill_h = 24
-            pill_x = sub_x_base + col * (pill_w + 8)
-            pill_y = sub_y + row * (pill_h + 6)
+            px = pill_x0 + col_i * (pill_w + 8)
+            py = pill_y0 + row_i * (sub_h + sub_gap)
 
-            if pill_y + pill_h > box_y + main_h - 30:
-                row = 0
-                col += 1
-                if col >= cols_per_row:
-                    break
-                pill_x = sub_x_base + col * (pill_w + 8)
-                pill_y = sub_y + row * (pill_h + 6)
+            if py + sub_h > box_y + _b_box_h - sub_pad_bot:
+                break  # out of vertical space
 
-            add(f'<rect fill="{sub_fill}" height="{pill_h}" rx="12" '
-                f'stroke="{sub_stroke}" width="{pill_w}" x="{pill_x}" y="{pill_y}"/>')
-            add(f'<text fill="#334155" font-size="11" font-weight="700" '
-                f'x="{pill_x + 10}" y="{pill_y + 16}">{ss.name or "?"}</text>')
-            col += 1
-            if col >= cols_per_row:
-                col = 0
-                row += 1
+            add(f'<rect fill="{sub_fill}" height="{sub_h}" rx="11" '
+                f'stroke="{sub_stroke}" stroke-width="1.5" width="{pill_w}" '
+                f'x="{px}" y="{py}"/>')
+            label = ss.name[:11] if len(ss.name) > 11 else ss.name
+            add(f'<text fill="#334155" font-size="10.5" font-weight="700" '
+                f'x="{px + 8}" y="{py + 15}">{label}</text>')
 
-        prev_right = x + main_w
+            col_i += 1
+            if col_i >= sub_cols:
+                col_i = 0
+                row_i += 1
 
-    # Arrow from main block to output
-    if main_count > 0 and output_blocks:
-        add(f'<line marker-end="url(#arrowHead)" stroke="#94a3b8" stroke-width="3" '
-            f'x1="{prev_right}" x2="{output_x}" y1="{arrow_y}" y2="{arrow_y}"/>')
-        mid = (prev_right + output_x) // 2
-        add(f'<text fill="#64748b" font-size="11" text-anchor="middle" '
-            f'x="{mid}" y="{arrow_y - 10}">residual stream</text>')
+        add(f'<text fill="#0f172a" font-size="19" font-weight="700" '
+            f'x="{lx + 14}" y="{box_y + _b_box_h - 12}">'
+            f'{b.total_ms:.3f} ms</text>')
 
-    # --- Output block ---
-    if output_blocks:
-        b = output_blocks[0]
+        # Arrow: between layer blocks, or from last layer to output
+        if li < len(layer_blks) - 1:
+            _next_x = _layer_xs[li + 1]
+            _draw_arrow(lx + lw, _next_x)
+        elif output_blks:
+            _draw_arrow(lx + lw, output_x)
+            mid_x = (lx + lw + output_x) // 2
+            add(f'<text fill="#64748b" font-size="10" text-anchor="middle" '
+                f'x="{mid_x}" y="{arrow_y - 8}">residual</text>')
+
+    # ── Output block ──────────────────────────────────────────────────────────
+    if output_blks:
+        b = output_blks[0]
         fill, stroke = _MODULE_COLORS["output"]
-        add(f'<rect fill="{fill}" height="{box_h}" rx="22" stroke="{stroke}" '
+        add(f'<rect fill="{fill}" height="{box_h_std}" rx="20" stroke="{stroke}" '
             f'stroke-width="2" width="{output_w}" x="{output_x}" y="{box_y}"/>')
-        add(f'<text fill="#0f172a" font-size="20" font-weight="800" '
-            f'x="{output_x + 16}" y="{box_y + 30}">Output</text>')
-        add(f'<text fill="#475569" font-size="12" font-weight="600" '
-            f'x="{output_x + 16}" y="{box_y + 54}">Final Norm + LM Head</text>')
-        add(f'<text fill="#0f172a" font-size="22" font-weight="850" '
-            f'x="{output_x + 16}" y="{box_y + 120}">{b.total_ms:.3f} ms</text>')
+        add(f'<text fill="#0f172a" font-size="16" font-weight="800" '
+            f'x="{output_x + 14}" y="{box_y + 26}">Output</text>')
+        add(f'<text fill="#475569" font-size="11" '
+            f'x="{output_x + 14}" y="{box_y + 46}">Final Norm + LM Head</text>')
+        add(f'<text fill="#0f172a" font-size="19" font-weight="700" '
+            f'x="{output_x + 14}" y="{box_y + box_h_std - 18}">{b.total_ms:.3f} ms</text>')
 
-    return f'<svg class="arch-svg" viewBox="{viewBox}" xmlns="http://www.w3.org/2000/svg">\n' + \
-           "\n".join(lines) + "\n</svg>"
+    return (
+        f'<svg class="arch-svg" viewBox="{viewBox}" xmlns="http://www.w3.org/2000/svg">\n'
+        + "\n".join(lines)
+        + "\n</svg>"
+    )
 
 
-def render_structure_html(blocks, phase="decode") -> str:
+def render_structure_html(blocks, phase="decode", blocks_bwd=None) -> str:
     """Render the full structure HTML section with SVG and tab UI.
 
     Parameters
     ----------
     blocks : list[BlockDetail]
-        Top-level model blocks.
+        Top-level forward (or combined) model blocks.
     phase : str
         Phase label.
+    blocks_bwd : list[BlockDetail] | None
+        Backward-only blocks.  When provided the Backward tab renders a real
+        SVG instead of the placeholder.
 
     Returns
     -------
@@ -304,6 +322,21 @@ def render_structure_html(blocks, phase="decode") -> str:
         Complete HTML for the structure section.
     """
     svg_fwd = render_structure_svg(blocks, phase=phase)
+
+    if blocks_bwd:
+        svg_bwd = render_structure_svg(blocks_bwd, phase=f"{phase} backward")
+        bwd_panel = f"""
+    <div class="viz-panel" id="viz-backward" style="display:none">
+        {svg_bwd}
+    </div>"""
+    else:
+        bwd_panel = """
+    <div class="viz-panel" id="viz-backward" style="display:none;padding:40px;
+         text-align:center;background:#f8fafc;border:1px solid #e2e8f0;
+         border-radius:0 8px 8px 8px;color:#64748b;font-size:14px">
+        Backward 结构视图将在支持逆向图捕获后可用。<br>
+        <small style="color:#94a3b8">需要 train_backward 阶段的 GraphHierarchy 数据</small>
+    </div>"""
 
     return f"""
 <div class="section">
@@ -322,12 +355,7 @@ def render_structure_html(blocks, phase="decode") -> str:
     <div class="viz-panel active" id="viz-forward" style="display:block">
         {svg_fwd}
     </div>
-    <div class="viz-panel" id="viz-backward" style="display:none;padding:40px;text-align:center;
-         background:#f8fafc;border:1px solid #e2e8f0;border-radius:0 8px 8px 8px;
-         color:#64748b;font-size:14px">
-        Backward 结构视图将在支持逆向图捕获后可用。<br>
-        <small style="color:#94a3b8">需要 train_backward 阶段的 GraphHierarchy 数据</small>
-    </div>
+{bwd_panel}
     <div style="color:#64748b;font-size:12px;margin-top:8px">
         点击上方标签即可切换结构视图。SVG 图中使用连线显式表示主路径，适合培训、评审和报告演示。
     </div>

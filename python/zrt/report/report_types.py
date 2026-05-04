@@ -177,6 +177,10 @@ class ReportContext:
     # ── hierarchical data ──
     blocks: list[BlockDetail] = field(default_factory=list)
 
+    # Phase-split block lists (populated when graph has fwd+bwd stitched nodes).
+    # blocks_bwd is used exclusively by the Backward structure SVG tab.
+    blocks_bwd: list[BlockDetail] = field(default_factory=list)
+
     # ── calibration / warnings (Phase 4) ──
     calibration: list[dict] = field(default_factory=list)
     references: list[dict] = field(default_factory=list)

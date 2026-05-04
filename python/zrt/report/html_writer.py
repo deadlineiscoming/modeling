@@ -36,58 +36,222 @@ tr:hover td { background: #f5f5f5; }
 .heat-cell { padding: 8px 4px; text-align: center; border-radius: 4px; font-size: 11px; color: #fff; font-weight: 600; }
 .meta { font-size: 13px; color: #78909c; margin-bottom: 16px; }
 .meta span { margin-right: 16px; }
+
+/* ── Timeline wrapper + interactive tooltip ── */
+.tl-wrap { position: relative; }
+.tl-tooltip {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    pointer-events: none;
+    background: rgba(15,23,42,0.93);
+    color: #f1f5f9;
+    border-radius: 10px;
+    padding: 10px 13px;
+    min-width: 200px;
+    max-width: 320px;
+    font-size: 12px;
+    line-height: 1.55;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.tl-head { display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
+.tl-opname { font-size:13px; font-weight:700; color:#f8fafc; }
+.tl-scope {
+    font-size: 10.5px; color: #94a3b8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all; margin-bottom: 5px;
+}
+.tl-kv { display:flex; justify-content:space-between; gap:12px; color:#cbd5e1; }
+.tl-kv span { color:#64748b; }
+.tl-kv b { color:#e2e8f0; font-weight:600; }
+/* phase badges */
+.tl-badge { display:inline-block; padding:1px 7px; border-radius:999px;
+    font-size:10px; font-weight:700; text-transform:uppercase; }
+.tl-ph-fwd  { background:#1d4ed8; color:#bfdbfe; }
+.tl-ph-bwd  { background:#7e22ce; color:#e9d5ff; }
+/* bound badges */
+.tl-bd-compute      { background:#854d0e; color:#fef3c7; }
+.tl-bd-memory       { background:#14532d; color:#bbf7d0; }
+.tl-bd-communication{ background:#1e1b4b; color:#e0e7ff; }
 """
 
 # ── JS ────────────────────────────────────────────────────────────────────────
 
 _JS = """
 <script>
-// ── Timeline chart ──
+// ── Timeline chart (interactive) ──────────────────────────────────────────────
 function drawTimeline(canvasId, ops) {
     const canvas = document.getElementById(canvasId);
     if (!canvas || !ops.length) return;
+
     const ctx = canvas.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+    const cRect = canvas.getBoundingClientRect();
+    canvas.width  = cRect.width  * dpr;
+    canvas.height = cRect.height * dpr;
     ctx.scale(dpr, dpr);
-    const W = rect.width, H = rect.height;
-    const pad = {top: 20, right: 20, bottom: 30, left: 60};
+
+    const W = cRect.width, H = cRect.height;
+    const pad = { top: 24, right: 20, bottom: 32, left: 72 };
     const plotW = W - pad.left - pad.right;
-    const plotH = H - pad.top - pad.bottom;
+    const plotH = H - pad.top  - pad.bottom;
 
-    const minT = Math.min(...ops.map(o => o.start));
-    const maxT = Math.max(...ops.map(o => o.end));
-    const range = maxT - minT || 1;
-    const streams = [...new Set(ops.map(o => o.stream))];
-    const streamH = plotH / streams.length;
+    const minT    = Math.min(...ops.map(o => o.start));
+    const maxT    = Math.max(...ops.map(o => o.end));
+    const range   = maxT - minT || 1;
+    const streams = [...new Set(ops.map(o => o.stream))].sort((a, b) => a - b);
+    const nStream = streams.length;
+    const streamH = plotH / nStream;
 
-    const colors = {compute: "#4CAF50", comm: "#F44336", memory: "#FF9800"};
-
-    ops.forEach(op => {
-        const x = pad.left + ((op.start - minT) / range) * plotW;
-        const w = Math.max(1, ((op.end - op.start) / range) * plotW);
-        const si = streams.indexOf(op.stream);
-        const y = pad.top + si * streamH + 4;
-        const h = streamH - 8;
-        ctx.fillStyle = colors[op.type] || "#90A4AE";
-        ctx.fillRect(x, y, w, h);
-    });
-
-    // Y-axis labels
-    ctx.fillStyle = "#333"; ctx.font = "11px sans-serif"; ctx.textAlign = "right";
-    streams.forEach((s, i) => {
-        ctx.fillText("Stream " + s, pad.left - 6, pad.top + i * streamH + streamH / 2 + 4);
-    });
-
-    // X-axis labels
-    ctx.textAlign = "center";
-    for (let i = 0; i <= 5; i++) {
-        const t = minT + (range * i / 5);
-        const x = pad.left + plotW * i / 5;
-        ctx.fillText((t / 1000).toFixed(1) + "ms", x, H - 8);
+    // Base colors by category / stream_type
+    const BASE_COLOR = { compute: "#22c55e", comm: "#ef4444", memory: "#f59e0b" };
+    function opColor(op) { return BASE_COLOR[op.type] || "#90a4ae"; }
+    function hexAlpha(hex, a) {
+        const r = parseInt(hex.slice(1,3),16),
+              g = parseInt(hex.slice(3,5),16),
+              b = parseInt(hex.slice(5,7),16);
+        return `rgba(${r},${g},${b},${a})`;
     }
+
+    // Pre-compute hit areas once (CSS-pixel coordinates)
+    const hitAreas = ops.map(op => {
+        const x  = pad.left + ((op.start - minT) / range) * plotW;
+        const w  = Math.max(1.5, ((op.end - op.start) / range) * plotW);
+        const si = streams.indexOf(op.stream);
+        const y  = pad.top + si * streamH + 3;
+        const h  = streamH - 6;
+        return { x, y, w, h, op };
+    });
+
+    // ── Draw helpers ──────────────────────────────────────────────────────────
+    function drawAxes() {
+        // Y-axis: stream labels
+        ctx.font = "11px system-ui,sans-serif";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        streams.forEach((s, i) => {
+            const ly = pad.top + i * streamH + streamH / 2;
+            ctx.fillStyle = "#475569";
+            ctx.fillText("Stream " + s, pad.left - 8, ly);
+            // Horizontal guide line
+            ctx.strokeStyle = "#e2e8f0";
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, ly); ctx.lineTo(pad.left + plotW, ly);
+            ctx.stroke();
+        });
+        // X-axis: time labels
+        ctx.fillStyle  = "#64748b";
+        ctx.textAlign  = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.font = "10px system-ui,sans-serif";
+        const ticks = 6;
+        for (let i = 0; i <= ticks; i++) {
+            const t = minT + (range * i / ticks);
+            const x = pad.left + plotW * i / ticks;
+            ctx.fillText((t / 1000).toFixed(2) + " ms", x, H - 6);
+            ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + plotH);
+            ctx.stroke();
+        }
+    }
+
+    function renderBars(highlightOp) {
+        ctx.clearRect(0, 0, W, H);
+        drawAxes();
+        hitAreas.forEach(({ x, y, w, h, op }) => {
+            const isHover = op === highlightOp;
+            ctx.fillStyle = highlightOp
+                ? (isHover ? opColor(op) : hexAlpha(opColor(op), 0.22))
+                : opColor(op);
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(x, y, w, h, 2);
+            else ctx.rect(x, y, w, h);
+            ctx.fill();
+            if (isHover) {
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+        });
+        // Phase separators (fwd / bwd boundary)
+        let prevPhase = null;
+        hitAreas.forEach(({ x, op }) => {
+            if (prevPhase && op.phase && op.phase !== prevPhase) {
+                ctx.strokeStyle = "#94a3b8";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + plotH);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            if (op.phase) prevPhase = op.phase;
+        });
+    }
+
+    renderBars(null);
+
+    // ── Tooltip ───────────────────────────────────────────────────────────────
+    const tooltip = document.getElementById(canvasId + "-tooltip");
+    if (!tooltip) return;
+
+    let hovered = null;
+
+    function showTooltip(op, mx, my) {
+        const latMs  = (op.latency_us / 1000).toFixed(3);
+        const latUs  = op.latency_us.toFixed(1);
+        const opName = (op.op_type || "").split(".").filter(Boolean).pop() || op.op_type || "?";
+        const scope  = op.scope  ? `<div class="tl-scope">${op.scope}</div>` : "";
+        const layer  = op.layer  ? `<div class="tl-kv"><span>Layer</span><b>${op.layer}</b></div>` : "";
+        const tflops = op.tflops ? `<div class="tl-kv"><span>TFLOPs</span><b>${op.tflops}</b></div>` : "";
+        const phase  = op.phase  ? `<span class="tl-badge tl-ph-${op.phase}">${op.phase.toUpperCase()}</span>` : "";
+        const bound  = op.bound  ? `<span class="tl-badge tl-bd-${op.bound}">${op.bound}</span>` : "";
+
+        tooltip.innerHTML =
+            `<div class="tl-head"><span class="tl-opname">${opName}</span>${phase}${bound}</div>` +
+            scope + layer +
+            `<div class="tl-kv"><span>Stream</span><b>${op.stream}</b></div>` +
+            `<div class="tl-kv"><span>Duration</span><b>${latMs} ms&nbsp;(${latUs} µs)</b></div>` +
+            tflops;
+
+        tooltip.style.display = "block";
+        const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+        const wrapW = canvas.getBoundingClientRect().width;
+        let tx = mx + 14, ty = my - th / 2;
+        if (tx + tw + 4 > wrapW) tx = mx - tw - 14;
+        if (ty < 4) ty = 4;
+        tooltip.style.left = tx + "px";
+        tooltip.style.top  = ty + "px";
+    }
+
+    canvas.addEventListener("mousemove", function(e) {
+        const r  = canvas.getBoundingClientRect();
+        const mx = e.clientX - r.left;
+        const my = e.clientY - r.top;
+
+        let found = null;
+        for (let i = hitAreas.length - 1; i >= 0; i--) {
+            const { x, y, w, h, op } = hitAreas[i];
+            if (mx >= x && mx <= x + w && my >= y && my <= y + h) {
+                found = op; break;
+            }
+        }
+
+        if (found !== hovered) {
+            hovered = found;
+            renderBars(hovered);
+        }
+        if (hovered) showTooltip(hovered, mx, my);
+        else          tooltip.style.display = "none";
+    });
+
+    canvas.addEventListener("mouseleave", function() {
+        hovered = null;
+        renderBars(null);
+        tooltip.style.display = "none";
+    });
 }
 
 // ── Pie chart ──
@@ -223,16 +387,21 @@ def export_html_report(
     )
 
     # ── Timeline ──
+    # Canvas + tooltip div; init call deferred after _JS.
     timeline_html = ""
+    timeline_init = ""
     if timeline_data:
         ops_json = json.dumps(timeline_data)
-        timeline_html = f"""
+        timeline_html = """
 <h2>Timeline</h2>
 <div class="chart-container">
-    <canvas id="timeline"></canvas>
+    <div class="tl-wrap">
+        <canvas id="timeline" style="display:block;width:100%;height:280px"></canvas>
+        <div id="timeline-tooltip" class="tl-tooltip"></div>
+    </div>
 </div>
-<script>drawTimeline("timeline", {ops_json});</script>
 """
+        timeline_init = f"drawTimeline('timeline', {ops_json});"
 
     # ── Component pie chart ──
     pie_html = ""
@@ -243,10 +412,10 @@ def export_html_report(
         pie_html = f"""
 <h2>Component Breakdown</h2>
 <div class="chart-container">
-    <canvas id="pie"></canvas>
+    <canvas id="pie" style="display:block;width:100%;height:280px"></canvas>
 </div>
-<script>drawPie("pie", {pie_json});</script>
 """
+        timeline_init += f"\ndrawPie('pie', {pie_json});"
 
     # ── Layer heatmap ──
     heatmap_html = ""
@@ -306,6 +475,7 @@ def export_html_report(
 {heatmap_html}
 {bottleneck_html}
 {_JS}
+<script>{timeline_init}</script>
 </body>
 </html>"""
 
@@ -451,10 +621,10 @@ def _comp_box_css_class(component_type: str) -> str:
         return "attn"
     if "norm" in ct:
         return "norm"
+    if "router" in ct or ("gate" in ct and "moe" in ct):
+        return "router"
     if "ffn" in ct or "mlp" in ct or "moe" in ct or "expert" in ct:
         return "proj"
-    if "router" in ct or "gate" in ct:
-        return "router"
     if "comm" in ct or "dispatch" in ct or "combine" in ct:
         return "comm"
     if "shared" in ct:
@@ -479,23 +649,24 @@ def _group_sub_structures(ss_list):
 
     for ss in ss_list:
         ct = (ss.component_type or "").lower()
-        ss_name = (ss.name or "").lower()
 
         # Determine lane
-        if "attn" in ct or "norm" in ct and "attn" in ss_name:
+        if "attn" in ct or ("norm" in ct and "attn" in (ss.scope_group or "").lower()):
             lane = "Attention"
-        elif "ffn" in ct or "mlp" in ct or "moe" in ct or "expert" in ct:
-            lane = "MoE FFN"
-        elif "router" in ct or "gate" in ct:
-            lane = "Router"
+        elif "router" in ct or ("gate" in ct and "moe" in ct):
+            lane = "Router / Gate"
         elif "dispatch" in ct or "combine" in ct:
             lane = "Communication"
         elif "comm" in ct:
             lane = "Communication"
+        elif "ffn" in ct or "mlp" in ct or "moe" in ct or "expert" in ct or "shared" in ct:
+            lane = "MoE / FFN"
         elif "embed" in ct or "lm_head" in ct:
             lane = "Embedding / Output"
         elif "residual" in ct or "add" in ct:
             lane = "Residual"
+        elif "norm" in ct:
+            lane = "Norm"
         else:
             lane = "Other"
 
@@ -746,16 +917,21 @@ def export_hierarchical_html_report(
         hierarchy_html = "\n".join(hierarchy_parts)
 
     # ── Timeline ──
+    # Canvas + tooltip div; init deferred after _JS so drawTimeline is defined.
     timeline_html = ""
+    timeline_init = ""
     if timeline_data:
         ops_json = json.dumps(timeline_data)
-        timeline_html = f"""
+        timeline_html = """
 <h2>Timeline</h2>
 <div class="chart-container">
-    <canvas id="timeline"></canvas>
+    <div class="tl-wrap">
+        <canvas id="timeline" style="display:block;width:100%;height:280px"></canvas>
+        <div id="timeline-tooltip" class="tl-tooltip"></div>
+    </div>
 </div>
-<script>drawTimeline("timeline", {ops_json});</script>
 """
+        timeline_init = f"drawTimeline('timeline', {ops_json});"
 
     # ── Warnings ──
     warning_html = ""
@@ -1008,7 +1184,11 @@ def export_hierarchical_html_report(
     if rc.blocks:
         try:
             from python.zrt.report.structure_renderer import render_structure_html
-            struct_html = render_structure_html(rc.blocks, phase=rc.phase)
+            struct_html = render_structure_html(
+                rc.blocks,
+                phase=rc.phase,
+                blocks_bwd=rc.blocks_bwd if rc.blocks_bwd else None,
+            )
         except Exception:
             struct_html = ""
 
@@ -1040,6 +1220,7 @@ def export_hierarchical_html_report(
 {warning_html}
 {_JS}
 {_HIER_JS}
+<script>{timeline_init}</script>
 </body>
 </html>"""
 
@@ -1123,11 +1304,30 @@ def export_reports(
     sim_results = hub.simulate_graph(graph, hw_spec)
 
     # ── 2. Build timeline JSON (shared by all HTML exports) ────────────────
-    timeline_json = [
-        {"start": op.start_us, "end": op.end_us,
-         "stream": op.stream_id, "type": op.stream_type}
-        for op in tl.scheduled_ops
-    ]
+    # Enrich each entry with metadata for the interactive tooltip.
+    timeline_json = []
+    for op in tl.scheduled_ops:
+        entry: dict = {
+            "start":      op.start_us,
+            "end":        op.end_us,
+            "stream":     op.stream_id,
+            "type":       op.stream_type,
+            "op_type":    op.op_type,
+            "latency_us": round(op.latency_us, 2),
+            "category":   op.category,
+            "phase":      op.phase,
+        }
+        node = graph.nodes.get(op.node_id)
+        if node:
+            entry["scope"] = node.scope or ""
+            entry["layer"] = getattr(node, "layer", "") or ""
+        sr = sim_results.get(op.node_id)
+        if sr:
+            entry["bound"] = sr.bound
+            flops = getattr(sr, "flops", 0) or 0
+            if flops:
+                entry["tflops"] = round(flops / 1e12, 5)
+        timeline_json.append(entry)
 
     # ── 3. Hierarchical ReportContext + HTML ──────────────────────────────
     rc = _build_rc(

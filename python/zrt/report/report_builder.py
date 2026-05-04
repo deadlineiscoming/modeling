@@ -97,6 +97,12 @@ def build_report_context(
     # ── Phase 3: hierarchical data ───────────────────────────────────────────
     rc.blocks = _build_blocks(hier, graph, sim_results, phase, profile)
 
+    # For stitched fwd+bwd training graphs, also build backward-only blocks so
+    # that the Backward structure SVG tab can render real content.
+    if graph.metadata.get("fwd_bwd_stitched"):
+        rc.blocks_bwd = _build_phase_filtered_blocks(
+            graph, sim_results, "bwd", phase, profile)
+
     # ── Phase 4: calibration / references / warnings ──────────────────────────
     _build_calibration(rc, graph, sim_results, profile)
     _build_references(rc, model, hardware, hw_spec)
@@ -237,28 +243,51 @@ _COMPONENT_ORDER = [
 ]
 
 _COMPONENT_GROUP_NAMES: dict[str, tuple[str, str]] = {
-    "norm":        ("Norm", "norm"),
-    "attn":        ("Attention", "attn"),
-    "ffn":         ("FFN", "proj"),
-    "mlp":         ("MLP", "proj"),
-    "moe.gate":    ("Router", "router"),
-    "moe.shared":  ("Shared Expert", "shared"),
-    "moe.experts": ("Routed Experts", "proj"),
-    "moe":         ("MoE", "proj"),
-    "moe.dispatch":("Dispatch", "comm"),
-    "moe.combine": ("Combine", "comm"),
-    "comm":        ("Communication", "comm"),
-    "embedding":   ("Embedding", "proj"),
-    "lm_head":     ("LM Head", "proj"),
-    "final_norm":  ("Final Norm", "norm"),
-    "residual":    ("Residual", "resid"),
-    "add":         ("Residual Add", "resid"),
-    "hc.pre_attn": ("HC Pre-Attn", "norm"),
-    "hc.post_attn":("HC Post-Attn", "norm"),
-    "hc.pre_ffn":  ("HC Pre-FFN", "norm"),
-    "hc.post_ffn": ("HC Post-FFN", "norm"),
-    "shared":      ("Shared", "shared"),
-    "router":      ("Router", "router"),
+    # ── Norm variants ──
+    "attn_norm":    ("Attn Norm", "norm"),
+    "ffn_norm":     ("FFN Norm", "norm"),
+    "final_norm":   ("Final Norm", "norm"),
+    "norm":         ("Norm", "norm"),
+    # ── Attention sub-components ──
+    "attn.q_a_proj":("Q Proj", "attn"),
+    "attn.q_b_proj":("Q_B Proj", "attn"),
+    "attn.kv_a_proj":("KV Proj", "attn"),
+    "attn.kv_b_proj":("KV_B Proj", "attn"),
+    "attn.score":   ("Score", "attn"),
+    "attn.softmax": ("Softmax", "attn"),
+    "attn.rope":    ("RoPE", "attn"),
+    "attn.o_proj":  ("O Proj", "attn"),
+    "attn":         ("Attention", "attn"),
+    # ── MoE sub-components ──
+    "moe.gate":     ("Router", "router"),
+    "moe.shared":   ("Shared Expert", "shared"),
+    "moe.experts":  ("Routed Experts", "proj"),
+    "moe.dispatch": ("Dispatch", "comm"),
+    "moe.combine":  ("Combine", "comm"),
+    "moe":          ("MoE", "proj"),
+    # ── FFN sub-components ──
+    "ffn.gate_proj":("Gate Proj", "proj"),
+    "ffn.up_proj":  ("Up Proj", "proj"),
+    "ffn.down_proj":("Down Proj", "proj"),
+    "ffn.silu":     ("SiLU", "act"),
+    "ffn.gelu":     ("GELU", "act"),
+    "ffn":          ("FFN", "proj"),
+    "mlp":          ("MLP", "proj"),
+    # ── Communication ──
+    "comm":         ("Communication", "comm"),
+    # ── Embedding / Output ──
+    "embedding":    ("Embedding", "proj"),
+    "lm_head":      ("LM Head", "proj"),
+    "final_norm":   ("Final Norm", "norm"),
+    # ── Residual / HC ──
+    "residual":     ("Residual", "resid"),
+    "add":          ("Residual Add", "resid"),
+    "hc.pre_attn":  ("HC Pre-Attn", "norm"),
+    "hc.post_attn": ("HC Post-Attn", "norm"),
+    "hc.pre_ffn":   ("HC Pre-FFN", "norm"),
+    "hc.post_ffn":  ("HC Post-FFN", "norm"),
+    "shared":       ("Shared", "shared"),
+    "router":       ("Router", "router"),
 }
 
 
@@ -267,11 +296,18 @@ def _component_group_name(component: str) -> tuple[str, str]:
     # Try exact match
     if component in _COMPONENT_GROUP_NAMES:
         return _COMPONENT_GROUP_NAMES[component]
-    # Try prefix match
-    prefix = component.split(".")[0]
-    if prefix in _COMPONENT_GROUP_NAMES:
-        return _COMPONENT_GROUP_NAMES[prefix]
-    return (component, "proj")
+    # Try two-segment dot prefix (e.g. "moe.gate.mm" → "moe.gate")
+    parts = component.split(".")
+    if len(parts) >= 2:
+        two_seg = ".".join(parts[:2])
+        if two_seg in _COMPONENT_GROUP_NAMES:
+            return _COMPONENT_GROUP_NAMES[two_seg]
+    # Try single-segment prefix
+    if parts[0] in _COMPONENT_GROUP_NAMES:
+        return _COMPONENT_GROUP_NAMES[parts[0]]
+    # Fallback: title-cased original name
+    display = component.replace(".", " ").replace("_", " ").title()
+    return (display, "proj")
 
 
 def _component_sort_key(component: str) -> int:
@@ -284,6 +320,78 @@ def _component_sort_key(component: str) -> int:
 
 # ── Block identification ─────────────────────────────────────────────────────
 
+# Scope names injected by parallelism transforms — never real model blocks.
+_PARALLELISM_SCOPE_NAMES: frozenset[str] = frozenset({
+    "data_parallel", "pipeline", "pipeline_parallel", "tensor_parallel",
+    "expert_parallel", "context_parallel", "grad_reduce", "p2p", "nccl",
+    "all_reduce", "all_gather", "reduce_scatter", "comm", "optimizer",
+})
+
+
+def _is_parallelism_scope(name: str) -> bool:
+    """True if *name* (a single scope segment) is a parallelism-injected container."""
+    n = name.lower()
+    return n in _PARALLELISM_SCOPE_NAMES or any(n.startswith(kw) for kw in _PARALLELISM_SCOPE_NAMES)
+
+
+def _find_layer_container(hier: "GraphHierarchy") -> "HierNode | None":
+    """Return the HierNode that directly parents transformer layer blocks.
+
+    Picks the shallowest node with the most numeric-named children (e.g. model.layers
+    with children "0", "1", …, "N-1").  Parallelism-scope containers are skipped.
+    """
+    best: "HierNode | None" = None
+    best_depth = 999
+    best_count = 0
+
+    for hn in hier._scope_map.values():
+        if not hn.children:
+            continue
+        if _is_parallelism_scope(hn.name):
+            continue
+        numeric_children = [c for c in hn.children if c.name.isdigit()]
+        n = len(numeric_children)
+        if n >= 2:
+            if hn.depth < best_depth or (hn.depth == best_depth and n > best_count):
+                best = hn
+                best_depth = hn.depth
+                best_count = n
+
+    return best
+
+
+def _build_phase_filtered_blocks(
+    graph: "OpGraph",
+    sim_results: "dict[str, SimResult]",
+    target_phase_ann: str,
+    phase: str,
+    profile: "Any | None",
+) -> "list[BlockDetail]":
+    """Build blocks using only nodes annotated with *target_phase_ann*.
+
+    Used to produce separate forward / backward block lists from a stitched
+    training graph so that each structure SVG tab shows the correct data.
+    """
+    from python.zrt.ir.graph import OpGraph
+    from python.zrt.ir.hierarchy import GraphHierarchy
+
+    filtered_nodes = {
+        nid: node for nid, node in graph.nodes.items()
+        if node.annotations.get("phase") == target_phase_ann
+    }
+    if not filtered_nodes:
+        return []
+
+    sub = OpGraph(
+        name=f"{graph.name}_{target_phase_ann}",
+        phase=phase,
+        nodes=filtered_nodes,
+    )
+    sub_hier = GraphHierarchy(sub)
+    sub_sim = {nid: sr for nid, sr in sim_results.items() if nid in filtered_nodes}
+    return _build_blocks(sub_hier, sub, sub_sim, phase, profile)
+
+
 def _build_blocks(
     hier: "GraphHierarchy",
     graph: "OpGraph",
@@ -291,53 +399,248 @@ def _build_blocks(
     phase: str,
     profile: "Any | None",
 ) -> list[BlockDetail]:
-    """Build the list of BlockDetail from the graph hierarchy."""
+    """Build the list of BlockDetail using architecture-aware scope analysis.
+
+    Algorithm:
+      1. Locate the *layers container* — the node whose children are the actual
+         transformer block indices (e.g. ``model.layers`` → children "0", "1", …).
+      2. Layer blocks = numeric children of that container.
+      3. Special blocks = non-numeric siblings of the container (embed_tokens, norm)
+         + depth-1 output nodes (lm_head).
+      4. Parallelism-injected scopes (data_parallel, pipeline, optimizer, …) are
+         excluded at every step, so they never appear as top-level blocks.
+    """
     latency_map = {r.op_node_id: r.latency_us for r in sim_results.values()}
     total_latency = sum(latency_map.values()) or 1.0
 
-    # ── Collect layer blocks (depth-3 numeric scopes) ──────────────────────
-    layer_blocks: list[HierNode] = []
-    special_blocks: list[HierNode] = []
+    layer_hnodes: list["HierNode"] = []
+    special_hnodes: list["HierNode"] = []
+    seen_scopes: set[str] = set()
 
-    for hn in hier.at_depth(3):
-        if hn.name.isdigit():
-            layer_blocks.append(hn)
-        else:
-            special_blocks.append(hn)
+    def _try_add_special(hn: "HierNode") -> None:
+        if hn.scope not in seen_scopes and hn.all_leaf_ids():
+            seen_scopes.add(hn.scope)
+            special_hnodes.append(hn)
 
-    # Also grab depth-1/2 non-numeric nodes for special blocks
-    for depth in (1, 2):
-        for hn in hier.at_depth(depth):
+    # ── Step 1: Locate layers container ───────────────────────────────────
+    layers_container = _find_layer_container(hier)
+
+    if layers_container:
+        # Numeric children = actual transformer layer blocks
+        layer_hnodes = [c for c in layers_container.children if c.name.isdigit()]
+        for hn in layer_hnodes:
+            seen_scopes.add(hn.scope)
+
+        # Parent of layers container (e.g. "model" for model.layers)
+        parent_scope = (
+            layers_container.scope.rsplit(".", 1)[0]
+            if "." in layers_container.scope else ""
+        )
+        parent_hn = hier.get(parent_scope)
+
+        # Siblings of the layers container → Embedding, Norm, etc.
+        if parent_hn:
+            for sibling in parent_hn.children:
+                if sibling is layers_container:
+                    continue
+                if sibling.name.isdigit():
+                    continue
+                if _is_parallelism_scope(sibling.name):
+                    continue
+                _try_add_special(sibling)
+
+        # Build set of scopes that ARE ancestors of the layers container
+        # (e.g. "model", "model.layers") so we don't re-add them below.
+        ancestor_scopes: set[str] = set()
+        _s = layers_container.scope
+        while _s:
+            ancestor_scopes.add(_s)
+            _s = _s.rsplit(".", 1)[0] if "." in _s else ""
+
+        # Depth-1 output-style nodes not already covered (e.g. lm_head)
+        for hn in hier.at_depth(1):
             if hn.name.isdigit():
                 continue
-            # Only add if not already captured and has ops
-            if hn not in special_blocks and hn.all_leaf_ids():
-                special_blocks.append(hn)
+            if _is_parallelism_scope(hn.name):
+                continue
+            if hn.scope in ancestor_scopes:
+                continue
+            _try_add_special(hn)
+
+    else:
+        # Fallback when no layers container is found (unusual graph structure).
+        # Use the depth with the most numeric children, skip parallelism roots.
+        best_depth = 3
+        best_count = 0
+        for depth in range(2, 6):
+            numeric = [
+                hn for hn in hier.at_depth(depth)
+                if hn.name.isdigit()
+                and not _is_parallelism_scope(hn.scope.split(".")[0])
+            ]
+            if len(numeric) > best_count:
+                best_count = len(numeric)
+                best_depth = depth
+
+        for hn in hier.at_depth(best_depth):
+            if _is_parallelism_scope(hn.scope.split(".")[0]):
+                continue
+            if hn.name.isdigit():
+                layer_hnodes.append(hn)
+            seen_scopes.add(hn.scope)
+
+        # Special blocks: embed / norm / head at shallower depths
+        _special_markers = ("embed", "norm", "head", "final", "lm_head", "wte",
+                            "tok_embed", "ln_f", "rms")
+        for depth in range(1, best_depth):
+            for hn in hier.at_depth(depth):
+                if hn.name.isdigit():
+                    continue
+                if _is_parallelism_scope(hn.name):
+                    continue
+                if hn.scope in seen_scopes:
+                    continue
+                scope_lower = hn.scope.lower()
+                if any(m in scope_lower for m in _special_markers):
+                    _try_add_special(hn)
+
+    # ── Build BlockDetail objects ──────────────────────────────────────────
+    # Correct order: prefix (embedding) → layer groups → suffix (norm/head/output).
+    # Suffix blocks with the same display name are merged into one to avoid
+    # duplicates (e.g. model.norm and lm_head both produce "Output").
+
+    def _scope_is_prefix(hn: "HierNode") -> bool:
+        s = hn.scope.lower()
+        return any(kw in s for kw in
+                   ("embed", "tok_embed", "wte", "wpe", "word_embed", "pos_embed"))
+
+    prefix_hnodes = [hn for hn in special_hnodes if _scope_is_prefix(hn)]
+    suffix_hnodes = [hn for hn in special_hnodes if not _scope_is_prefix(hn)]
 
     blocks: list[BlockDetail] = []
 
-    # ── Special blocks first (Embedding, Output, …) ───────────────────────
-    for hn in special_blocks:
-        bd = _build_single_block(hn, graph, sim_results, phase, total_latency, repeat=1, profile=profile)
+    # 1) Prefix blocks (Embedding, positional encoding, …)
+    for hn in prefix_hnodes:
+        bd = _build_single_block(hn, graph, sim_results, phase, total_latency,
+                                 repeat=1, profile=profile)
         if bd is not None:
             blocks.append(bd)
 
-    # ── Layer blocks: merge identical structures, compute repeat ──────────
-    if layer_blocks:
-        # Group layer blocks by structural signature
-        groups = _group_identical_layers(layer_blocks, graph)
-        for signature, hnodes in groups.items():
-            representative = hnodes[0]
-            repeat = len(hnodes)
+    # 2) Layer blocks: merge identical structures, compute repeat
+    if layer_hnodes:
+        total_traced_layers = len(layer_hnodes)
+        total_real_layers = (getattr(profile, "num_layers", None) if profile else None)
+
+        groups = _group_identical_layers(layer_hnodes, graph)
+
+        # Architecture-aware layer counts (when available from profile).
+        _dense_indices: list[int] = (
+            getattr(profile, "dense_layer_indices", None) if profile else None)
+        _sparse_indices: list[int] = (
+            getattr(profile, "sparse_layer_indices", None) if profile else None)
+        _has_arch_info = bool(_dense_indices or _sparse_indices)
+
+        # Count groups per architectural type for distribution.
+        _group_types: dict[str, str] = {}  # sig -> "dense"|"sparse"
+        if _has_arch_info:
+            for _sig, hnodes in groups.items():
+                first_name = hnodes[0].name if hnodes else ""
+                first_idx = int(first_name) if first_name.isdigit() else -1
+                if first_idx >= 0:
+                    if first_idx in (_sparse_indices or []):
+                        _group_types[_sig] = "sparse"
+                    elif first_idx in (_dense_indices or []):
+                        _group_types[_sig] = "dense"
+
+        # Collect (hnodes, bd) pairs; compute repeat scaled to real model depth
+        # when profile.num_layers is available.
+        layer_pairs: list[tuple[list, "BlockDetail"]] = []
+        for _sig, hnodes in groups.items():
+            traced_repeat = len(hnodes)
+
+            if _has_arch_info and _sig in _group_types:
+                # Architecture-aware: assign the exact layer count for this type.
+                _gtype = _group_types[_sig]
+                _type_groups = sum(
+                    1 for t in _group_types.values() if t == _gtype)
+                _type_total = (
+                    len(_sparse_indices) if _gtype == "sparse"
+                    else len(_dense_indices))
+                # Distribute equally among groups of the same type.
+                # Use floor for all but the last, which gets the remainder.
+                _base = _type_total // _type_groups if _type_groups > 0 else 0
+                _rem = _type_total % _type_groups
+                # Which group of this type are we? (deterministic by sig order)
+                _same_type_sigs = sorted(
+                    s for s, t in _group_types.items() if t == _gtype)
+                _my_pos = _same_type_sigs.index(_sig)
+                real_repeat = _base + (1 if _my_pos < _rem else 0)
+            elif (total_real_layers and total_traced_layers > 0
+                    and total_real_layers > total_traced_layers):
+                # Fallback: proportional extrapolation (use ceil-like rounding
+                # to avoid banker's-rounding off-by-one on .5 values).
+                _raw = traced_repeat / total_traced_layers * total_real_layers
+                real_repeat = max(1, int(_raw + 0.5))
+            else:
+                real_repeat = traced_repeat
+
             bd = _build_single_block(
-                representative, graph, sim_results, phase,
-                total_latency, repeat=repeat, profile=profile,
+                hnodes[0], graph, sim_results, phase,
+                total_latency, repeat=real_repeat, profile=profile,
             )
             if bd is not None:
-                # Scale total_ms by repeat (single-layer data × repeat)
-                bd.total_ms = bd.total_ms * repeat if bd.total_ms > 0 else 0
-                bd.pct_of_total = (bd.total_ms / (total_latency / 1000.0)) * 100 if total_latency > 0 else 0
-                blocks.append(bd)
+                bd.total_ms = bd.total_ms * real_repeat if bd.total_ms > 0 else 0
+                layer_pairs.append((hnodes, bd))
+
+        # Disambiguate layer blocks that share the same display name by appending
+        # the traced-layer index range (e.g. "TransformerBlock [layers 0-2]").
+        name_count: dict[str, int] = defaultdict(int)
+        for _, bd in layer_pairs:
+            name_count[bd.name] += 1
+
+        for layer_hn_list, bd in layer_pairs:
+            if name_count[bd.name] > 1:
+                indices = sorted(
+                    int(hn.name) for hn in layer_hn_list if hn.name.isdigit()
+                )
+                if indices:
+                    range_str = (
+                        f"layer {indices[0]}" if len(indices) == 1
+                        else f"layers {indices[0]}-{indices[-1]}"
+                    )
+                    bd.name = f"{bd.name} [{range_str}]"
+            blocks.append(bd)
+
+    # 3) Suffix blocks (Output, Final Norm, LM Head, …)
+    #    Merge same-named blocks so norm + lm_head → one "Output" entry.
+    suffix_merged: dict[str, BlockDetail] = {}
+    for hn in suffix_hnodes:
+        bd = _build_single_block(hn, graph, sim_results, phase, total_latency,
+                                 repeat=1, profile=profile)
+        if bd is None:
+            continue
+        if bd.name in suffix_merged:
+            existing = suffix_merged[bd.name]
+            prev_ms = existing.total_ms
+            existing.total_ms += bd.total_ms
+            if bd.total_ms > prev_ms:
+                existing.dominant_bound = bd.dominant_bound
+            existing.sub_structures.extend(bd.sub_structures)
+            existing.pct_of_total = (
+                (existing.total_ms / (total_latency / 1000.0)) * 100
+                if total_latency > 0 else 0
+            )
+        else:
+            suffix_merged[bd.name] = bd
+    blocks.extend(suffix_merged.values())
+
+    # Recompute pct_of_total against the full-model estimated total.
+    # Required when layer repeats were scaled from profile.num_layers, because
+    # the traced-graph total_latency no longer matches the scaled block totals.
+    full_model_total_ms = sum(bd.total_ms for bd in blocks)
+    if full_model_total_ms > 0:
+        for bd in blocks:
+            bd.pct_of_total = bd.total_ms / full_model_total_ms * 100
 
     return blocks
 
@@ -350,12 +653,19 @@ def _group_identical_layers(
     groups: dict[str, list["HierNode"]] = defaultdict(list)
 
     for hn in layer_blocks:
-        # Build signature from children scopes + module classes
         child_names = sorted([c.name for c in hn.children])
-        # Get module class for this scope
         node_ids = hn.all_leaf_ids()
+        # For stitched fwd+bwd graphs, prefer forward-phase nodes for the
+        # signature so that bwd nodes with different/empty module_class don't
+        # split what should be one group into two.
+        fwd_ids = [
+            nid for nid in node_ids
+            if graph.nodes.get(nid) and
+            graph.nodes[nid].annotations.get("phase") != "bwd"
+        ]
+        sample_ids = fwd_ids[:5] if fwd_ids else node_ids[:5]
         module_classes = []
-        for nid in node_ids[:5]:  # sample first few
+        for nid in sample_ids:
             node = graph.nodes.get(nid)
             if node and node.module_class:
                 module_classes.append(node.module_class)
@@ -435,10 +745,20 @@ def _block_display_name(
 
     # Layer blocks (numeric)
     if hn.name.isdigit():
-        # Check if it's MoE by looking for expert scopes
+        # Check if it's MoE by looking for expert scopes in children
         for child in hn.children:
             if "expert" in child.name.lower() or "moe" in child.name.lower():
                 return "MoEBlock"
+        # Check scope itself for MoE indicators
+        if "moe" in scope:
+            return "MoEBlock"
+        # Check leaf node module_classes for MoE/expert patterns
+        for nid in hn.all_leaf_ids()[:10]:
+            node = graph.nodes.get(nid)
+            if node and node.module_class:
+                mc = node.module_class.lower()
+                if any(kw in mc for kw in ("moe", "expert", "sparse", "gate", "router")):
+                    return "MoEBlock"
         # Check profile
         if profile and getattr(profile, "is_moe", False):
             return "MoEBlock"

@@ -429,13 +429,68 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         if train_graph is not None:
             from types import SimpleNamespace
             from python.zrt.report import export_reports
+
+            # Load model config to infer layer architecture (dense vs MoE)
+            _dense_indices: list[int] = []
+            _sparse_indices: list[int] = []
+            _n_exp = 0
+            _topk = 0
+            try:
+                # Read layer architecture from model config JSON (avoids
+                # re-loading a potentially modified-in-place config object).
+                import json as _json2
+                _cfg_path = Path(model_id) / "config.json"
+                if not _cfg_path.is_absolute():
+                    _cfg_path = Path.cwd() / _cfg_path
+                if _cfg_path.exists():
+                    with open(_cfg_path) as _f:
+                        _raw = _json2.load(_f)
+                    _first_k = _raw.get("first_k_dense_replace", 0) or 0
+                    _freq = _raw.get("moe_layer_freq", 1) or 1
+                    _total_layers = _raw.get("num_hidden_layers", 61)
+                    _dense_indices = []
+                    _sparse_indices = []
+                    for i in range(_total_layers):
+                        if i < _first_k:
+                            _dense_indices.append(i)
+                        elif (i - _first_k) % _freq == 0:
+                            _sparse_indices.append(i)
+                        else:
+                            _dense_indices.append(i)
+                    _n_exp = _raw.get("n_routed_experts", 0) or _raw.get(
+                        "num_local_experts", 0)
+                    _topk = _raw.get("num_experts_per_tok", 0) or _raw.get(
+                        "moe_topk", 0) or _raw.get("top_k", 0)
+                    logger.info(
+                        "Architecture (from config.json): %d dense + %d sparse "
+                        "layers (total %d), experts=%d, topk=%d",
+                        len(_dense_indices), len(_sparse_indices),
+                        _total_layers, _n_exp, _topk,
+                    )
+                else:
+                    # Fallback: use transformers config API
+                    from python.zrt.graph.main import infer_layer_types
+                    from python.zrt.graph.model_loader import _load_config
+                    _, _cfg = _load_config(model_id)
+                    _types = infer_layer_types(_cfg)
+                    _dense_indices = _types["dense"]
+                    _sparse_indices = _types["sparse"]
+                    _n_exp = getattr(_cfg, "n_routed_experts", 0) or getattr(
+                        _cfg, "num_local_experts", 0)
+                    _topk = getattr(_cfg, "num_experts_per_tok", 0) or getattr(
+                        _cfg, "moe_topk", 0) or getattr(_cfg, "top_k", 0)
+            except Exception as _exc:
+                logger.warning("Could not infer layer architecture: %s", _exc)
+
             cli_profile = SimpleNamespace(
                 num_layers=args.num_layers_full or args.layers or 0,
                 total_param_count=args.total_params or 0,
                 hidden_size=args.hidden or 7168,
-                is_moe=False,
-                num_experts=0,
-                moe_topk=0,
+                is_moe=len(_sparse_indices) > 0,
+                num_experts=_n_exp,
+                moe_topk=_topk,
+                dense_layer_indices=_dense_indices,
+                sparse_layer_indices=_sparse_indices,
             )
             export_reports(
                 model=model_id, hardware=args.hw, phase="train",

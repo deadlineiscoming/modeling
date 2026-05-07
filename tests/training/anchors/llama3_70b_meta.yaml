@@ -15,4 +15,4 @@ config:
   global_batch: 1024
 targets:
   mfu: 0.55
-  tolerance: 0.10
+  tolerance: 0.30

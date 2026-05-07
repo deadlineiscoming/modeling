@@ -139,11 +139,35 @@ def stage_time(
         if has_moe:
             imb = ep_imbalance_factor(model.num_experts, strategy.ep,
                                        getattr(model, 'top_k', 1))
-            t_fwd *= imb
-            t_bwd_dx *= imb
-            t_bwd_dw *= imb
-            t_comm_fwd *= imb
-            t_comm_bwd *= imb
+            # Apply imbalance only to EP-parallel fraction (routed expert FFN ops)
+            # Non-EP ops (attention, shared expert, embed) are replicated and not imbalanced
+            ep_frac = _ep_parallel_fraction(stage_ops, model, system, strategy, gpu_name)
+            t_fwd = t_fwd * (1 - ep_frac) + t_fwd * ep_frac * imb
+            t_bwd_dx = t_bwd_dx * (1 - ep_frac) + t_bwd_dx * ep_frac * imb
+            t_bwd_dw = t_bwd_dw * (1 - ep_frac) + t_bwd_dw * ep_frac * imb
+            t_comm_fwd = t_comm_fwd * (1 - ep_frac) + t_comm_fwd * ep_frac * imb
+            t_comm_bwd = t_comm_bwd * (1 - ep_frac) + t_comm_bwd * ep_frac * imb
+
+    # EP wave-overlap: split EP A2A into K waves, overlap with expert GEMM
+    if strategy.ep_overlap and strategy.ep > 1 and model.num_experts > 0:
+        t_comm_ep = _ep_comm_time(stage_collectives, strategy, system)
+        t_ep_gemm = _ep_gemm_time(stage_ops, model, system, strategy, gpu_name)
+        if t_comm_ep > 0 and t_ep_gemm > 0:
+            K = 4  # number of overlap waves
+            comm_per_wave = t_comm_ep / K
+            gemm_per_wave = t_ep_gemm / K
+            # Exposed comm = max(comm_per_wave - gemm_per_wave, 0) per wave
+            # But first wave's comm is fully exposed
+            exposed_per_wave = max(comm_per_wave - gemm_per_wave, 0.0)
+            exposed_total = comm_per_wave + (K - 1) * exposed_per_wave
+            saved = t_comm_ep - exposed_total
+            # Deduct saved time from total (both fwd and bwd)
+            saved_fwd = min(saved * 0.5, t_comm_fwd)
+            saved_bwd = min(saved * 0.5, t_comm_bwd)
+            t_fwd -= saved_fwd
+            t_bwd_dx -= saved_bwd
+            t_comm_fwd -= saved_fwd
+            t_comm_bwd -= saved_bwd
 
     t_bwd = t_bwd_dx + t_bwd_dw
     return StageTime(
@@ -182,6 +206,34 @@ def _recompute_time(
     return t
 
 
+def _ep_parallel_fraction(
+    ops: list[Op], model: ModelSpec, system: SystemSpec,
+    strategy: Strategy, gpu_name: str,
+) -> float:
+    """Estimate the fraction of compute time from EP-parallel ops.
+
+    Only routed expert FFN ops are EP-parallel; attention, shared expert,
+    embedding, and other ops are replicated across EP ranks.
+    Returns a value in [0, 1].
+    """
+    t_total = 0.0
+    t_ep = 0.0
+    for op in ops:
+        cost = op_cost(op, model)
+        if cost.bound == "compute" and cost.fwd_flops > 0:
+            t = op_to_time(cost.fwd_flops, 0, "compute", system, gpu_name)
+        elif cost.bound == "memory" and cost.fwd_bytes > 0:
+            t = op_to_time(0, cost.fwd_bytes, "memory", system, gpu_name)
+        else:
+            continue
+        t_total += t
+        if op.kind == "matmul" and "routed_expert" in op.name:
+            t_ep += t
+    if t_total <= 0:
+        return 0.0
+    return t_ep / t_total
+
+
 def _op_recompute_categories(op: Op) -> set[str]:
     """Map an op to its recompute category set."""
     if op.kind == "attn_core":
@@ -198,6 +250,36 @@ def _op_recompute_categories(op: Op) -> set[str]:
     if op.kind == "ln":
         return {"ln"}
     return set()
+
+
+def _ep_comm_time(
+    collectives: list[Collective], strategy: Strategy, system: SystemSpec,
+) -> float:
+    """Total EP A2A communication time (seconds)."""
+    from zrt.training.models.comm import collective_time, tier_for_group
+    total = 0.0
+    for c in collectives:
+        if c.group == "EP":
+            group_size = _group_size(c.group, strategy)
+            tier = tier_for_group(c.group, group_size, system)
+            total += collective_time(c, group_size, tier)
+    return total
+
+
+def _ep_gemm_time(
+    ops: list[Op], model: ModelSpec, system: SystemSpec,
+    strategy: Strategy, gpu_name: str,
+) -> float:
+    """Routed expert GEMM time (seconds) — the compute that overlaps with EP A2A."""
+    total = 0.0
+    for op in ops:
+        if op.kind == "matmul" and "routed_expert" in op.name:
+            cost = op_cost(op, model)
+            if cost.bound == "compute" and cost.fwd_flops > 0:
+                total += op_to_time(cost.fwd_flops, 0, "compute", system, gpu_name)
+            elif cost.bound == "memory" and cost.fwd_bytes > 0:
+                total += op_to_time(0, cost.fwd_bytes, "memory", system, gpu_name)
+    return total
 
 
 def _group_size(group: str, strategy: Strategy) -> int:

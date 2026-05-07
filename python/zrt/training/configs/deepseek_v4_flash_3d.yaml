@@ -1,7 +1,7 @@
 # DeepSeek-V4 671B-class training estimate — placeholder 3D parallel
 # References model spec from models/deepseek_v4.yaml + hw registry
 
-model: deepseek_v4
+model: deepseek_v4_flash
 
 system:
   hw: nvidia_h100_sxm

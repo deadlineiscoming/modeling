@@ -538,7 +538,7 @@ print(f"捕获算子数: {len(records)}")
 |------|------|------|--------|------|
 | `--phases` | — | choice+ | `prefill decode` | 追踪的阶段列表：`prefill`、`decode`、`forward`、`train`、`train_forward`、`train_backward` |
 | `--train` | — | flag | `False` | 快捷 flag：等价于 `--phases train_forward train_backward` |
-| `--platform` | — | choice | `generic` | 目标平台：`cuda` / `ascend_npu` / `cpu` / `generic`，影响融合 kernel 命名 |
+| `--platform` | — | choice | `generic` | 目标平台：`cuda` / `ascend_npu` / `cpu` / `generic`，影响融合 kernel 命名；指定 `--hw` 时自动推断，无需手动设置 |
 | `--graph-mode` | — | flag | `False` | 使用 `torch.compile` 图模式捕获，替代 `TorchDispatchMode` eager 路径 |
 | `--gradient-checkpointing` | — | flag | `False` | 启用激活重计算（训练阶段） |
 
@@ -624,6 +624,7 @@ print(f"捕获算子数: {len(records)}")
 |------|------------|----------|
 | DeepSeek-V3 | `deepseek-ai/DeepSeek-V3` | MoE meta patch |
 | DeepSeek-V3-0324 (V3.2) | `deepseek-ai/DeepSeek-V3-0324` | MoE meta patch + Indexer patch |
+| DeepSeek-V4 | `hf_models/deepseek_v4`（本地） | MoE meta patch；Ascend NPU 下 Attention 融合为 `npu_sas` |
 
 ### 本地目录支持
 
@@ -845,6 +846,20 @@ transformers 4.50+ 的 RoPE 实现会将 tensor 的 device type 直接传给 `to
 
 每个融合组通过张量 ID 追踪，区分外部 I/O（跨组边界的张量）与内部传递张量。
 
+融合算法集中在 `transform/fusion/` 下（`core.py` 四遍算法、`rules.py` 平台规则、`_dict_bridge.py` Dict ↔ IR 桥接），`graph/` 模块只负责抓图，不再包含融合逻辑。
+
+#### 平台特定融合规则（Ascend NPU）
+
+DeepSeek-V4 在昇腾 NPU 上使用 `npu_sparse_attn_sharedkv` 内核，对应三种 Attention 变体：
+
+| `attn_type` | `compress_ratio` | 含义 |
+|-------------|-----------------|------|
+| `SWA` | 0 | Sliding Window Attention |
+| `CSA` | 4 | Compressed Sparse Attention（4× 压缩） |
+| `HCA` | 128 | Heavily Compressed Attention（128× 压缩） |
+
+融合后节点 `op_type="npu_sas"`，`FusionPass` 自动从 `graph.metadata["compress_ratios"]` 读取 V4 config 并注解每个节点的 `attn_type` 与 `compress_ratio`。
+
 ### 过滤掉的算子
 
 以下零开销算子默认跳过：
@@ -872,22 +887,30 @@ modeling/
 │   │   ├── model_loader.py          # 通用 HF 模型加载 + 兼容性修补
 │   │   ├── dispatch.py              # RecordingDispatch + TensorTracker（aten 拦截）
 │   │   ├── tracker.py               # ModuleTracker（forward hooks）
-│   │   ├── fusion.py                # FusionEngine（两阶段算子融合）
 │   │   ├── classifier.py            # 组件分类 + 颜色映射
 │   │   ├── graph_builder.py         # build_op_graph / build_fused_op_graph
 │   │   ├── graph_exporter.py        # 导出 JSON / ONNX（原始图）
-│   │   ├── excel_writer.py          # Excel + JSON（原始图）
-│   │   ├── transform_runner.py      # run_transform: 原始图 → transform pipeline → 导出
 │   │   ├── patches.py               # 运行时 patch（MoE、Indexer、legacy 属性）
 │   │   ├── compat.py                # transformers 版本 shim + 本地模型注册表
 │   │   └── tensor_utils.py          # 张量工具 + SKIP_OPS
 │   │
-│   ├── transform/                   # Transform 管道模块（注入并行/流/通信）
-│   │   ├── __init__.py              # API 导出
+│   ├── report/                      # 报告生成
+│   │   ├── excel_writer.py          # Excel 工作簿（抓图阶段原始输出）
+│   │   └── …
+│   │
+│   ├── transform/                   # Transform 管道模块（融合 + 并行 + 分析）
+│   │   ├── __init__.py              # 轻量 API 导出（context / pipeline / passes）
 │   │   ├── context.py               # TransformContext / ParallelConfig / StreamConfig
 │   │   ├── pipeline.py              # TransformPipeline / build_default_pipeline
-│   │   ├── passes/                  # 各种 transform 遍历（FLOPs / Roofline / Communication 等）
-│   │   ├── exporter.py              # export_transformed_graph
+│   │   ├── fusion/                  # 算子融合（所有平台规则集中于此）
+│   │   │   ├── core.py              # 四遍融合算法（Pass 1-4）
+│   │   │   ├── rules.py             # 平台 SubPattern（cuda / ascend_npu / cpu / generic）
+│   │   │   ├── pass_.py             # FusionPass（OpGraph IR）+ npu_sas 注解
+│   │   │   └── _dict_bridge.py      # fuse_records()：Dict 记录 ↔ FusionItem 桥接
+│   │   ├── parallel/                # TP / EP / PP / DP / CP passes
+│   │   ├── analysis/                # FLOPs / Roofline / 通信延迟 / 训练建模
+│   │   ├── optim/                   # Quant / EPLB / SharedExpert / MTP
+│   │   ├── exporter.py              # export_transformed_graph / export_full_report
 │   │   └── …
 │   │
 │   ├── executor/                    # 执行调度模块
@@ -921,6 +944,7 @@ modeling/
 └── hf_models/                       # 模型本地副本（只读！）
     ├── deepseek_v3/
     ├── deepseek_v3_2/
+    ├── deepseek_v4/                 # DeepSeek-V4（SWA/CSA/HCA 三种 Attention）
     ├── llama3_8b/
     ├── llama3_70b/
     ├── qwen2_7b/

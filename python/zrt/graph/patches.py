@@ -551,6 +551,27 @@ def _patch_inference_mode(model: nn.Module) -> None:
         break
 
 
+_FP8_AMAX = 448.0   # float8_e4m3fn max
+_FP4_AMAX = 6.0     # float4_e2m1fn_x2 max
+
+
+def _block_amax_scale(
+    x: torch.Tensor, block_size: int, amax_val: float, scale_dtype: torch.dtype
+) -> torch.Tensor:
+    """Per-block amax scale — same aten ops as real act_quant, no quantisation.
+
+    Captures reshape / abs / amax / clamp / div in the training graph so the
+    act_quant overhead is visible.  Falls back to new_empty when n is not
+    divisible by block_size (degenerate shapes only).
+    """
+    n = x.size(-1)
+    if n < block_size or n % block_size != 0:
+        return x.new_empty(*x.shape[:-1], max(1, n // block_size), dtype=scale_dtype)
+    x_blocks = x.reshape(*x.shape[:-1], n // block_size, block_size)
+    s = x_blocks.abs().amax(dim=-1).clamp_min(1e-4) / amax_val
+    return s.to(scale_dtype)
+
+
 def _act_quant_passthrough(
     x: torch.Tensor,
     block_size: int = 128,
@@ -558,17 +579,15 @@ def _act_quant_passthrough(
     scale_dtype: torch.dtype = torch.float32,
     inplace: bool = False,
 ) -> torch.Tensor:
-    """Identity pass-through for act_quant that preserves the autograd graph.
+    """Training-capture act_quant: computes real amax scale, returns x in BF16.
 
-    Returns x unchanged (no dtype cast, no in-place copy_) so that gradients
-    flow through activations during backward.  The scale tensor is a dummy
-    empty array; new_empty avoids aten.full (fill_value=1) noise in the
-    training graph — the scale value is unused since _diff_gemm ignores sx/sw.
+    Captures the same op sequence as the real FP8 act_quant (reshape/abs/amax/
+    clamp/div) so the training graph includes the quantisation overhead.
+    Returns x unchanged (not cast to fp8) so autograd gradients flow through.
     """
     if inplace:
         return x
-    n = x.size(-1)
-    s = x.new_empty(*x.shape[:-1], max(1, n // block_size), dtype=scale_dtype)
+    s = _block_amax_scale(x, block_size, _FP8_AMAX, scale_dtype)
     return x, s
 
 
@@ -577,9 +596,11 @@ def _fp4_act_quant_passthrough(
     block_size: int = 32,
     inplace: bool = False,
 ) -> torch.Tensor:
+    """Training-capture fp4_act_quant: computes real amax scale, returns x in BF16."""
     if inplace:
         return x
-    s = x.new_empty(*x.shape[:-1], max(1, x.size(-1) // block_size))
+    _fp8e8m0 = getattr(torch, "float8_e8m0fnu", torch.float32)
+    s = _block_amax_scale(x, block_size, _FP4_AMAX, _fp8e8m0)
     return x, s
 
 

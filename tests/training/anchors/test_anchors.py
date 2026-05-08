@@ -138,3 +138,44 @@ def test_anchor_estimate_integration():
         status = "PASS" if r["within_tolerance"] else "CALIBRATION NEEDED"
         print(f"  {r['name']}: {status} (MFU error: {r['mfu_error_pct']:.2f}%)")
     print("=" * 60)
+
+
+def test_anchor_mfu_strict():
+    """Hard MFU gate: estimated MFU must be within ±tolerance of anchor target.
+
+    This test always fails (not just warns) if MFU drifts beyond tolerance.
+    Unlike test_anchor_estimate_integration, it does not depend on the
+    strict_mfu_check field in the YAML — it is unconditionally enforced.
+    """
+    from zrt.training.io.config_loader import load_anchor_config
+    from zrt.training.search.estimator import estimate
+
+    failures = []
+
+    for yaml_file in sorted(ANCHOR_DIR.glob("*.yaml")):
+        model, system, strategy = load_anchor_config(yaml_file)
+        anchor_data = _load_anchor(yaml_file)
+        targets = anchor_data["targets"]
+        anchor_mfu = targets.get("mfu", 0)
+        tolerance = targets.get("tolerance", 0.15)
+
+        if anchor_mfu <= 0:
+            continue
+
+        report = estimate(model, system, strategy)
+        diff = abs(report.mfu - anchor_mfu)
+
+        print(f"{anchor_data['name']}: MFU={report.mfu:.4f} "
+              f"(target={anchor_mfu:.2f}, tol=±{tolerance:.2f}, diff={diff:.4f})")
+
+        if diff > tolerance:
+            failures.append(
+                f"{anchor_data['name']}: MFU={report.mfu:.4f}, "
+                f"target={anchor_mfu:.2f}±{tolerance:.2f}, "
+                f"diff={diff:.4f} > {tolerance:.4f}"
+            )
+
+    assert not failures, (
+        f"{len(failures)} anchor(s) failed strict MFU check:\n" +
+        "\n".join(failures)
+    )

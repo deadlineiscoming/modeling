@@ -440,34 +440,53 @@ def _apply_tp_sharding(
         op = graph.ops[i]
 
         if op.kind == "matmul":
-            m, n, k = op.meta["m"], op.meta["n"], op.meta["k"]
+            m = op.meta.get("m", 0)
+            n = op.meta.get("n", 0)
+            k = op.meta.get("k", 0)
 
-            if "qkv" in op.name:
-                # Col-parallel: shard n dimension (output) by TP
+            # Column-parallel ops: output dimension (n) sharded by TP
+            col_parallel = any(p in op.name for p in (
+                "qkv", "q_a_proj", "q_b_proj", "kv_a_proj",
+                "wq_a", "wq_b", "wkv",
+                "up_proj", "gate_proj", "shared_up_proj", "shared_gate_proj",
+                "comp_wkv", "comp_wgate",
+                "idx_wq_b", "idx_weights", "idx_comp_wkv", "idx_comp_wgate",
+            ))
+            # Row-parallel ops: input dimension (k) sharded by TP
+            row_parallel = any(p in op.name for p in (
+                "o_proj", "down_proj", "shared_down_proj",
+                "wo_a", "wo_b", "kv_b_proj",
+            ))
+
+            if col_parallel:
                 n_local = n // shard.tp
                 op.meta["n_local"] = n_local
                 for t in op.outputs:
-                    t.shape_local = (t.shape_logical[0], n_local)
-            elif "o_proj" in op.name:
-                # Row-parallel: shard k dimension (input) by TP
+                    if t.shape_logical and t.shape_logical[-1] == n:
+                        t.shape_local = (t.shape_logical[0], n_local)
+            elif row_parallel:
                 k_local = k // shard.tp
                 op.meta["k_local"] = k_local
                 for t in op.inputs:
-                    if t.shape_logical[-1] == k:
+                    if t.shape_logical and t.shape_logical[-1] == k:
                         t.shape_local = (t.shape_logical[0], k_local)
-            elif "up_proj" in op.name or "gate_proj" in op.name:
-                # Col-parallel: shard n by TP
+            elif "router" in op.name:
                 n_local = n // shard.tp
                 op.meta["n_local"] = n_local
                 for t in op.outputs:
-                    t.shape_local = (t.shape_logical[0], n_local)
-            elif "down_proj" in op.name:
-                # Row-parallel: shard k by TP
+                    if t.shape_logical and t.shape_logical[-1] == n:
+                        t.shape_local = (t.shape_logical[0], n_local)
+            elif "routed_expert" in op.name:
                 k_local = k // shard.tp
+                n_local = n // shard.tp
                 op.meta["k_local"] = k_local
+                op.meta["n_local"] = n_local
                 for t in op.inputs:
-                    if t.shape_logical[-1] == k:
+                    if t.shape_logical and t.shape_logical[-1] == k:
                         t.shape_local = (t.shape_logical[0], k_local)
+                for t in op.outputs:
+                    if t.shape_logical and t.shape_logical[-1] == n:
+                        t.shape_local = (t.shape_logical[0], n_local)
         elif op.kind == "attn_core":
             if "heads" in op.meta:
                 heads_before_tp = op.meta["heads"]
@@ -488,6 +507,28 @@ def _apply_tp_sharding(
             # reducing compute.  CP (sequence-parallel) handling — when added —
             # would scale the seq dim of meta["s"] independently.
             pass
+        elif op.kind == "indexer_topk":
+            # Shard indexer heads by TP: ih → ih_local
+            ih = op.meta.get("ih", 0)
+            if ih > 0:
+                ih_local = max(1, ih // shard.tp)
+                op.meta["ih_local"] = ih_local
+                op.meta["world_factor"] = shard.tp
+                id_ = op.meta.get("id", 0)
+                for t in op.inputs:
+                    if "idx_q" in t.name and t.shape_logical:
+                        t.shape_local = (t.shape_logical[0], ih_local * id_)
+                    elif "idx_w" in t.name and t.shape_logical:
+                        t.shape_local = (t.shape_logical[0], ih_local)
+        elif op.kind == "compressor_pool":
+            # Shard compressor dim by TP: d → d_local
+            d = op.meta.get("d", 0)
+            if d > 0:
+                d_local = max(1, d // shard.tp)
+                op.meta["d_local"] = d_local
+                op.meta["world_factor"] = shard.tp
+                if "bytes_fwd" in op.meta:
+                    op.meta["bytes_fwd"] = op.meta["bytes_fwd"] // shard.tp
         elif op.kind in ("ln", "rope", "swiglu", "add"):
             if "bytes_fwd" in op.meta:
                 op.meta["bytes_fwd"] = int(op.meta["bytes_fwd"]) // shard.tp
@@ -561,16 +602,10 @@ def _apply_ep_sharding(
 
         # Only routed expert FFN is affected by EP sharding
         if op.kind == "matmul" and "routed_expert" in op.name:
-            # Update num_experts in metadata
-            if "num_experts" in op.meta:
-                op.meta["num_experts_local"] = experts_per_rank
-            # FLOPs scale by local expert count
-            # (top_k experts per token, but only experts_per_rank available locally)
-            if "num_experts" in op.meta:
-                original_experts = op.meta["num_experts"]
-                # Effective FLOPs scale ratio: (experts_per_rank / original_experts)
-                # But we keep top_k the same since each token still goes to top_k experts
-                pass  # FLOPs scaling handled in flops.py
+            # Scale fwd_multiplier by fraction of experts local to this rank
+            if "fwd_multiplier" in op.meta:
+                ep_frac = experts_per_rank / num_experts
+                op.meta["fwd_multiplier"] = op.meta["fwd_multiplier"] * ep_frac
 
         # Router output: num_experts -> experts_per_rank
         if op.kind == "matmul" and "router" in op.name:

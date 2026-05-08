@@ -22,24 +22,20 @@ class TestNSFlops:
     """Test Newton-Schulz FLOPs calculation (per §8.1 of design doc)."""
 
     def test_ns_flops_square_matrix_k5(self):
-        """Square matrix K=5: FLOPs = 20 × dim³ (K×4 = 20)."""
-        # Design doc §7 Phase 2 acceptance criteria
-        assert ns_flops(4096, 4096, 5) == 20 * 4096**3
+        """Square matrix K=5: FLOPs = 30 × dim³ (K×6 = 30, degree-4 polynomial)."""
+        assert ns_flops(4096, 4096, 5) == 30 * 4096**3
 
     def test_ns_flops_square_matrix_k10(self):
-        """DSV4 K=10: FLOPs = 40 × dim³ (exact doubling)."""
-        # Design doc §7 Phase 2 acceptance criteria
-        assert ns_flops(4096, 4096, 10) == 40 * 4096**3
+        """DSV4 K=10: FLOPs = 60 × dim³ (exact doubling)."""
+        assert ns_flops(4096, 4096, 10) == 60 * 4096**3
 
     def test_ns_flops_tall_matrix_k5(self):
-        """Tall matrix K=5: FLOPs = 20 × m × n² (m > n)."""
-        # Design doc §7 Phase 2 acceptance criteria
-        assert ns_flops(28672, 8192, 5) == 20 * 28672 * 8192**2
+        """Tall matrix K=5: FLOPs = 30 × m × n² (m > n, degree-4 polynomial)."""
+        assert ns_flops(28672, 8192, 5) == 30 * 28672 * 8192**2
 
     def test_ns_flops_tall_matrix_k10(self):
-        """DSV4 tall matrix K=10: FLOPs = 40 × m × n²."""
-        # Design doc §7 Phase 2 acceptance criteria
-        assert ns_flops(28672, 8192, 10) == 40 * 28672 * 8192**2
+        """DSV4 tall matrix K=10: FLOPs = 60 × m × n²."""
+        assert ns_flops(28672, 8192, 10) == 60 * 28672 * 8192**2
 
     def test_ns_flops_scaling(self):
         """NS FLOPs scales linearly with K."""

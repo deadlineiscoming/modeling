@@ -54,7 +54,21 @@ def memory_breakdown(
     # ── Parameters on this rank ──────────────────────────────────────────
     P = _params_on_rank(model, strategy)
 
-    weights = P * model.param_dtype.bytes
+    # FP4 routed expert weights: 0.5 B/elem + per-block BF16 scale
+    use_fp4 = getattr(model, "routed_expert_dtype", "bf16") == "fp4"
+    if use_fp4:
+        P_expert = _routed_expert_params_on_rank(model, strategy)
+        P_other = P - P_expert
+        FP4_BYTES_PER_ELEM = 0.5
+        FP4_BLOCK_SIZE = 32
+        expert_weight_bytes = int(
+            P_expert * FP4_BYTES_PER_ELEM
+            + (P_expert / FP4_BLOCK_SIZE) * 2  # BF16 scale per block
+        )
+        weights = expert_weight_bytes + P_other * model.param_dtype.bytes
+    else:
+        weights = P * model.param_dtype.bytes
+
     grads = P * model.grad_dtype.bytes
     opt_state = _optimizer_state_bytes(P, model, strategy)
 
@@ -175,6 +189,27 @@ def _shared_expert_params(model: ModelSpec) -> int:
     per_expert = 2 * model.hidden * model.moe_ffn
     n_shared = getattr(model, "n_shared_experts", 1) or 1
     return n_moe * n_shared * per_expert
+
+
+def _routed_expert_params_on_rank(model: ModelSpec, strategy: Strategy) -> int:
+    """Routed expert parameters on one rank after TP + EP + PP sharding."""
+    if model.num_experts <= 0:
+        return 0
+    n_moe = sum(1 for lk in model.layers if lk.value == "moe")
+    per_expert = 2 * model.hidden * model.moe_ffn
+    routed_total = n_moe * model.num_experts * per_expert
+
+    if strategy.tp > 1:
+        routed_total //= strategy.tp
+
+    if strategy.ep > 1:
+        routed_total //= strategy.ep
+
+    if strategy.pp > 1:
+        n_layers = len(model.layers)
+        routed_total = int(routed_total * (n_layers / strategy.pp) / n_layers)
+
+    return routed_total
 
 
 # Also need to store n_shared_experts on ModelSpec for the config loader

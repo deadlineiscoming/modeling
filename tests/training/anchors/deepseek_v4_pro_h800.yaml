@@ -1,11 +1,8 @@
-# DeepSeek-V4-Pro reference baseline — updated with real V4-Pro geometry
-# V4-Pro: 1.6T params, 61 MoE layers (30 CSA + 31 HCA), Muon optimizer
-
-name: deepseek_v4_pro
-description: "DeepSeek-V4-Pro 1.6T, H100 SXM, TP8 PP4 EP64 DP4, Muon, 8 nodes"
+name: deepseek_v4_pro_h800
+description: "DeepSeek-V4-Pro 1.6T, H800, TP8 PP4 EP64 DP2, DualPipeV, Muon, 8 nodes"
 model: deepseek_v4_pro
 system:
-  hw: nvidia_h100_sxm
+  hw: nvidia_h800
   nodes: 8
   gpus_per_node: 8
   host_mem_gb: 2048
@@ -25,5 +22,5 @@ config:
     adam_param_types: ["embed", "lm_head", "router", "bias"]
     muon_param_fraction: 0.85
 targets:
-  mfu: 0.42
+  mfu: 0.38
   tolerance: 0.15

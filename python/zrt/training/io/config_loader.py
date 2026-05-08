@@ -99,6 +99,27 @@ def _parse_model(d: dict) -> ModelSpec:
         seq_len=d["seq_len"],
         layers=layers,
         attn_compression_ratio=d.get("attn_compression_ratio", 1.0),
+        # MLA (V3 / V3.2)
+        q_lora_rank=d.get("q_lora_rank", 0),
+        kv_lora_rank=d.get("kv_lora_rank", 0),
+        qk_nope_head_dim=d.get("qk_nope_head_dim", 0),
+        qk_rope_head_dim=d.get("qk_rope_head_dim", 0),
+        v_head_dim=d.get("v_head_dim", 0),
+        # Indexer (V3.2 / V4 CSA)
+        index_n_heads=d.get("index_n_heads", 0),
+        index_head_dim=d.get("index_head_dim", 0),
+        index_topk=d.get("index_topk", 0),
+        # V4 attention
+        o_lora_rank=d.get("o_lora_rank", 0),
+        o_groups=d.get("o_groups", 0),
+        compress_ratios=d.get("compress_ratios", []),
+        swa_window=d.get("swa_window", 0),
+        # V4 MoE
+        n_hash_routed_layers=d.get("n_hash_routed_layers", 0),
+        scoring_func=d.get("scoring_func", "sigmoid"),
+        routed_expert_dtype=d.get("routed_expert_dtype", "bf16"),
+        swiglu_clamp=d.get("swiglu_clamp", 0.0),
+        # MoE
         num_experts=d.get("num_experts", 0),
         moe_ffn=d.get("moe_ffn", 0),
         top_k=d.get("top_k", 0),
@@ -106,9 +127,15 @@ def _parse_model(d: dict) -> ModelSpec:
         expert_imbalance=d.get("expert_imbalance", 0.0),
         n_group=d.get("n_group", 0),
         n_shared_experts=d.get("n_shared_experts", 1),
+        # Compressed-CP
+        num_csa_layers=d.get("num_csa_layers", 0),
+        num_hca_layers=d.get("num_hca_layers", 0),
+        num_swa_only_layers=d.get("num_swa_only_layers", 0),
+        # MTP / HC
         mtp_depth=d.get("mtp_depth", 0),
         hc_mult=d.get("hc_mult", 1),
         hc_sinkhorn_iters=d.get("hc_sinkhorn_iters", 20),
+        # dtypes
         param_dtype=_parse_dtype(d.get("param_dtype", "bf16")),
         grad_dtype=_parse_dtype(d.get("grad_dtype", "fp32")),
         master_dtype=_parse_dtype(d.get("master_dtype", "fp32")),

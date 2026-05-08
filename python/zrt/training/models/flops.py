@@ -42,6 +42,12 @@ def op_cost(op: Op, model: ModelSpec) -> OpCost:
         return _memory_bound_cost(op)
     if op.kind in ("embed", "lm_head"):
         return _matmul_cost(op)
+    if op.kind == "compressor_pool":
+        return _compressor_pool_cost(op)
+    if op.kind == "indexer_topk":
+        return _indexer_topk_cost(op)
+    if op.kind == "hash_route":
+        return OpCost()  # table lookup, negligible FLOPs
     # Unknown ops: zero cost
     return OpCost()
 
@@ -70,29 +76,32 @@ def _attn_cost(op: Op, model: ModelSpec) -> OpCost:
     d = op.meta.get("head_dim", 0)
     causal = op.meta.get("causal", True)
 
-    # Note: shard.py has already modified s and heads metadata to reflect
-    # TP/CP sharding. We directly use the modified values here:
-    # - Ulysses CP: s -> s/cp, heads -> heads_tp * cp
-    #   FLOPs = 2 × b × (s/cp) × (s/cp) × (heads_tp × cp) × d
-    #         = 2 × b × s × s × heads_tp × d / cp
-    # - Ring CP: s -> s/cp, heads unchanged, cp_tiles = cp
-    #   FLOPs = cp × [2 × b × (s/cp) × (s/cp) × heads_tp × d]
-    #         = 2 × b × s × s × heads_tp × d / cp
-    #   Note: Ring has cp rounds of attention, each round uses (s/cp) query length,
-    #   but accesses full s KV length (handled by P2P通信).
-    #   The meta["s"] is切分后的值, so we need to multiply by cp_tiles to get total FLOPs.
-    # - TP: heads -> heads/tp
-    # The FLOPs formula automatically accounts for sharding through these modified values.
+    # V4 attention variants — identified by metadata:
+    sparse_topk = op.meta.get("sparse_topk", 0)
+    compress_ratio = op.meta.get("compress_ratio", 0)
+    swa_window = op.meta.get("swa_window", 0)
 
-    compression_ratio = _attn_compression_ratio(
-        op.meta.get("attn_compression_ratio", model.attn_compression_ratio)
-    )
-
-    mult = 2.0 if causal else 4.0
-    fwd = mult * b * s * s * h * d * compression_ratio
+    if sparse_topk > 0:
+        # CSA: sparse attention over topk compressed KV + sliding window
+        effective_len = sparse_topk + swa_window
+        fwd = 2.0 * b * s * effective_len * h * d
+    elif compress_ratio > 0:
+        # HCA: dense attention on compressed KV (seq/ratio) + sliding window
+        compressed_len = max(1, s // compress_ratio)
+        effective_len = compressed_len + swa_window
+        fwd = 2.0 * b * s * effective_len * h * d
+    elif swa_window > 0:
+        # SWA-only: pure sliding window attention
+        fwd = 2.0 * b * s * swa_window * h * d
+    else:
+        # Standard / MLA: full causal attention (possibly with compression ratio)
+        compression_ratio = _attn_compression_ratio(
+            op.meta.get("attn_compression_ratio", model.attn_compression_ratio)
+        )
+        mult = 2.0 if causal else 4.0
+        fwd = mult * b * s * s * h * d * compression_ratio
 
     # Ring-CP: multiply by cp_tiles to account for multiple rounds
-    # Ulysses-CP: heads已经乘cp，所以不需要额外因子
     if op.meta.get("cp_tiles", 0) > 1:
         fwd *= op.meta.get("cp_tiles", 1)
 
@@ -199,6 +208,39 @@ def _memory_bound_cost(op: Op) -> OpCost:
     )
 
 
+def _compressor_pool_cost(op: Op) -> OpCost:
+    """KV compressor gated pooling: softmax + weighted sum over compression windows."""
+    s = op.meta.get("s", 0)
+    m = op.meta.get("m", 4)
+    coff = op.meta.get("coff", 1)
+    d = op.meta.get("d_local", op.meta.get("d", 0))
+    # softmax over coff*m elements × (s/m) groups, then weighted sum
+    fwd_flops = 4.0 * (s // m) * coff * m * d
+    bytes_fwd = op.meta.get("bytes_fwd", s * d * 4)  # read kv + write compressed
+    return OpCost(fwd_flops=fwd_flops, dx_flops=fwd_flops,
+                  fwd_bytes=bytes_fwd, dx_bytes=bytes_fwd * 1.5, bound="compute")
+
+
+def _indexer_topk_cost(op: Op) -> OpCost:
+    """Indexer scoring: einsum(q, kv) + ReLU + weighted sum + top-k."""
+    s = op.meta.get("s", 0)
+    ih = op.meta.get("ih_local", op.meta.get("ih", 0))
+    id_ = op.meta.get("id", 0)
+    topk = op.meta.get("topk", 0)
+    # kv_len: full seq for V3.2, compressed seq//m for V4-CSA
+    kv_len = op.meta.get("kv_len", s)
+    einsum_flops = 2.0 * s * kv_len * ih * id_
+    # ReLU + weighted sum + topk: memory-bound
+    bytes_fwd = op.meta.get("bytes_fwd", s * ih * id_ * 4)
+    return OpCost(
+        fwd_flops=einsum_flops,
+        dx_flops=2.0 * einsum_flops,
+        dw_flops=0.0,
+        fwd_bytes=bytes_fwd,
+        bound="compute",
+    )
+
+
 def total_training_flops(
     graph: Graph, model: ModelSpec, strategy: Strategy,
 ) -> float:
@@ -265,11 +307,15 @@ def _op_recompute_categories(op: Op) -> set[str]:
         return {"attn"}
     if op.kind == "matmul":
         name = op.name.lower()
-        if "qkv" in name or "o_proj" in name:
+        if any(k in name for k in ("qkv", "q_a_proj", "q_b_proj", "kv_a_proj",
+                                    "kv_b_proj", "o_proj", "wq_a", "wq_b",
+                                    "wkv", "wo_a", "wo_b")):
             return {"attn"}
         if "up_proj" in name or "gate_proj" in name or "down_proj" in name:
             return {"ffn_swiglu"}
         return set()
+    if op.kind in ("compressor_pool", "indexer_topk"):
+        return {"attn"}
     if op.kind == "swiglu":
         return {"ffn_swiglu"}
     if op.kind == "ln":

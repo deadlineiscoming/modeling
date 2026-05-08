@@ -100,6 +100,11 @@ class TrainingReport:
     steady_bwd_ms: float = 0.0
     cooldown_fwd_ms: float = 0.0
     cooldown_bwd_ms: float = 0.0
+    
+    # Per-microbatch time in steady phase (milliseconds)
+    steady_fwd_per_mb_ms: float = 0.0
+    steady_bwd_per_mb_ms: float = 0.0
+    steady_per_mb_ms: float = 0.0
 
     # Config info
     config_summary: str | dict = ""  # [Stack B] uses str, [Stack A] uses dict

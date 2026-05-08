@@ -77,6 +77,9 @@ def estimate(
         steady_bwd_ms=step_result.steady_bwd * 1000,
         cooldown_fwd_ms=step_result.cooldown_fwd * 1000,
         cooldown_bwd_ms=step_result.cooldown_bwd * 1000,
+        steady_fwd_per_mb_ms=step_result.steady_fwd_per_mb * 1000,
+        steady_bwd_per_mb_ms=step_result.steady_bwd_per_mb * 1000,
+        steady_per_mb_ms=step_result.steady_per_mb * 1000,
     )
 
 

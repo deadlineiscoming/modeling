@@ -57,6 +57,11 @@ class StepResult:
     steady_bwd: float = 0.0
     cooldown_fwd: float = 0.0
     cooldown_bwd: float = 0.0
+    
+    # Per-microbatch time in steady phase (seconds)
+    steady_fwd_per_mb: float = 0.0
+    steady_bwd_per_mb: float = 0.0
+    steady_per_mb: float = 0.0
 
 
 class PipelineComposer(ABC):
@@ -119,6 +124,9 @@ class OneF1BComposer(PipelineComposer):
                 steady_bwd=st.bwd * M,
                 cooldown_fwd=0.0,
                 cooldown_bwd=0.0,
+                steady_fwd_per_mb=st.fwd,
+                steady_bwd_per_mb=st.bwd,
+                steady_per_mb=step,
             )
 
         # With pipeline parallelism
@@ -157,6 +165,9 @@ class OneF1BComposer(PipelineComposer):
             steady_bwd=M * t_bwd_max,
             cooldown_fwd=0.0,
             cooldown_bwd=cooldown,
+            steady_fwd_per_mb=t_fwd_max,
+            steady_bwd_per_mb=t_bwd_max,
+            steady_per_mb=t_stage_max,
         )
 
 
@@ -217,6 +228,9 @@ class Interleaved1F1BComposer(PipelineComposer):
             steady_bwd=M * t_bwd_max,
             cooldown_fwd=0.0,
             cooldown_bwd=cooldown,
+            steady_fwd_per_mb=t_fwd_max,
+            steady_bwd_per_mb=t_bwd_max,
+            steady_per_mb=t_stage_max,
         )
 
 
@@ -272,6 +286,9 @@ class DualPipeComposer(PipelineComposer):
             steady_bwd=M * t_stage_max / 2,
             cooldown_fwd=0.0,
             cooldown_bwd=cooldown,
+            steady_fwd_per_mb=t_stage_max / 2,
+            steady_bwd_per_mb=t_stage_max / 2,
+            steady_per_mb=t_stage_max,
         )
 
 
@@ -326,6 +343,9 @@ class DualPipeVComposer(PipelineComposer):
             steady_bwd=M * t_stage_max / 2,
             cooldown_fwd=0.0,
             cooldown_bwd=cooldown,
+            steady_fwd_per_mb=t_stage_max / 2,
+            steady_bwd_per_mb=t_stage_max / 2,
+            steady_per_mb=t_stage_max,
         )
 
 
@@ -383,6 +403,9 @@ class ZeroBubbleComposer(PipelineComposer):
             steady_bwd=M * t_stage / 2,
             cooldown_fwd=0.0,
             cooldown_bwd=cooldown,
+            steady_fwd_per_mb=t_stage / 2,
+            steady_bwd_per_mb=t_stage / 2,
+            steady_per_mb=t_stage,
         )
 
 

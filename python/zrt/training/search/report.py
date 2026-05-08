@@ -89,13 +89,20 @@ def report_summary(report: Report) -> str:
         total_bwd = report.warmup_bwd_ms + report.steady_bwd_ms + report.cooldown_bwd_ms
         total_phase = report.warmup_ms + report.steady_ms + report.cooldown_ms
         lines.append(f"    TOTAL      | {total_fwd:9.2f} | {total_bwd:9.2f} | {total_phase:9.2f}")
-        
+
         if report.dp_ar_exposed_ms > 0:
             lines.append(f"    DP AR exposed:   {report.dp_ar_exposed_ms:.2f} ms")
         if report.optimizer_time_ms > 0:
             lines.append(f"    Optimizer:       {report.optimizer_time_ms:.2f} ms")
         if report.optimizer_comm_ms > 0:
             lines.append(f"    Opt comm:        {report.optimizer_comm_ms:.2f} ms")
+
+        if report.steady_per_mb_ms > 0:
+            mb_count = int(report.steady_ms / report.steady_per_mb_ms) if report.steady_per_mb_ms > 0 else 0
+            lines.append(f"    Per-microbatch (steady phase):")
+            lines.append(
+                f"    FWD: {report.steady_fwd_per_mb_ms:.2f} ms | BWD: {report.steady_bwd_per_mb_ms:.2f} ms | Total: {report.steady_per_mb_ms:.2f} ms")
+            lines.append(f"    (averaged over {mb_count} microbatches in steady phase)")
 
     if report.memory is not None:
         gb = report.memory.to_gb()

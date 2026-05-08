@@ -49,6 +49,14 @@ class StepResult:
     cooldown_steps: int = 0        # Number of cooldown microbatches
     optimizer_time: float = 0.0    # Optimizer step time (seconds)
     optimizer_comm: float = 0.0    # Optimizer communication time (seconds)
+    
+    # Fwd/Bwd breakdown per phase (seconds)
+    warmup_fwd: float = 0.0
+    warmup_bwd: float = 0.0
+    steady_fwd: float = 0.0
+    steady_bwd: float = 0.0
+    cooldown_fwd: float = 0.0
+    cooldown_bwd: float = 0.0
 
 
 class PipelineComposer(ABC):
@@ -105,6 +113,12 @@ class OneF1BComposer(PipelineComposer):
                 schedule_name="1f1b",
                 warmup_steps=0,
                 cooldown_steps=0,
+                warmup_fwd=0.0,
+                warmup_bwd=0.0,
+                steady_fwd=st.fwd * M,
+                steady_bwd=st.bwd * M,
+                cooldown_fwd=0.0,
+                cooldown_bwd=0.0,
             )
 
         # With pipeline parallelism
@@ -137,6 +151,12 @@ class OneF1BComposer(PipelineComposer):
             schedule_name="1f1b",
             warmup_steps=pp - 1,
             cooldown_steps=pp - 1,
+            warmup_fwd=warmup,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_fwd_max,
+            steady_bwd=M * t_bwd_max,
+            cooldown_fwd=0.0,
+            cooldown_bwd=cooldown,
         )
 
 
@@ -189,8 +209,14 @@ class Interleaved1F1BComposer(PipelineComposer):
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
             schedule_name="i1f1b",
-            warmup_steps=max(1, -(-(pp - 1) // V)),  # ceil((pp-1)/V)
+            warmup_steps=max(1, -(-(pp - 1) // V)),
             cooldown_steps=max(1, -(-(pp - 1) // V)),
+            warmup_fwd=warmup,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_fwd_max,
+            steady_bwd=M * t_bwd_max,
+            cooldown_fwd=0.0,
+            cooldown_bwd=cooldown,
         )
 
 
@@ -238,8 +264,14 @@ class DualPipeComposer(PipelineComposer):
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
             schedule_name="dualpipe",
-            warmup_steps=max(1, -(-(pp - 1) // 2)),  # ceil((pp-1)/2)
+            warmup_steps=max(1, -(-(pp - 1) // 2)),
             cooldown_steps=max(1, -(-(pp - 1) // 2)),
+            warmup_fwd=warmup,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_stage_max / 2,
+            steady_bwd=M * t_stage_max / 2,
+            cooldown_fwd=0.0,
+            cooldown_bwd=cooldown,
         )
 
 
@@ -286,8 +318,14 @@ class DualPipeVComposer(PipelineComposer):
             cooldown=cooldown,
             dp_ar_exposed=dp_exposed,
             schedule_name="dualpipev",
-            warmup_steps=max(1, -(-(pp - 1) // (2 * V))),  # ceil((pp-1)/(2*V))
+            warmup_steps=max(1, -(-(pp - 1) // (2 * V))),
             cooldown_steps=max(1, -(-(pp - 1) // (2 * V))),
+            warmup_fwd=warmup,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_stage_max / 2,
+            steady_bwd=M * t_stage_max / 2,
+            cooldown_fwd=0.0,
+            cooldown_bwd=cooldown,
         )
 
 
@@ -339,6 +377,12 @@ class ZeroBubbleComposer(PipelineComposer):
             schedule_name="zb",
             warmup_steps=pp - 1,
             cooldown_steps=pp - 1,
+            warmup_fwd=warmup,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_stage / 2,
+            steady_bwd=M * t_stage / 2,
+            cooldown_fwd=0.0,
+            cooldown_bwd=cooldown,
         )
 
 

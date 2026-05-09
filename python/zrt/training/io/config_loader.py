@@ -156,6 +156,9 @@ def _parse_system(d: dict) -> SystemSpec:
         flops_fp8=hw.compute.fp8_tops or hw.compute.bf16_tflops * 2,
         hbm_gb=hw.memory.capacity_gb,
         hbm_bw_gbps=hw.memory.hbm_bandwidth_gbps,
+        cube_tflops=hw.compute.cube_bf16_tflops,
+        vector_tflops=hw.compute.vector_bf16_tflops,
+        overlap_ratio=dict(hw.compute.overlap_ratio),
     )
     nets = [
         NetTier(

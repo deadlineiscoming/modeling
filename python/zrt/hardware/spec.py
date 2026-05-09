@@ -29,6 +29,12 @@ class ComputeSpec:
     int4_tops:   float = 0.0
     fp8_tops:    float = 0.0   # covers both FP8_E4M3 and FP8_E5M2
 
+    # Heterogeneous-core fields (Ascend Cube/Vector split, etc.)
+    # None = homogeneous hardware (fall back to unified peak_flops path)
+    cube_bf16_tflops: float | None = None
+    vector_bf16_tflops: float | None = None
+    overlap_ratio: dict[str, float] = field(default_factory=dict)
+
 
 @dataclass
 class MemoryTier:

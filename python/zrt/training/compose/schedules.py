@@ -504,8 +504,11 @@ def pipeline_step_time(
     tp_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "TP")
     cp_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "CP")
     ep_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "EP")
-    # PP P2P: each stage does fwd+bwd P2P for M microbatches
-    pp_p2p_total = pp_p2p * M * 2 * (pp - 1) if pp > 1 else 0.0  # (pp-1) pairs of adjacent stages
+    # PP P2P contribution to step_time (must match how stage_times affect the schedule).
+    # Each stage has pp_p2p added to fwd and bwd; through 1F1B:
+    #   warmup: (pp-1)*pp_p2p, steady: M*2*pp_p2p, cooldown: (pp-1)*pp_p2p
+    # Total on critical path = (2*(pp-1) + 2*M) * pp_p2p
+    pp_p2p_total = pp_p2p * (2 * (pp - 1) + 2 * M) if pp > 1 else 0.0
     dp_comm = dp_ar_time  # DP gradient reduce at step end
 
     step.tp_comm = tp_comm

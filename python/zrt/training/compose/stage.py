@@ -68,6 +68,68 @@ def op_to_time(
     return max(compute_t, memory_t)
 
 
+def has_heterogeneous_compute(system: SystemSpec) -> bool:
+    """Return True when both heterogeneous compute peaks are configured."""
+    gpu = system.gpu
+    return gpu.cube_tflops is not None and gpu.vector_tflops is not None
+
+
+def op_to_time_hetero(
+    cube_flops: float, vector_flops: float, bytes_: float,
+    system: SystemSpec, gpu_name: str = "", dtype: Dtype = Dtype.BF16,
+    overlap_ratio: float = 0.0,
+) -> float:
+    """Heterogeneous roofline for matrix/Tensor/Cube + Vector hardware.
+
+    compute_time = max(cube_t, vector_t) + (1 - overlap_ratio) * min(cube_t, vector_t)
+    op_time = max(compute_time, memory_time)
+
+    If either heterogeneous peak is missing, preserve the legacy unified-peak
+    roofline instead of treating one side of the work as free.
+    """
+    gpu = system.gpu
+    total_flops = cube_flops + vector_flops
+    if not has_heterogeneous_compute(system):
+        return op_to_time(total_flops, bytes_, system, gpu_name, dtype)
+
+    compute_t = 0.0
+    if total_flops > 0:
+        eff = achieved_flops_efficiency(gpu_name or gpu.name, dtype, total_flops)
+        cube_t = 0.0
+        vector_t = 0.0
+        if cube_flops > 0:
+            peak_cube = gpu.cube_tflops * 1e12
+            cube_t = cube_flops / (peak_cube * eff) if peak_cube > 0 else 0.0
+        if vector_flops > 0:
+            peak_vector = gpu.vector_tflops * 1e12
+            vector_t = vector_flops / (peak_vector * eff) if peak_vector > 0 else 0.0
+        if cube_t > 0 or vector_t > 0:
+            compute_t = max(cube_t, vector_t) + (1.0 - overlap_ratio) * min(cube_t, vector_t)
+
+    memory_t = 0.0
+    if bytes_ > 0:
+        bw = gpu.hbm_bw_gbps * 1e9
+        eff_bw = achieved_bandwidth_efficiency(gpu_name or gpu.name, bytes_)
+        memory_t = bytes_ / (bw * eff_bw) if bw > 0 else 0.0
+    return max(compute_t, memory_t)
+
+
+def _cost_phase_time(
+    cost: OpCost, phase: str, system: SystemSpec,
+    gpu_name: str, overlap: float = 0.0,
+) -> float:
+    """Compute time for one phase (fwd/dx/dw), dispatching to heterogeneous path when available."""
+    if has_heterogeneous_compute(system):
+        cube = getattr(cost, f"{phase}_cube_flops")
+        vector = getattr(cost, f"{phase}_vector_flops")
+        bytes_ = getattr(cost, f"{phase}_bytes")
+        return op_to_time_hetero(cube, vector, bytes_, system, gpu_name,
+                                 overlap_ratio=overlap)
+    flops = getattr(cost, f"{phase}_flops")
+    bytes_ = getattr(cost, f"{phase}_bytes")
+    return op_to_time(flops, bytes_, system, gpu_name)
+
+
 def stage_time(
     stage_ops: list[Op],
     stage_collectives: list[Collective],
@@ -77,6 +139,8 @@ def stage_time(
 ) -> StageTime:
     """Compute forward + backward time for one PP stage and one microbatch."""
     gpu_name = system.gpu.name
+    gpu = system.gpu
+    hetero = has_heterogeneous_compute(system)
 
     t_fwd = 0.0
     t_bwd_dx = 0.0
@@ -84,9 +148,15 @@ def stage_time(
 
     for op in stage_ops:
         cost = op_cost(op, model)
-        fwd_t = op_to_time(cost.fwd_flops, cost.fwd_bytes, system, gpu_name)
-        dx_t  = op_to_time(cost.dx_flops,  cost.dx_bytes,  system, gpu_name)
-        dw_t  = op_to_time(cost.dw_flops,  cost.dw_bytes,  system, gpu_name)
+        if hetero:
+            overlap = gpu.overlap_ratio.get(op.kind, 0.0)
+            fwd_t = _cost_phase_time(cost, "fwd", system, gpu_name, overlap)
+            dx_t  = _cost_phase_time(cost, "dx",  system, gpu_name, overlap)
+            dw_t  = _cost_phase_time(cost, "dw",  system, gpu_name, overlap)
+        else:
+            fwd_t = op_to_time(cost.fwd_flops, cost.fwd_bytes, system, gpu_name)
+            dx_t  = op_to_time(cost.dx_flops,  cost.dx_bytes,  system, gpu_name)
+            dw_t  = op_to_time(cost.dw_flops,  cost.dw_bytes,  system, gpu_name)
         t_fwd    += fwd_t
         t_bwd_dx += dx_t
         t_bwd_dw += dw_t
@@ -198,7 +268,8 @@ def _recompute_time(
         op_cats = _op_recompute_categories(op)
         if "full" in cats or (op_cats & cats):
             cost = op_cost(op, model)
-            t += op_to_time(cost.fwd_flops, cost.fwd_bytes, system, gpu_name)
+            overlap = system.gpu.overlap_ratio.get(op.kind, 0.0) if has_heterogeneous_compute(system) else 0.0
+            t += _cost_phase_time(cost, "fwd", system, gpu_name, overlap)
 
     return t
 
@@ -218,7 +289,8 @@ def _ep_parallel_fraction(
     for op in ops:
         cost = op_cost(op, model)
         if cost.fwd_flops > 0 or cost.fwd_bytes > 0:
-            t = op_to_time(cost.fwd_flops, cost.fwd_bytes, system, gpu_name)
+            t = _cost_phase_time(cost, "fwd", system, gpu_name,
+                                 system.gpu.overlap_ratio.get(op.kind, 0.0))
         else:
             continue
         t_total += t
@@ -270,7 +342,8 @@ def _ep_gemm_time(
     for op in ops:
         if op.kind == "matmul" and "routed_expert" in op.name:
             cost = op_cost(op, model)
-            total += op_to_time(cost.fwd_flops, cost.fwd_bytes, system, gpu_name)
+            total += _cost_phase_time(cost, "fwd", system, gpu_name,
+                                      system.gpu.overlap_ratio.get(op.kind, 0.0))
     return total
 
 

@@ -25,6 +25,15 @@ class OpCost:
     # Timing model ALWAYS uses max(compute_time, memory_time).
     bound: str = "compute"   # "compute" | "memory"
 
+    # Heterogeneous core FLOPs (Cube/Vector). For attn_core, cube+vector > fwd_flops
+    # (vector portion is extra work not in the standard 6P accounting model).
+    fwd_cube_flops: float = 0.0
+    fwd_vector_flops: float = 0.0
+    dx_cube_flops: float = 0.0
+    dx_vector_flops: float = 0.0
+    dw_cube_flops: float = 0.0
+    dw_vector_flops: float = 0.0
+
 
 def _bpe(op: Op) -> int:
     """Bytes per element from op's first tensor, defaulting to BF16=2."""
@@ -116,6 +125,9 @@ def _matmul_cost(op: Op) -> OpCost:
         fwd_bytes=total_bytes,
         dx_bytes=total_bytes,
         dw_bytes=total_bytes,
+        fwd_cube_flops=fwd,
+        dx_cube_flops=fwd,
+        dw_cube_flops=fwd,
     )
 
 
@@ -135,14 +147,20 @@ def _attn_cost(op: Op, model: ModelSpec) -> OpCost:
         # CSA: sparse attention over topk compressed KV + sliding window
         effective_len = sparse_topk + swa_window
         fwd = 2.0 * b * s * effective_len * h * d
+        cube_fwd = fwd
+        vector_fwd = 5.0 * b * h * s * effective_len
     elif compress_ratio > 0:
         # HCA: dense attention on compressed KV (seq/ratio) + sliding window
         compressed_len = max(1, s // compress_ratio)
         effective_len = compressed_len + swa_window
         fwd = 2.0 * b * s * effective_len * h * d
+        cube_fwd = fwd
+        vector_fwd = 5.0 * b * h * s * effective_len
     elif swa_window > 0:
         # SWA-only: pure sliding window attention
         fwd = 2.0 * b * s * swa_window * h * d
+        cube_fwd = fwd
+        vector_fwd = 5.0 * b * h * s * swa_window
     else:
         # Standard / MLA: full causal attention (possibly with compression ratio)
         compression_ratio = _attn_compression_ratio(
@@ -150,10 +168,16 @@ def _attn_cost(op: Op, model: ModelSpec) -> OpCost:
         )
         mult = 2.0 if causal else 4.0
         fwd = mult * b * s * s * h * d * compression_ratio
+        # Cube core always does full dense QK+AV matmuls (causal mask is Vector-side)
+        cube_fwd = 4.0 * b * s * s * h * d * compression_ratio
+        vector_fwd = 5.0 * b * h * s * s
 
     # Ring-CP: multiply by cp_tiles to account for multiple rounds
     if op.meta.get("cp_tiles", 0) > 1:
-        fwd *= op.meta.get("cp_tiles", 1)
+        cp_tiles = op.meta.get("cp_tiles", 1)
+        fwd *= cp_tiles
+        cube_fwd *= cp_tiles
+        vector_fwd *= cp_tiles
 
     dx = 2.5 * fwd
 
@@ -182,6 +206,11 @@ def _attn_cost(op: Op, model: ModelSpec) -> OpCost:
         fwd_bytes=fwd_bytes,
         dx_bytes=dx_bytes,
         dw_bytes=0.0,
+        # Cube = dense QK+AV matmuls, Vector = softmax/scaling/mask
+        fwd_cube_flops=cube_fwd,
+        fwd_vector_flops=vector_fwd,
+        dx_cube_flops=2.5 * cube_fwd,
+        dx_vector_flops=2.5 * vector_fwd,
     )
 
 
@@ -224,6 +253,9 @@ def _mhc_pre_cost(op: Op) -> OpCost:
         dw_flops=fwd_lin,
         fwd_bytes=fwd_bytes,
         dx_bytes=fwd_bytes * 1.5,
+        fwd_cube_flops=fwd,
+        dx_cube_flops=2.5 * fwd,
+        dw_cube_flops=fwd_lin,
     )
 
 
@@ -244,6 +276,8 @@ def _mhc_post_cost(op: Op) -> OpCost:
         dw_flops=0.0,
         fwd_bytes=fwd_bytes,
         dx_bytes=fwd_bytes * 1.5,
+        fwd_cube_flops=fwd,
+        dx_cube_flops=2.5 * fwd,
     )
 
 
@@ -267,6 +301,9 @@ def _mhc_head_cost(op: Op) -> OpCost:
         dw_flops=fwd_lin,
         fwd_bytes=fwd_bytes,
         dx_bytes=fwd_bytes * 1.5,
+        fwd_cube_flops=fwd,
+        dx_cube_flops=2.5 * fwd,
+        dw_cube_flops=fwd_lin,
     )
 
 
@@ -293,6 +330,10 @@ def _elementwise_cost(op: Op) -> OpCost:
         dx_bytes=fwd_bytes * 1.5,
         dw_bytes=0.0,
         bound="memory",
+        fwd_cube_flops=0.0,
+        fwd_vector_flops=fwd_flops,
+        dx_cube_flops=0.0,
+        dx_vector_flops=fwd_flops * 2.5,
     )
 
 
@@ -306,7 +347,8 @@ def _compressor_pool_cost(op: Op) -> OpCost:
     fwd_flops = 4.0 * (s // m) * coff * m * d
     bytes_fwd = op.meta.get("bytes_fwd", s * d * 4)  # read kv + write compressed
     return OpCost(fwd_flops=fwd_flops, dx_flops=fwd_flops,
-                  fwd_bytes=bytes_fwd, dx_bytes=bytes_fwd * 1.5, bound="compute")
+                  fwd_bytes=bytes_fwd, dx_bytes=bytes_fwd * 1.5, bound="compute",
+                  fwd_cube_flops=fwd_flops, dx_cube_flops=fwd_flops)
 
 
 def _indexer_topk_cost(op: Op) -> OpCost:
@@ -326,6 +368,8 @@ def _indexer_topk_cost(op: Op) -> OpCost:
         dw_flops=0.0,
         fwd_bytes=bytes_fwd,
         bound="compute",
+        fwd_cube_flops=einsum_flops,
+        dx_cube_flops=2.0 * einsum_flops,
     )
 
 

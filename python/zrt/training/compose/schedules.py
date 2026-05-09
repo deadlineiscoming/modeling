@@ -63,6 +63,16 @@ class StepResult:
     steady_bwd_per_mb: float = 0.0
     steady_per_mb: float = 0.0
 
+    # Communication time breakdown (seconds)
+    tp_comm: float = 0.0           # TP RS/AG time
+    cp_comm: float = 0.0           # CP A2A time
+    ep_comm: float = 0.0           # EP A2A time
+    pp_comm: float = 0.0           # PP P2P time
+    dp_comm: float = 0.0           # DP AR/RS time
+    total_comm: float = 0.0        # Total communication time
+    compute_time: float = 0.0      # Pure compute time
+    overlap_time: float = 0.0      # Compute-comm overlap time
+
 
 class PipelineComposer(ABC):
 
@@ -486,6 +496,32 @@ def pipeline_step_time(
     step = composer.compose(stage_times, M, pp, dp_ar_time, strategy)
 
     step.per_stage = stage_times
+
+    # Communication time breakdown (aggregate from comm_times dict)
+    # Group by collective group attribute (TP, CP, EP, DP, PP) instead of name prefix
+    # Note: collectives have names like "ag_L0.shared_up_proj", "a2a_before_L0.routed_expert_ffn"
+    # We use the c.group attribute to categorize them
+    tp_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "TP")
+    cp_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "CP")
+    ep_comm = sum(comm_times.get(c.name, 0) for c in graph.collectives if c.group == "EP")
+    # PP P2P: each stage does fwd+bwd P2P for M microbatches
+    pp_p2p_total = pp_p2p * M * 2 * (pp - 1) if pp > 1 else 0.0  # (pp-1) pairs of adjacent stages
+    dp_comm = dp_ar_time  # DP gradient reduce at step end
+
+    step.tp_comm = tp_comm
+    step.cp_comm = cp_comm
+    step.ep_comm = ep_comm
+    step.pp_comm = pp_p2p_total
+    step.dp_comm = dp_comm
+    step.total_comm = tp_comm + cp_comm + ep_comm + pp_p2p_total + dp_comm
+
+    # Compute time = step_time before optimizer - total_comm
+    # (step_time at this point is the pure pipeline time without optimizer)
+    step.compute_time = step.step_time - step.total_comm
+    # Overlap is the portion of comm that is hidden by compute
+    # For now, estimate overlap as max(0, total_comm - exposed_comm)
+    exposed_comm = step.dp_ar_exposed  # DP AR that couldn't be hidden
+    step.overlap_time = max(0.0, step.total_comm - exposed_comm)
 
     # Dual-batch overlap: two batches run simultaneously so the bubble of one
     # is filled by the steady-state work of the other.

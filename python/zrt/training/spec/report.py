@@ -106,6 +106,16 @@ class TrainingReport:
     steady_bwd_per_mb_ms: float = 0.0
     steady_per_mb_ms: float = 0.0
 
+    # Communication time breakdown (milliseconds)
+    tp_comm_ms: float = 0.0           # TP RS/AG time
+    cp_comm_ms: float = 0.0           # CP A2A time
+    ep_comm_ms: float = 0.0           # EP A2A time
+    pp_comm_ms: float = 0.0           # PP P2P time
+    dp_comm_ms: float = 0.0           # DP AR/RS time
+    total_comm_ms: float = 0.0        # Total communication time
+    compute_time_ms: float = 0.0      # Pure compute time
+    overlap_time_ms: float = 0.0      # Compute-comm overlap time
+
     # Config info
     config_summary: str | dict = ""  # [Stack B] uses str, [Stack A] uses dict
     warnings: list[str] = field(default_factory=list)  # [Stack A]

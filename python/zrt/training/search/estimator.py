@@ -90,6 +90,15 @@ def estimate(
         steady_fwd_per_mb_ms=step_result.steady_fwd_per_mb * 1000,
         steady_bwd_per_mb_ms=step_result.steady_bwd_per_mb * 1000,
         steady_per_mb_ms=step_result.steady_per_mb * 1000,
+        # Communication time breakdown
+        tp_comm_ms=step_result.tp_comm * 1000 if hasattr(step_result, 'tp_comm') else 0.0,
+        cp_comm_ms=step_result.cp_comm * 1000 if hasattr(step_result, 'cp_comm') else 0.0,
+        ep_comm_ms=step_result.ep_comm * 1000 if hasattr(step_result, 'ep_comm') else 0.0,
+        pp_comm_ms=step_result.pp_comm * 1000 if hasattr(step_result, 'pp_comm') else 0.0,
+        dp_comm_ms=step_result.dp_comm * 1000 if hasattr(step_result, 'dp_comm') else 0.0,
+        total_comm_ms=step_result.total_comm * 1000 if hasattr(step_result, 'total_comm') else 0.0,
+        compute_time_ms=step_result.compute_time * 1000 if hasattr(step_result, 'compute_time') else 0.0,
+        overlap_time_ms=step_result.overlap_time * 1000 if hasattr(step_result, 'overlap_time') else 0.0,
     )
 
 

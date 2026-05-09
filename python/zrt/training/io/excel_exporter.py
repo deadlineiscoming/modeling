@@ -117,6 +117,18 @@ def export_estimate_excel(
         ["Optimizer Time", f"{report.optimizer_time_ms:.2f}" if report.optimizer_time_ms >= 0 else "N/A", "ms"],
         ["Optimizer Comm", f"{report.optimizer_comm_ms:.2f}" if report.optimizer_comm_ms >= 0 else "N/A", "ms"],
         ["", "", ""],
+        # Communication breakdown
+        ["Communication Breakdown", "", ""],
+        ["  TP (RS/AG)", f"{report.tp_comm_ms:.2f}" if hasattr(report, 'tp_comm_ms') and report.tp_comm_ms > 0 else "-", "ms"],
+        ["  CP (A2A)", f"{report.cp_comm_ms:.2f}" if hasattr(report, 'cp_comm_ms') and report.cp_comm_ms > 0 else "-", "ms"],
+        ["  EP (A2A)", f"{report.ep_comm_ms:.2f}" if hasattr(report, 'ep_comm_ms') and report.ep_comm_ms > 0 else "-", "ms"],
+        ["  PP (P2P)", f"{report.pp_comm_ms:.2f}" if hasattr(report, 'pp_comm_ms') and report.pp_comm_ms > 0 else "-", "ms"],
+        ["  DP (AR/RS)", f"{report.dp_comm_ms:.2f}" if hasattr(report, 'dp_comm_ms') and report.dp_comm_ms > 0 else "-", "ms"],
+        ["  Total Comm", f"{report.total_comm_ms:.2f}" if hasattr(report, 'total_comm_ms') and report.total_comm_ms > 0 else "-", "ms"],
+        ["  Compute Time", f"{report.compute_time_ms:.2f}" if hasattr(report, 'compute_time_ms') and report.compute_time_ms > 0 else "-", "ms"],
+        ["  Overlap Time", f"{report.overlap_time_ms:.2f}" if hasattr(report, 'overlap_time_ms') and report.overlap_time_ms > 0 else "-", "ms"],
+        ["  Comm Ratio", f"{report.total_comm_ms / report.step_time_ms * 100:.1f}%" if hasattr(report, 'total_comm_ms') and report.total_comm_ms > 0 and report.step_time_ms > 0 else "-", ""],
+        ["", "", ""],
         # Efficiency
         ["MFU", f"{report.mfu:.4%}" if report.mfu > 0 else "0.00%", ""],
         ["HFU", f"{report.hfu:.4%}" if report.hfu > 0 else "0.00%", ""],

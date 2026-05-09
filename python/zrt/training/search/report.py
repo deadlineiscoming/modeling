@@ -107,6 +107,27 @@ def report_summary(report: Report) -> str:
                 f"    FWD: {report.steady_fwd_per_mb_ms:.2f} ms | BWD: {report.steady_bwd_per_mb_ms:.2f} ms | Total: {report.steady_per_mb_ms:.2f} ms")
             lines.append(f"    (averaged over {mb_count} microbatches in steady phase)")
 
+    # Communication time breakdown
+    if hasattr(report, 'total_comm_ms') and report.total_comm_ms > 0:
+        lines.append(f"  Communication breakdown:")
+        if hasattr(report, 'tp_comm_ms') and report.tp_comm_ms > 0:
+            lines.append(f"    TP (RS/AG):     {report.tp_comm_ms:.2f} ms")
+        if hasattr(report, 'cp_comm_ms') and report.cp_comm_ms > 0:
+            lines.append(f"    CP (A2A):       {report.cp_comm_ms:.2f} ms")
+        if hasattr(report, 'ep_comm_ms') and report.ep_comm_ms > 0:
+            lines.append(f"    EP (A2A):       {report.ep_comm_ms:.2f} ms")
+        if hasattr(report, 'pp_comm_ms') and report.pp_comm_ms > 0:
+            lines.append(f"    PP (P2P):       {report.pp_comm_ms:.2f} ms")
+        if hasattr(report, 'dp_comm_ms') and report.dp_comm_ms > 0:
+            lines.append(f"    DP (AR/RS):     {report.dp_comm_ms:.2f} ms")
+        lines.append(f"    Total comm:     {report.total_comm_ms:.2f} ms")
+        if hasattr(report, 'compute_time_ms') and report.compute_time_ms > 0:
+            lines.append(f"    Compute time:   {report.compute_time_ms:.2f} ms")
+        if hasattr(report, 'overlap_time_ms') and report.overlap_time_ms > 0:
+            lines.append(f"    Overlap time:   {report.overlap_time_ms:.2f} ms")
+        comm_pct = report.total_comm_ms / report.step_time_ms * 100 if report.step_time_ms > 0 else 0
+        lines.append(f"    Comm ratio:     {comm_pct:.1f}%")
+
     if report.memory is not None:
         gb = report.memory.to_gb()
         lines.append(f"  Memory:")

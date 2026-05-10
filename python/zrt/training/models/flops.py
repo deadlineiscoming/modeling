@@ -512,6 +512,24 @@ def total_training_flops(
     return total
 
 
+def forward_backward_flops(
+    graph: Graph, model: ModelSpec, strategy: Strategy,
+) -> tuple[float, float]:
+    """Return (forward_flops, backward_flops) separately.
+
+    Same loop as total_training_flops but splits fwd from dx+dw.
+    """
+    fwd = 0.0
+    bwd = 0.0
+    for op in graph.ops:
+        cost = op_cost(op, model)
+        if cost.bound == "compute":
+            fwd += cost.fwd_flops
+            bwd += cost.dx_flops + cost.dw_flops
+    M = strategy.num_microbatches()
+    return fwd * M, bwd * M
+
+
 def recompute_overhead_flops(
     graph: Graph, model: ModelSpec, strategy: Strategy,
 ) -> float:

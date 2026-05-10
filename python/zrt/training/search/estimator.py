@@ -11,7 +11,7 @@ from zrt.training.compose.schedules import StepResult, pipeline_step_time
 from zrt.training.ir.builders import build_graph
 from zrt.training.ir.training_graph import Graph as _GraphType
 from zrt.training.ir.validate import validate as ir_validate
-from zrt.training.models.flops import total_training_flops
+from zrt.training.models.flops import total_training_flops, forward_backward_flops
 from zrt.training.models.memory import MemBreakdown
 from zrt.training.spec.model import ModelSpec
 from zrt.training.spec.report import TrainingReport
@@ -46,10 +46,11 @@ def estimate(
     if graph is None:
         graph = build_graph(model, strategy)
 
-    # Total training FLOPs
+    # Total training FLOPs (graph-based, split by phase)
     total_flops = total_training_flops(graph, model, strategy)
+    fwd_flops, bwd_flops = forward_backward_flops(graph, model, strategy)
 
-    # Pipeline step time (includes per-stage timing + memory + MFU)
+    # Pipeline step time (includes per-stage timing + memory + MFU via 6P rule)
     step_result: StepResult = pipeline_step_time(graph, model, system, strategy)
 
     # Config summary
@@ -73,6 +74,10 @@ def estimate(
         memory=s.memory,
         per_stage=s.per_stage,
         total_flops=total_flops,
+        forward_flops=fwd_flops,
+        backward_flops=bwd_flops,
+        training_flops=total_flops,
+        total_params=model.total_params(),
         warnings=warnings,
         config_summary=config_summary,
         bubble_fraction=s.bubble_fraction,

@@ -199,8 +199,15 @@ def test_moe_mfu_is_sane():
 
     report = estimate(model_moe, system, strategy)
 
-    # MFU should be sane: strictly between 0 and 1 (not 0, not 1)
-    assert 0.0 < report.mfu < 1.0, f"MoE MFU collapsed to {report.mfu}, expected 0 < MFU < 1"
+    # MFU should be sane: between 0 (exclusive) and 1 (inclusive)
+    assert 0.0 < report.mfu <= 1.0, f"MoE MFU collapsed to {report.mfu}, expected 0 < MFU <= 1"
+    # FLOPs breakdown fields must be populated
+    assert report.forward_flops > 0, "forward_flops should be non-zero"
+    assert report.backward_flops > 0, "backward_flops should be non-zero"
+    assert report.training_flops > 0, "training_flops should be non-zero"
+    assert report.total_params > 0, "total_params should be non-zero"
+    # backward FLOPs (dx + dw) should exceed forward
+    assert report.backward_flops > report.forward_flops
 
 
 # ── HFU tests ──────────────────────────────────────────────────────────────

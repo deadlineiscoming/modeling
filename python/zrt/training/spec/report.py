@@ -147,9 +147,11 @@ class TrainingReport:
         copy training_flops to total_flops. This ensures both Stack A and Stack B
         callers see consistent FLOPs data regardless of which field they access.
         """
-        # If total_flops is default (0.0) but training_flops is set, sync them
+        # Sync total_flops ↔ training_flops (whichever is set, copy to the other)
         if self.total_flops == 0.0 and self.training_flops > 0:
             self.total_flops = self.training_flops
+        elif self.training_flops == 0.0 and self.total_flops > 0:
+            self.training_flops = self.total_flops
 
     def to_dict(self) -> dict:
         """Convert report to JSON-serializable dict."""

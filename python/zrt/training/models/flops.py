@@ -494,16 +494,19 @@ def total_training_flops(
 ) -> float:
     """Total FLOPs per training step (forward + backward).
 
-    Standard transformer: 6 * total_params * tokens (6P rule).
-    With recompute: adds extra forward for recomputed ops.
+    Only counts compute-bound ops (matmul, attention) to match the
+    standard 6P convention used in MFU reporting. Memory-bound ops
+    (rmsnorm, swiglu, rope, add, embed) are excluded because their
+    execution time is dominated by HBM bandwidth, not compute throughput.
+
+    Including memory-bound ops in the FLOP numerator while their time
+    cost sits in the denominator (step_time) would artificially inflate MFU.
     """
     total = 0.0
     for op in graph.ops:
         cost = op_cost(op, model)
-        # Include ALL ops (compute-bound + memory-bound) for accurate FLOP
-        # accounting. Memory-bound ops have low FLOP counts but still consume
-        # real hardware cycles; excluding them artificially inflates MFU.
-        total += cost.fwd_flops + cost.dx_flops + cost.dw_flops
+        if cost.bound == "compute":
+            total += cost.fwd_flops + cost.dx_flops + cost.dw_flops
 
     # Scale by microbatch count
     M = strategy.num_microbatches()
@@ -517,7 +520,7 @@ def forward_backward_flops(
 ) -> tuple[float, float]:
     """Return (forward_flops, backward_flops) separately.
 
-    Same loop as total_training_flops but splits fwd from dx+dw.
+    Only counts compute-bound ops, consistent with total_training_flops.
     """
     fwd = 0.0
     bwd = 0.0
@@ -541,7 +544,7 @@ def recompute_overhead_flops(
     Respects per-layer policies: only ops belonging to a layer whose kind
     appears in ``RecomputePolicy.per_layer`` are counted.
 
-    Returns the additional FLOPs (not the total).
+    Only counts compute-bound ops, consistent with total_training_flops.
     """
     rc = strategy.recompute
     if not rc.per_layer:
@@ -560,7 +563,8 @@ def recompute_overhead_flops(
         op_cats = _op_recompute_categories(op)
         if "full" in cats or (op_cats & cats):
             cost = op_cost(op, model)
-            extra += cost.fwd_flops
+            if cost.bound == "compute":
+                extra += cost.fwd_flops
 
     M = strategy.num_microbatches()
     return extra * M

@@ -634,11 +634,15 @@ class TrainingPipelinePass(GraphPass):
         # MFU/HFU: per-GPU utilization = (FLOPs per GPU per step) / (peak_per_gpu × step_time)
         # training_flops is per micro-batch; multiply by num_microbatches for full step.
         # Use per-GPU peak (not cluster total) so result is per-device utilization.
+        # Divide by PP because training_flops includes ALL layer FLOPs (via layer_scale),
+        # but each GPU only handles 1/pp of the layers.
         from python.zrt.training.compose.schedules import util_from_flops
         recompute_flops = float(g.metadata.get("recompute_flops", 0))
-        model_flops = training_flops - recompute_flops
+        pp = ctx.parallel.pp if ctx.parallel else 1
+        model_flops = (training_flops - recompute_flops) / pp
+        total_flops_for_hfu = training_flops / pp
         mfu = util_from_flops(model_flops * num_microbatches, peak_flops_per_gpu, step_time_sec)
-        hfu = util_from_flops(training_flops * num_microbatches, peak_flops_per_gpu, step_time_sec)
+        hfu = util_from_flops(total_flops_for_hfu * num_microbatches, peak_flops_per_gpu, step_time_sec)
 
         metrics = PipelineStepMetrics(
             step_time_ms=step_time_ms,

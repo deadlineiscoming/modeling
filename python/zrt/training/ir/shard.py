@@ -618,7 +618,7 @@ def _apply_cp_sharding(
     if not shard.has_cp:
         return
 
-    seq_local = seq // shard.cp
+    seq_local = max(1, seq // shard.cp)
 
     for i in range(start, end):
         op = graph.ops[i]

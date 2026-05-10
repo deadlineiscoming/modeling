@@ -68,8 +68,11 @@ def estimate(
     s = step_result
     # Derived metrics
     tokens = strategy.global_batch * model.seq_len if strategy.global_batch > 0 else strategy.micro_batch * strategy.dp * model.seq_len
-    pre_opt_time = s.step_time  # MFU/HFU computed before optimizer addition
-    tokens_per_sec = tokens / pre_opt_time if pre_opt_time > 0 else 0.0
+    # Use pipeline_time (step_time minus optimizer overhead) for throughput.
+    # Note: s.step_time at this point already includes optimizer addition from
+    # pipeline_step_time(), so we use s.pipeline_time instead.
+    pipeline_time = s.pipeline_time
+    tokens_per_sec = tokens / pipeline_time if pipeline_time > 0 else 0.0
     flops_per_token = total_flops / tokens if tokens > 0 else 0.0
 
     return TrainingReport(

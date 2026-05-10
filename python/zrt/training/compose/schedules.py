@@ -750,7 +750,11 @@ def compute_mfu(
     # and cluster peak = per_gpu_peak × world_size — the world_size cancels).
     peak = system.gpu.flops_bf16 * 1e12
 
-    return util_from_flops(actual_flops, peak, step_time)
+    # Divide by PP because total_training_flops includes ALL layer FLOPs,
+    # but each GPU only handles 1/pp of the layers. Per-GPU FLOPs = total / pp.
+    pp_flops = actual_flops / strategy.pp
+
+    return util_from_flops(pp_flops, peak, step_time)
 
 
 def compute_hfu(
@@ -768,4 +772,7 @@ def compute_hfu(
     rc_overhead = recompute_overhead_flops(graph, model, strategy)
     peak = system.gpu.flops_bf16 * 1e12
 
-    return util_from_flops(actual_flops + rc_overhead, peak, step_time)
+    # Divide by PP (same rationale as compute_mfu)
+    pp_flops = (actual_flops + rc_overhead) / strategy.pp
+
+    return util_from_flops(pp_flops, peak, step_time)

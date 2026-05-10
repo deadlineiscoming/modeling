@@ -29,9 +29,10 @@ class Tensor:
 @dataclass
 class Op:
     name: str
-    kind: str   # "matmul" | "attn_core" | "softmax" | "ln" | "rope"
-                # | "swiglu" | "router" | "dispatch" | "combine"
-                # | "embed" | "lm_head" | "add"
+    kind: str   # "matmul" | "attn_core" | "sparse_attn" | "hca_attn" | "swa_attn"
+                # | "softmax" | "ln" | "rope" | "swiglu" | "router" | "dispatch"
+                # | "combine" | "embed" | "lm_head" | "add"
+                # | "compressor_pool" | "indexer_topk" | "hash_route"
     inputs: list[Tensor] = field(default_factory=list)
     outputs: list[Tensor] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)

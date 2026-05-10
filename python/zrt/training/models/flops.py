@@ -57,6 +57,12 @@ def op_cost(op: Op, model: ModelSpec) -> OpCost:
     """Compute raw cost per op (FLOPs + bytes for roofline timing)."""
     if op.kind == "matmul":
         return _matmul_cost(op)
+    if op.kind == "sparse_attn":
+        return _sparse_attn_cost(op)
+    if op.kind == "hca_attn":
+        return _hca_attn_cost(op)
+    if op.kind == "swa_attn":
+        return _swa_attn_cost(op)
     if op.kind == "attn_core":
         return _attn_cost(op, model)
     if op.kind == "mhc_pre":
@@ -219,6 +225,115 @@ def _attn_compression_ratio(value: float) -> float:
     if not (0.0 < ratio <= 1.0):
         raise ValueError(f"attn_compression_ratio must be in (0, 1], got {value}")
     return ratio
+
+
+def _sparse_attn_cost(op: Op) -> OpCost:
+    """CSA / DSA: sparse attention over indexer top-k KV + sliding window.
+
+    Q: (seq, heads, head_dim)
+    K, V: (topk + swa_window, head_dim) per head  — MQA: KV shared across heads
+    O: (seq, heads, head_dim)
+
+    effective_len = topk + swa_window (the number of KV positions each Q attends to)
+    """
+    b = op.meta.get("b", 1)
+    s = op.meta.get("s", 0)
+    h = op.meta.get("heads", 0)
+    d = op.meta.get("head_dim", 0)
+    topk = op.meta.get("sparse_topk", 0)
+    swa = op.meta.get("swa_window", 0)
+
+    if topk <= 0:
+        # Degenerate: no sparse_topk set — fall back to full causal
+        return _attn_cost(op, None)  # model not needed for fallback
+
+    effective_len = topk + swa
+    fwd = 2.0 * b * s * effective_len * h * d
+    dx = 2.5 * fwd
+
+    bpe = _bpe(op)
+    fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * effective_len * d) * bpe
+    dx_bytes = (3.0 * b * h * s * d + 4.0 * b * h * effective_len * d) * bpe
+
+    return OpCost(
+        fwd_flops=fwd,
+        dx_flops=dx,
+        dw_flops=0.0,
+        fwd_bytes=fwd_bytes,
+        dx_bytes=dx_bytes,
+        dw_bytes=0.0,
+    )
+
+
+def _hca_attn_cost(op: Op) -> OpCost:
+    """HCA: dense attention on compressed KV (seq/ratio) + sliding window.
+
+    Q: (seq, heads, head_dim)
+    K, V: (seq // ratio + swa_window, head_dim) — compressed KV pool
+    O: (seq, heads, head_dim)
+    """
+    b = op.meta.get("b", 1)
+    s = op.meta.get("s", 0)
+    h = op.meta.get("heads", 0)
+    d = op.meta.get("head_dim", 0)
+    ratio = op.meta.get("compress_ratio", 0)
+    swa = op.meta.get("swa_window", 0)
+
+    if ratio <= 0:
+        # Degenerate: no compress_ratio — fall back to full causal
+        return _attn_cost(op, None)
+
+    compressed_len = max(1, s // ratio)
+    effective_len = compressed_len + swa
+    fwd = 2.0 * b * s * effective_len * h * d
+    dx = 2.5 * fwd
+
+    bpe = _bpe(op)
+    fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * effective_len * d) * bpe
+    dx_bytes = (3.0 * b * h * s * d + 4.0 * b * h * effective_len * d) * bpe
+
+    return OpCost(
+        fwd_flops=fwd,
+        dx_flops=dx,
+        dw_flops=0.0,
+        fwd_bytes=fwd_bytes,
+        dx_bytes=dx_bytes,
+        dw_bytes=0.0,
+    )
+
+
+def _swa_attn_cost(op: Op) -> OpCost:
+    """SWA-only: pure sliding window attention.
+
+    Q: (seq, heads, head_dim)
+    K, V: (swa_window, head_dim) — only local window
+    O: (seq, heads, head_dim)
+    """
+    b = op.meta.get("b", 1)
+    s = op.meta.get("s", 0)
+    h = op.meta.get("heads", 0)
+    d = op.meta.get("head_dim", 0)
+    swa = op.meta.get("swa_window", 0)
+
+    if swa <= 0:
+        # Degenerate: no swa_window — fall back to full causal
+        return _attn_cost(op, None)
+
+    fwd = 2.0 * b * s * swa * h * d
+    dx = 2.5 * fwd
+
+    bpe = _bpe(op)
+    fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * swa * d) * bpe
+    dx_bytes = (3.0 * b * h * s * d + 4.0 * b * h * swa * d) * bpe
+
+    return OpCost(
+        fwd_flops=fwd,
+        dx_flops=dx,
+        dw_flops=0.0,
+        fwd_bytes=fwd_bytes,
+        dx_bytes=dx_bytes,
+        dw_bytes=0.0,
+    )
 
 
 def _mhc_pre_cost(op: Op) -> OpCost:
@@ -435,7 +550,7 @@ def recompute_overhead_flops(
 
 def _op_recompute_categories(op: Op) -> set[str]:
     """Map an op to its recompute category set."""
-    if op.kind == "attn_core":
+    if op.kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
         return {"attn"}
     if op.kind == "matmul":
         name = op.name.lower()

@@ -303,7 +303,7 @@ def _ep_parallel_fraction(
 
 def _op_recompute_categories(op: Op) -> set[str]:
     """Map an op to its recompute category set."""
-    if op.kind == "attn_core":
+    if op.kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
         return {"attn"}
     if op.kind == "matmul":
         name = op.name.lower()

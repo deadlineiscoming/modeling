@@ -287,21 +287,21 @@ def _build_v4_attn(model: ModelSpec, layer_id: int, seq: int,
                  "head_dim": d, "causal": True}
 
     if cp_type == 'csa':
+        attn_kind = "sparse_attn"
         attn_meta["sparse_topk"] = model.index_topk
         attn_meta["swa_window"] = model.swa_window
-        attn_name = f"{prefix}.sparse_attn"
     elif cp_type == 'hca':
+        attn_kind = "hca_attn"
         ratio = model.compress_ratios[layer_id] if model.compress_ratios else 128
         attn_meta["compress_ratio"] = ratio
         attn_meta["swa_window"] = model.swa_window
-        attn_name = f"{prefix}.hca_attn"
     elif cp_type == 'swa':
+        attn_kind = "swa_attn"
         attn_meta["swa_window"] = model.swa_window
-        attn_name = f"{prefix}.swa_attn"
     else:
-        attn_name = f"{prefix}.attn_core"
+        attn_kind = "attn_core"
 
-    ops.append(Op(name=attn_name, kind="attn_core",
+    ops.append(Op(name=f"{prefix}.{attn_kind}", kind=attn_kind,
         inputs=[_tensor("q_final", (seq, h_attn), act_dtype),
                 _tensor("k_all", (seq, d), act_dtype),
                 _tensor("v_all", (seq, d), act_dtype)],

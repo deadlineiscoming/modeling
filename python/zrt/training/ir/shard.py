@@ -197,7 +197,7 @@ def _insert_cp_collectives(
         for i in range(start, end):
             op = graph.ops[i]
 
-            if op.kind != "attn_core":
+            if op.kind not in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
                 continue
 
             if shard.cp_kind == CPKind.ULYSSES:
@@ -491,7 +491,7 @@ def _apply_tp_sharding(
                 for t in op.outputs:
                     if t.shape_logical and t.shape_logical[-1] == n:
                         t.shape_local = (t.shape_logical[0], n_local)
-        elif op.kind == "attn_core":
+        elif op.kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
             if "heads" in op.meta:
                 heads_before_tp = op.meta["heads"]
                 op.meta["heads"] = max(1, op.meta["heads"] // shard.tp)
@@ -579,7 +579,7 @@ def _apply_cp_sharding(
         if op.kind == "matmul":
             if "m" in op.meta:
                 op.meta["m"] = op.meta["m"] // shard.cp
-        elif op.kind == "attn_core":
+        elif op.kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
             if "s" in op.meta:
                 op.meta["s"] = op.meta["s"] // shard.cp
             if shard.cp_kind == CPKind.ULYSSES or shard.cp_kind == CPKind.HYBRID:

@@ -249,20 +249,45 @@ def _activation_memory(
 
     Note: TP SP only activates when TP>1 (Megatron-style SP).
     CP activates independently and stacks on top of SP.
+
+    Activation checkpointing (recompute) reduces saved activations:
+    - "attn": don't save attention intermediate activations (Q, K, V, scores)
+    - "ffn_swiglu": don't save FFN intermediate activations (up, gate outputs)
+    - "full": only save layer input/output, recompute everything inside
     """
     s = model.seq_len
     h = model.hidden
     act_bytes = model.act_dtype.bytes
     hc_mult = max(1, getattr(model, "hc_mult", 1))
 
-    COEFF_DENSE = 10
-    COEFF_MOE = 14
-    COEFF_MTP = 12
+    # Base coefficients: number of activation tensors saved per layer
+    # These assume NO activation checkpointing (save all intermediates)
+    # Dense: attn(5) + ffn_swiglu(3) + ln(2) ≈ 10
+    # MoE: attn(5) + shared_ffn(3) + routed_ffn(4) + ln(2) ≈ 14
+    # MTP: similar to dense with extra projection ≈ 12
+    COEFF_DENSE_BASE = 10
+    COEFF_MOE_BASE = 14
+    COEFF_MTP_BASE = 12
     COEFF_HC_RESIDUAL = 2
+
+    # Reduction when checkpointing specific components
+    # attn: saves Q, K, V (3 tensors), attention scores (1), softmax output (1) ≈ 5
+    # But Flash Attention already doesn't save scores, so effective saving is ~4
+    # We use conservative estimate: -4
+    REDUCE_ATTN = 4
+    # ffn_swiglu: saves up output, gate output (before down_proj) ≈ 2
+    REDUCE_FFN_SWIGLU = 2
+    # ln: saves ln output (1) ≈ 1
+    REDUCE_LN = 1
+    # full checkpoint: only save layer input (1) + output (1) ≈ 2
+    COEFF_FULL_CHECKPOINT = 2
 
     tp_sp = strategy.tp if strategy.tp > 1 else 1
     cp = strategy.cp if strategy.cp > 1 else 1
     total_seq_shard = tp_sp * cp
+
+    # Get recompute policy
+    recompute_policy = strategy.recompute.per_layer
 
     total_act = 0
     total_hc = 0
@@ -270,14 +295,30 @@ def _activation_memory(
         if lid >= len(model.layers):
             continue
         lk = model.layers[lid]
+
+        # Base coefficient by layer kind
         if lk.value == "dense":
-            coeff = COEFF_DENSE
+            base_coeff = COEFF_DENSE_BASE
         elif lk.value == "moe":
-            coeff = COEFF_MOE
+            base_coeff = COEFF_MOE_BASE
         elif lk.value == "mtp":
-            coeff = COEFF_MTP
+            base_coeff = COEFF_MTP_BASE
         else:
-            coeff = COEFF_DENSE
+            base_coeff = COEFF_DENSE_BASE
+
+        # Apply recompute policy reduction
+        cats_to_recompute = recompute_policy.get(lk.value, set())
+        if "full" in cats_to_recompute:
+            # Full checkpoint: only save input + output
+            coeff = COEFF_FULL_CHECKPOINT
+        else:
+            coeff = base_coeff
+            if "attn" in cats_to_recompute:
+                coeff -= REDUCE_ATTN
+            if "ffn_swiglu" in cats_to_recompute:
+                coeff -= REDUCE_FFN_SWIGLU
+            if "ln" in cats_to_recompute:
+                coeff -= REDUCE_LN
 
         layer_act = s * h * act_bytes * coeff
         hc_layer = (hc_mult - 1) * s * h * act_bytes * COEFF_HC_RESIDUAL

@@ -24,9 +24,11 @@
       - 'aten\.mul\.Tensor'
     min_ops: 5
     max_ops: 16
+  # ``(self.weight * x).to(dtype)`` dispatches to ``aten.mul.Tensor(weight, x)``:
+  # weight at slot 0, activation at slot 1.
   io_roles:
     - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 1,  shape_role: "[H]"}
+    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 0,  shape_role: "[H]"}
     - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
@@ -50,9 +52,12 @@
   priority: 40
   match:
     kind: class_only
+  # ``F.embedding(input_ids, self.weight)`` dispatches to
+  # ``aten.embedding.default(weight, input_ids, ...)`` — weight at slot 0,
+  # input_ids at slot 1 (PyTorch's `_embedding_renorm_` argument order).
   io_roles:
-    - {role: input_ids,  source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S]"}
-    - {role: weight,     source_kind: input,  source_op_index: 0,  source_arg_index: 1,  shape_role: "[V,H]"}
+    - {role: weight,     source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[V,H]"}
+    - {role: input_ids,  source_kind: input,  source_op_index: 0,  source_arg_index: 1,  shape_role: "[B,S]"}
     - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
   shape_derivation:
     batch_size: "output.shape[0]"

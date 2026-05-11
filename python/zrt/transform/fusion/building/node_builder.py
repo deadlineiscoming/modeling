@@ -10,7 +10,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .annotation_propagator import _propagated_annotations
-from .io_resolver import FusedIOPort, _external_io, resolve_io
+from .io_resolver import (
+    FusedIOPort,
+    _child_ops_external_io,
+    _external_io,
+    resolve_io,
+    resolve_io_tensors,
+)
 
 if TYPE_CHECKING:
     from python.zrt.ir.graph import OpGraph
@@ -38,21 +44,30 @@ def build_fused_node(
     # Collect source op_types (deduplicated, ordered)
     fused_from = list(dict.fromkeys(op.op_type for op in group.child_ops))
 
-    # External IO from graph edges
-    group_ids = {op.id for op in group.child_ops}
-    ext_inputs, ext_outputs = _external_io(graph, group_ids)
+    # External IO — rule-declared takes precedence, child_ops fallback
+    # fills any side the rule left empty.  Edge-based ``_external_io``
+    # is intentionally not used here: it misses placeholder tensors
+    # (model weights, ``input_ids``, RMSNorm gamma) that have no
+    # producer ``OpNode``.
+    if rule.io_roles:
+        ext_inputs, ext_outputs = resolve_io_tensors(group.child_ops, rule)
+        if not ext_inputs or not ext_outputs:
+            fb_in, fb_out = _child_ops_external_io(group.child_ops)
+            if not ext_inputs:
+                ext_inputs = fb_in
+            if not ext_outputs:
+                ext_outputs = fb_out
+    else:
+        ext_inputs, ext_outputs = _child_ops_external_io(group.child_ops)
 
-    # Build provenance from rule's IO specs
+    # Build provenance from ``rule.io_roles``.  ``rule.inputs`` and
+    # ``rule.outputs`` are always cleared by ``ModuleFusionRule.__post_init__``
+    # (merged into ``io_roles``), so iterating them was dead code.
     provenance_parts: list[FusedIOPort] = []
-    if rule.inputs or rule.outputs:
-        for spec in rule.inputs:
-            port = resolve_io(group.child_ops, spec)
-            if port is not None:
-                provenance_parts.append(port)
-        for spec in rule.outputs:
-            port = resolve_io(group.child_ops, spec)
-            if port is not None:
-                provenance_parts.append(port)
+    for spec in rule.io_roles:
+        port = resolve_io(group.child_ops, spec)
+        if port is not None:
+            provenance_parts.append(port)
 
     propagated = _propagated_annotations(group)
     level = "parent" if len(group.child_ops) > 3 else "leaf"

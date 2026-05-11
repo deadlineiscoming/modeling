@@ -24,9 +24,11 @@
       - 'aten\.mul\.Tensor'
     min_ops: 6
     max_ops: 16
+  # Final ``self.weight * x`` dispatches to ``aten.mul.Tensor(weight, x)``:
+  # weight at slot 0, activation at slot 1.  HF Llama / DSV4 share this order.
   io_roles:
     - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 1,  shape_role: "[H]"}
+    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 0,  shape_role: "[H]"}
     - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
@@ -61,9 +63,11 @@
       - 'aten\.mul\.Tensor'
     min_ops: 6
     max_ops: 16
+  # Final ``weight * x`` dispatches to ``aten.mul.Tensor(weight, x)``:
+  # weight at slot 0, activation at slot 1.
   io_roles:
     - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 1,  shape_role: "[H]"}
+    - {role: weight,     source_kind: input,  source_op_index: -1, source_arg_index: 0,  shape_role: "[H]"}
     - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
@@ -95,6 +99,16 @@
       - 'aten\.mul\.Tensor'
     min_ops: 5
     max_ops: 5
+  io_roles:
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,N,D]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,N,D]"}
+  shape_derivation:
+    batch_size: "activation.shape[0]"
+    seq_len:    "activation.shape[1]"
+    hidden_in:  "activation.shape[-1]"
+    hidden_out: "output.shape[-1]"
+  flops_formula:  "5 * activation.numel"
+  memory_formula: "activation.bytes + output.bytes"
   annotations:
     layer_norm_kind: rms
     has_weight: false
@@ -118,6 +132,15 @@
       - 'aten\.rsqrt\.default'
     min_ops: 4
     max_ops: 4
+  io_roles:
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,1]"}
+  shape_derivation:
+    batch_size: "activation.shape[0]"
+    seq_len:    "activation.shape[1]"
+    hidden_in:  "activation.shape[-1]"
+  flops_formula:  "4 * activation.numel"
+  memory_formula: "activation.bytes + output.bytes"
   annotations:
     layer_norm_kind: rms_coef
 
@@ -166,6 +189,10 @@
       - 'aten\.mul\.Tensor'
     min_ops: 4
     max_ops: 8
+  io_roles:
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[*]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[*]"}
+  memory_formula: "activation.bytes + output.bytes"
   annotations:
     transparent: true
 

@@ -77,6 +77,8 @@ class StepResult:
 
     # ── Compute / comm breakdown (set by pipeline_step_time) ─────────────
     compute_time: float = 0.0       # Pure compute on critical path
+    fwd_compute: float = 0.0        # Forward compute only (excludes all comm)
+    bwd_compute: float = 0.0        # Backward compute only (excludes all comm)
     exposed_comm: float = 0.0       # Comm on critical path = Σ *_exposed fields
 
     # Per-group exposed comm (Σ = exposed_comm)
@@ -566,6 +568,21 @@ def pipeline_step_time(
     step.exposed_comm = exposed_comm_excl_dp + step.dp_exposed
     # compute_time exact: compute_time + exposed_comm == _pipeline_time + dp_exposed == step_time(pre-opt)
     step.compute_time = step.step_time - step.exposed_comm
+
+    # Split compute_time into fwd vs bwd using bottleneck stage ratios.
+    # Each stage's fwd/bwd already includes embedded exposed comm, so we
+    # subtract comm_fwd/comm_bwd to get pure compute, then scale to the
+    # full pipeline's compute_time.
+    fwd_compute_per_mb = max(0.0, s_bot.fwd - s_bot.comm_fwd)
+    bwd_compute_per_mb = max(0.0, s_bot.bwd - s_bot.comm_bwd)
+    compute_per_mb = fwd_compute_per_mb + bwd_compute_per_mb
+    if compute_per_mb > 0:
+        fwd_ratio = fwd_compute_per_mb / compute_per_mb
+        step.fwd_compute = step.compute_time * fwd_ratio
+        step.bwd_compute = step.compute_time * (1.0 - fwd_ratio)
+    else:
+        step.fwd_compute = step.compute_time
+        step.bwd_compute = 0.0
 
     # PP P2P: pp_p2p already baked into bot_comm; scale to critical path via same ratio
     pp_p2p_exposed = (_pipeline_time * (2.0 * pp_p2p) / bot_total) if bot_total > 0 else 0.0

@@ -119,13 +119,21 @@ def _cost_phase_time(
     cost: OpCost, phase: str, system: SystemSpec,
     gpu_name: str, overlap: float = 0.0,
 ) -> float:
-    """Compute time for one phase (fwd/dx/dw), dispatching to heterogeneous path when available."""
+    """Compute time for one phase (fwd/dx/dw), dispatching to heterogeneous path when available.
+
+    Falls back to the unified peak roofline when cube_flops and vector_flops
+    are both zero — meaning the op doesn't have heterogeneous modeling and
+    should use the legacy single-peak path instead of treating compute as zero.
+    """
     if has_heterogeneous_compute(system):
         cube = getattr(cost, f"{phase}_cube_flops")
         vector = getattr(cost, f"{phase}_vector_flops")
-        bytes_ = getattr(cost, f"{phase}_bytes")
-        return op_to_time_hetero(cube, vector, bytes_, system, gpu_name,
-                                 overlap_ratio=overlap)
+        # If neither cube nor vector FLOPs are set, this op doesn't have
+        # heterogeneous modeling — fall back to the unified flops path.
+        if cube > 0 or vector > 0:
+            bytes_ = getattr(cost, f"{phase}_bytes")
+            return op_to_time_hetero(cube, vector, bytes_, system, gpu_name,
+                                     overlap_ratio=overlap)
     flops = getattr(cost, f"{phase}_flops")
     bytes_ = getattr(cost, f"{phase}_bytes")
     return op_to_time(flops, bytes_, system, gpu_name)

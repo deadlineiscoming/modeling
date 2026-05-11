@@ -250,6 +250,9 @@ def _sparse_attn_cost(op: Op) -> OpCost:
     effective_len = topk + swa
     fwd = 2.0 * b * s * effective_len * h * d
     dx = 2.5 * fwd
+    # Cube = QK^T + AV matmuls over effective_len, Vector = softmax/scaling/mask
+    cube_fwd = fwd
+    vector_fwd = 5.0 * b * h * s * effective_len
 
     bpe = _bpe(op)
     fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * effective_len * d) * bpe
@@ -262,6 +265,10 @@ def _sparse_attn_cost(op: Op) -> OpCost:
         fwd_bytes=fwd_bytes,
         dx_bytes=dx_bytes,
         dw_bytes=0.0,
+        fwd_cube_flops=cube_fwd,
+        fwd_vector_flops=vector_fwd,
+        dx_cube_flops=2.5 * cube_fwd,
+        dx_vector_flops=2.5 * vector_fwd,
     )
 
 
@@ -287,6 +294,9 @@ def _hca_attn_cost(op: Op) -> OpCost:
     effective_len = compressed_len + swa
     fwd = 2.0 * b * s * effective_len * h * d
     dx = 2.5 * fwd
+    # Cube = QK^T + AV matmuls over effective_len, Vector = softmax/scaling/mask
+    cube_fwd = fwd
+    vector_fwd = 5.0 * b * h * s * effective_len
 
     bpe = _bpe(op)
     fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * effective_len * d) * bpe
@@ -299,6 +309,10 @@ def _hca_attn_cost(op: Op) -> OpCost:
         fwd_bytes=fwd_bytes,
         dx_bytes=dx_bytes,
         dw_bytes=0.0,
+        fwd_cube_flops=cube_fwd,
+        fwd_vector_flops=vector_fwd,
+        dx_cube_flops=2.5 * cube_fwd,
+        dx_vector_flops=2.5 * vector_fwd,
     )
 
 
@@ -321,6 +335,9 @@ def _swa_attn_cost(op: Op) -> OpCost:
 
     fwd = 2.0 * b * s * swa * h * d
     dx = 2.5 * fwd
+    # Cube = QK^T + AV matmuls over swa_window, Vector = softmax/scaling/mask
+    cube_fwd = fwd
+    vector_fwd = 5.0 * b * h * s * swa
 
     bpe = _bpe(op)
     fwd_bytes = (2.0 * b * h * s * d + 2.0 * b * h * swa * d) * bpe
@@ -333,6 +350,10 @@ def _swa_attn_cost(op: Op) -> OpCost:
         fwd_bytes=fwd_bytes,
         dx_bytes=dx_bytes,
         dw_bytes=0.0,
+        fwd_cube_flops=cube_fwd,
+        fwd_vector_flops=vector_fwd,
+        dx_cube_flops=2.5 * cube_fwd,
+        dx_vector_flops=2.5 * vector_fwd,
     )
 
 

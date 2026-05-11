@@ -115,6 +115,8 @@ class TrainingReport:
 
     # Compute / comm breakdown (milliseconds)
     compute_time_ms: float = 0.0        # Pure compute on critical path
+    fwd_compute_ms: float = 0.0         # Forward compute only (excludes all comm)
+    bwd_compute_ms: float = 0.0         # Backward compute only (excludes all comm)
     exposed_comm_ms: float = 0.0        # Comm on critical path = Σ *_exposed_ms
 
     # Per-group exposed comm (Σ = exposed_comm_ms)
@@ -181,6 +183,8 @@ class TrainingReport:
             "cooldown_fwd_ms": self.cooldown_fwd_ms,
             "cooldown_bwd_ms": self.cooldown_bwd_ms,
             "compute_time_ms": self.compute_time_ms,
+            "fwd_compute_ms": self.fwd_compute_ms,
+            "bwd_compute_ms": self.bwd_compute_ms,
             "exposed_comm_ms": self.exposed_comm_ms,
             "tp_exposed_ms": self.tp_exposed_ms,
             "cp_exposed_ms": self.cp_exposed_ms,
@@ -222,6 +226,10 @@ class TrainingReport:
             result["flops_per_token"] = self.flops_per_token
         if self.tokens_per_sec > 0:
             result["tokens_per_sec"] = self.tokens_per_sec
+        if self.fwd_compute_ms > 0:
+            result["fwd_compute_ms"] = self.fwd_compute_ms
+        if self.bwd_compute_ms > 0:
+            result["bwd_compute_ms"] = self.bwd_compute_ms
         if self.warnings:
             result["warnings"] = self.warnings
 

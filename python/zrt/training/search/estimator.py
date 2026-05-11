@@ -110,6 +110,8 @@ def estimate(
         steady_bwd_per_mb_ms=s.steady_bwd_per_mb * 1000,
         steady_per_mb_ms=s.steady_per_mb * 1000,
         compute_time_ms=s.compute_time * 1000,
+        fwd_compute_ms=s.fwd_compute * 1000,
+        bwd_compute_ms=s.bwd_compute * 1000,
         exposed_comm_ms=s.exposed_comm * 1000,
         tp_exposed_ms=s.tp_exposed * 1000,
         cp_exposed_ms=s.cp_exposed * 1000,

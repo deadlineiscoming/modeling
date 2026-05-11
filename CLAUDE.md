@@ -2,72 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
-
-
----
+> General behavioral guidelines (think before coding, simplicity, surgical changes, goal-driven execution) live in the global `~/.claude/CLAUDE.md`. This file documents only project-specific facts.
+>
+> `AGENTS.md` (repo root) is a parallel guidance file aimed at coding agents in general. When the two diverge, **`CLAUDE.md` takes precedence for Claude Code**; treat `AGENTS.md` as supplementary.
 
 ## 核心原则（必读）
 
@@ -118,14 +55,15 @@ PYTHONPATH=python pytest tests/training/anchors/test_anchors.py -v     # MFU anc
 PYTHONPATH=python pytest tests/training/test_anchor.py -v              # AnchorValidator unit tests
 
 # Skip network tests
-pytest tests/test_screenshot_ops.py -v -m "not network"
+pytest tests/ -v -m "not network" 2>&1 | tail -n 50
 
 # CLI: trace a model and export Excel
-python -m python.zrt Qwen/Qwen2.5-7B-Instruct --layers 4
-python -m python.zrt deepseek-ai/DeepSeek-V3-0324 --layers 4 --hw nvidia_h100_sxm --tp 8
+# NOTE: model is passed via --model-id (a flag, not a positional argument)
+python -m python.zrt --model-id Qwen/Qwen2.5-7B-Instruct --layers 4
+python -m python.zrt --model-id deepseek-ai/DeepSeek-V3-0324 --layers 4 --hw nvidia_h100_sxm --tp 8
 
 # Training modeling (captures train_forward + train_backward + estimates performance)
-python -m python.zrt deepseek-ai/DeepSeek-V3 --layers 4 --train --hw nvidia_h100_sxm --tp 8 --pp 2
+python -m python.zrt --model-id deepseek-ai/DeepSeek-V3 --layers 4 --train --hw nvidia_h100_sxm --tp 8 --pp 2
 PYTHONPATH=python python -m zrt.training estimate --config python/zrt/training/configs/llama3_70b_3d.yaml
 # Export Chrome Trace alongside training estimate
 PYTHONPATH=python python -m zrt.training estimate --config python/zrt/training/configs/llama3_70b_3d.yaml --trace out.json
@@ -134,10 +72,10 @@ PYTHONPATH=python python -m zrt.training estimate --config python/zrt/training/c
 python -m python.zrt --estimate-config python/zrt/training/configs/llama3_70b_3d.yaml
 
 # Graph-mode capture (torch.compile backend instead of TorchDispatchMode)
-python -m python.zrt deepseek-ai/DeepSeek-V3 --layers 2 --phases train_backward --graph-mode
+python -m python.zrt --model-id deepseek-ai/DeepSeek-V3 --layers 2 --phases train_backward --graph-mode
 
 # End-to-end validation
-python e2e_check.py
+python -m validation.cli
 ```
 
 > **Note**: Training module commands require `PYTHONPATH=python` because the training subpackage uses `zrt.*` imports rather than `python.zrt.*`.
@@ -188,6 +126,8 @@ Graph Capture → Transform Pipeline → DAGScheduler → Report Generator
 - `python/zrt/policy_model/`: `PolicyModelManager` — dispatches `OpNode` simulation to a registered cost-model policy (`PolicyType`); pluggable via `POLICY_MAP` in `policy_register.py`
 - `python/zrt/report/summary.py`: Excel/HTML report generation; `chrome_trace.py` builds Chrome Trace JSON from a `Timeline`
 - `python/zrt/training/`: training performance estimation — see **Training Module** section below
+- `server/`: FastAPI HTTP service exposing trace/estimate as REST endpoints (entry: `server/main.py`); separate dependency set in `server/requirements.txt`
+- `validation/`: end-to-end validation scenarios (`python -m validation.cli`) — compares simulator output against public benchmarks in `validation/public_benchmark_data.json`
 
 ## Training Module (`python/zrt/training/`)
 
@@ -266,9 +206,9 @@ Local model configs (no weights) live in `hf_models/` (deepseek_v3, llama3_8b, e
 ## 环境
 
 - Python 3.14, torch 2.11.0, transformers 5.4.0
-- 主工作目录：`D:\workspace\claude\modeling`
+- 主工作目录（WSL）：`/mnt/d/work/git/modeling`
 - 运行时使用 `python -m pytest` 或直接 `pytest`
-- CLI 入口：`python -m python.zrt.graph.main <model_id> --layers 4`
+- CLI 入口：`python -m python.zrt --model-id <model_id> --layers 4`（详见 `python/zrt/cli.py`）
 
 
 ## 执行要求
@@ -300,7 +240,7 @@ hf_models/            # 只读！来自 HF 官网
 ├── mistral_7b/
 └── mixtral_8x7b/
 
-test_screenshot_ops.py   # 全量 pytest 测试
+tests/                   # pytest 测试套件（见上方 Commands 章节）
 ```
 
 ---

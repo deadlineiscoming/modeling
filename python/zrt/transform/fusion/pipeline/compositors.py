@@ -1,9 +1,4 @@
-"""Post-fusion compositors (Add+Norm).
-
-Step-1 note: function body literally copied from
-``algorithm._compose_add_norm``; ``AddNormCompositor.apply()`` is a
-thin class wrapper around it.  No behaviour change.
-"""
+"""Post-fusion compositors (Add+Norm)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -80,22 +75,3 @@ def _compose_add_norm(graph: "OpGraph") -> "OpGraph":
         used.add(norm_node.id)
 
     return graph
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Class wrapper (Step-1 form).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class AddNormCompositor:
-    """Post-fusion Add + RMSNorm/LayerNorm composer.
-
-    Step-1: thin wrapper around ``_compose_add_norm``.
-    """
-
-    rule_name: str = _ADD_NORM_RULE_NAME
-
-    def is_active(self, active_rule_names: set[str]) -> bool:
-        return self.rule_name in active_rule_names
-
-    def apply(self, graph: "OpGraph") -> "OpGraph":
-        return _compose_add_norm(graph)

@@ -1,9 +1,4 @@
-"""FusionPass: graph transform that applies MRO-based operator fusion.
-
-Step-1 note: ``run`` body unchanged in semantics; it now instantiates
-``MultiPassFuser`` (with the default registry) and calls its ``.fuse()``.
-The underlying logic is identical to the original ``algorithm.fuse``.
-"""
+"""FusionPass: graph transform that applies MRO-based operator fusion."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

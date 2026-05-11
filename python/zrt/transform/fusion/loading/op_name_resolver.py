@@ -3,9 +3,6 @@
 Maps short op names used in YAML rules to full aten op-type strings
 (e.g. ``"mm"`` → ``"aten.mm.default"``).  Names already containing a
 dot are passed through unchanged.
-
-Step-1 note: file body literally copied from the original
-``python/zrt/transform/fusion/resolver.py``; no behaviour change.
 """
 from __future__ import annotations
 

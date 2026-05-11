@@ -1,8 +1,5 @@
 """Sandboxed AST evaluator for shape / flops / memory formulas.
 
-Step-1 note: file body literally copied from the original
-``python/zrt/transform/fusion/_safe_eval.py``; no behaviour change.
-
 Allowed:
   - Int / float literals
   - Names from the provided namespace

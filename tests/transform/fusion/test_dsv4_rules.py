@@ -18,19 +18,16 @@ from pathlib import Path
 
 import pytest
 
-from python.zrt.transform.fusion._safe_eval import safe_eval
-from python.zrt.transform.fusion.registry import all_rules, clear_rules
-from python.zrt.transform.fusion.rule import (
-    IORole,
-    MatchPattern,
-    ModuleFusionRule,
-    ShapeDerivation,
-)
-from python.zrt.transform.fusion.semantics import TensorView
-from python.zrt.transform.fusion.yaml_loader import (
+from python.zrt.transform.fusion.core.io_role import IORole, ShapeDerivation
+from python.zrt.transform.fusion.core.pattern import MatchPattern
+from python.zrt.transform.fusion.core.rule import ModuleFusionRule
+from python.zrt.transform.fusion.loading.yaml_rule_loader import (
     load_model_yaml_rules,
     load_yaml_rules,
 )
+from python.zrt.transform.fusion.registry import all_rules, clear_rules
+from python.zrt.transform.fusion.semantics import TensorView
+from python.zrt.transform.fusion.semantics.safe_eval import safe_eval
 
 
 # ─────────────────────────────────────────────────────────────────────────────

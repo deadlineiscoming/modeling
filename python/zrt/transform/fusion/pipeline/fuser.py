@@ -1,9 +1,9 @@
 """Top-level fusion entry point: ``MultiPassFuser`` + ``fuse()``.
 
-Step-3: ``fuse()`` is now a fixed-point loop.  Each pass buckets the
-graph and, for each bucket, tries:
+``fuse()`` is a fixed-point loop.  Each pass buckets the graph and,
+for each bucket, tries:
 
-1. Whole-bucket match (``RuleMatcher`` semantics — same as before).
+1. Whole-bucket match against the rule set.
 2. If no whole-bucket match: sliding-window partial scan
    (``SlidingWindowScanner``) to fuse contiguous subsequences.
 3. If neither matches and ``allow_structural_collapse`` is enabled,
@@ -234,14 +234,14 @@ def _propagate_call_id_and_provenance(replacement, group):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Class wrapper: OO entry-point delegates to the module-level ``fuse``.
+# OO entry-point — delegates to the module-level ``fuse``.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MultiPassFuser:
     """OO entry-point for fusion.
 
-    Step-3: delegates to the module-level :func:`fuse`, which now
-    performs the fixed-point loop with sliding-window partial matching.
+    Delegates to the module-level :func:`fuse` for the fixed-point loop
+    with sliding-window partial matching.
     """
 
     def __init__(self, registry: "RuleRegistry | None" = None) -> None:

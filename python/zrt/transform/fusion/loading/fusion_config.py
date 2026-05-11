@@ -1,8 +1,4 @@
-"""FusionConfig YAML resolution — picks YAML by model + phase, parses + validates.
-
-Step-1 note: function bodies literally copied from the original
-``python/zrt/transform/fusion/yaml_loader.py``; no behaviour change.
-"""
+"""FusionConfig YAML resolution — picks YAML by model + phase, parses + validates."""
 from __future__ import annotations
 
 import logging

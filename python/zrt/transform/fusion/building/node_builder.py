@@ -1,10 +1,4 @@
-"""Construct fused / collapsed :class:`OpNode` from a :class:`FusionGroup`.
-
-Step-1 note: function bodies literally copied from the original
-``algorithm.build_fused_node`` and ``algorithm._build_collapsed_node``.
-``FusedNodeBuilder`` is a thin class wrapper so the pipeline can move to
-an OO API without changing semantics.
-"""
+"""Construct fused / collapsed :class:`OpNode` from a :class:`FusionGroup`."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -140,32 +134,3 @@ def _build_collapsed_node(
     node.annotations["source_op_ids"] = [op.id for op in group.child_ops]
     node.annotations["fused_by_rule"] = "_collapsed"
     return node
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Class wrapper (Step-1 form: thin wrapper).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class FusedNodeBuilder:
-    """Build fused or collapsed :class:`OpNode` instances.
-
-    Step-1: thin wrapper around the module-level free functions so the
-    pipeline can move to an OO API without changing semantics.
-    """
-
-    def build(
-        self,
-        group: "FusionGroup",
-        rule: "ModuleFusionRule",
-        graph: "OpGraph",
-        fuse_idx: int,
-    ) -> "OpNode":
-        return build_fused_node(group, rule, graph, fuse_idx)
-
-    def build_collapsed(
-        self,
-        group: "FusionGroup",
-        graph: "OpGraph",
-        fuse_idx: int,
-    ) -> "OpNode":
-        return _build_collapsed_node(group, graph, fuse_idx)

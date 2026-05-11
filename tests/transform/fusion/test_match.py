@@ -6,13 +6,10 @@ from __future__ import annotations
 
 import pytest
 
-from python.zrt.transform.fusion.match import best_rule, match_group
-from python.zrt.transform.fusion.rule import (
-    DEFAULT_SKIP_OPS,
-    IORole,
-    MatchPattern,
-    ModuleFusionRule,
-)
+from python.zrt.transform.fusion.core.io_role import IORole
+from python.zrt.transform.fusion.core.pattern import DEFAULT_SKIP_OPS, MatchPattern
+from python.zrt.transform.fusion.core.rule import ModuleFusionRule
+from python.zrt.transform.fusion.matching.matcher import best_rule, match_group
 
 
 # ─────────────────────────────────────────────────────────────────────────────

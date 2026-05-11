@@ -1,8 +1,6 @@
 """Load fusion rules from YAML files.
 
-Step-1 note: function bodies literally copied from the original
-``python/zrt/transform/fusion/yaml_loader.py`` and ``rule.py``.
-The classmethod ``ModuleFusionRule.from_yaml_dict`` now delegates to
+The classmethod ``ModuleFusionRule.from_yaml_dict`` delegates to
 ``rule_from_yaml_dict`` here so the dataclass module stays slim.
 """
 from __future__ import annotations
@@ -241,10 +239,9 @@ def _parse_shape_derivation(d: dict) -> ShapeDerivation:
 def rule_from_yaml_dict(rule_cls, d: dict):
     """Construct a ``ModuleFusionRule`` from a parsed YAML dict.
 
-    Body literally copied from ``ModuleFusionRule.from_yaml_dict`` in the
-    original ``rule.py``.  ``rule_cls`` is the dataclass to instantiate
-    (passed in to avoid a circular import — the rule module delegates
-    here from its classmethod).
+    ``rule_cls`` is the dataclass to instantiate (passed in to avoid a
+    circular import — the rule module delegates here from its
+    classmethod).
     """
     # ── Pattern (new schema) ──
     pattern = None

@@ -1,9 +1,5 @@
 """Fusion-node semantic field derivation.
 
-Step-1 note: file body literally copied from the original
-``python/zrt/transform/fusion/semantics.py``; only the import path of
-``safe_eval`` / ``FormulaError`` was adjusted.
-
 Given a matched fusion group + ``ModuleFusionRule``, derive the semantic
 quantities (batch_size / seq_len / hidden_in / hidden_out / dtype /
 flops / memory_bytes) and write them into ``fused_node.annotations``

@@ -1,8 +1,4 @@
-"""MatchPattern + MatchKind + DEFAULT_SKIP_OPS — pattern definitions for fusion rules.
-
-Step-1 note: dataclass body literally copied from the original
-``python/zrt/transform/fusion/rule.py``; no behaviour change.
-"""
+"""MatchPattern + MatchKind + DEFAULT_SKIP_OPS — pattern definitions for fusion rules."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

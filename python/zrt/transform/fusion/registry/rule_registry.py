@@ -1,12 +1,9 @@
 """``RuleRegistry``: encapsulates registered fusion rules.
 
-Step-1 note: function bodies literally copied from the original
-``python/zrt/transform/fusion/registry.py`` — what used to be three
-module-global lists/dicts (``_ALL_RULES``, ``_NAME_INDEX``,
-``_CLASS_INDEX``) are now instance fields on ``RuleRegistry``.  Module-
-level free functions ``register_rule`` / ``clear_rules`` / ``all_rules``
-/ ``lookup_rule`` / ``iter_active_rules`` keep working as forwarders to
-the process-wide ``default_registry()`` singleton (see ``__init__.py``).
+Module-level free functions ``register_rule`` / ``clear_rules`` /
+``all_rules`` / ``lookup_rule`` / ``iter_active_rules`` are forwarders
+to the process-wide ``default_registry()`` singleton (see
+``__init__.py``).
 """
 from __future__ import annotations
 
@@ -111,14 +108,12 @@ class RuleRegistry:
     ) -> Optional[ModuleFusionRule]:
         """Find the best-matching rule via the three-tier matcher.
 
-        Step-2: this no longer pre-narrows by ``_class_index``.  The
-        narrowing was a perf optimization that became unsound once
-        ``ordered_regex`` / ``dag_signature`` rules stopped class-gating —
-        a pattern rule's ``target_class`` may not equal the bucket's
-        ``module_class`` but the rule should still apply.  ``best_rule``
-        is called against the full active list; ``_class_index`` is kept
-        as-is for diagnostics (e.g. ``--list-fusion-rules``) but is no
-        longer consulted here.
+        ``_class_index`` is no longer pre-narrowed against — that was
+        an unsound perf optimization once ``ordered_regex`` /
+        ``dag_signature`` rules stopped class-gating.  ``best_rule`` is
+        called against the full active list; ``_class_index`` is kept
+        for diagnostics (e.g. ``--list-fusion-rules``) but not consulted
+        here.
         """
         from python.zrt.transform.fusion.matching.matcher import best_rule
 

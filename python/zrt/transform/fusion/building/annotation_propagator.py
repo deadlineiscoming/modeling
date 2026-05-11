@@ -1,8 +1,4 @@
-"""Child→parent annotation propagation for fused nodes.
-
-Step-1 note: function body + propagate-key tuples literally copied
-from the original ``python/zrt/transform/fusion/algorithm.py``.
-"""
+"""Child→parent annotation propagation for fused nodes."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

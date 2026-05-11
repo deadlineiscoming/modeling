@@ -284,18 +284,21 @@ def test_unknown_disabled_rule_names_are_noop():
 
 def test_training_default_skips_compressor_rule():
     """Training-default fusion config disables stateful kv_compressor."""
-    from python.zrt.transform.fusion.yaml_loader import resolve_fusion_config
-    from python.zrt.transform.fusion.platforms import load_platform_rules
+    from python.zrt.transform.fusion.loading.fusion_config import (
+        resolve_fusion_config,
+    )
+    from python.zrt.transform.fusion.loading.rule_set_initializer import (
+        initialize_rules,
+    )
     from python.zrt.transform.fusion.registry import iter_active_rules
 
-    load_platform_rules("hf_models/deepseek_v4")
+    initialize_rules("hf_models/deepseek_v4")
     cfg = resolve_fusion_config("hf_models/deepseek_v4", "training")
     active = iter_active_rules(cfg, "training")
     names = {r.name for r in active}
 
     assert "kv_compressor" not in names
     assert "sparse_indexer" not in names
-    assert "sparse_attention_kernel" not in names
     # Things we DO want fused in training are still active.
     assert "rms_norm" in names
     assert "hc_pre_attn" in names

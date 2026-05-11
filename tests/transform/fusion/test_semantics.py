@@ -13,11 +13,8 @@ import pytest
 
 from python.zrt.ir.node import OpNode
 from python.zrt.ir.types import DType, TensorMeta
-from python.zrt.transform.fusion.rule import (
-    IORole,
-    ModuleFusionRule,
-    ShapeDerivation,
-)
+from python.zrt.transform.fusion.core.io_role import IORole, ShapeDerivation
+from python.zrt.transform.fusion.core.rule import ModuleFusionRule
 from python.zrt.transform.fusion.semantics import (
     TensorView,
     annotate_fused_node,

@@ -1,11 +1,4 @@
-"""Bucket OpGraph nodes by ``call_id`` (forward-call instance).
-
-Step-1 note: function bodies + ``FusionGroup`` dataclass literally
-copied from the original ``python/zrt/transform/fusion/algorithm.py``.
-``CallIdBucketer.bucket()`` is a thin class wrapper around
-``bucket_into_groups`` so callers can move to an OO API without changing
-semantics.
-"""
+"""Bucket OpGraph nodes by ``call_id`` (forward-call instance)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -216,31 +209,3 @@ def _extract_class_obj(node: "OpNode") -> Optional[type]:
     if isinstance(obj, type):
         return obj
     return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Class wrapper (Step-1 form: thin wrapper).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class CallIdBucketer:
-    """Bucket an :class:`OpGraph` into :class:`FusionGroup`s by call_id.
-
-    Step-1: thin wrapper around ``bucket_into_groups`` so the pipeline
-    can move to an OO API without changing semantics.
-    """
-
-    def __init__(
-        self,
-        *,
-        max_parent_ops: int = 60,
-        merge_sibling_classes: set[str] | None = None,
-    ) -> None:
-        self._max_parent_ops = max_parent_ops
-        self._merge_sibling_classes = merge_sibling_classes
-
-    def bucket(self, graph: "OpGraph") -> list[FusionGroup]:
-        return bucket_into_groups(
-            graph,
-            max_parent_ops=self._max_parent_ops,
-            merge_sibling_classes=self._merge_sibling_classes,
-        )

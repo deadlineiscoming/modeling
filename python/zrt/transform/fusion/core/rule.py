@@ -1,9 +1,7 @@
 """ModuleFusionRule v2 (rich format) — single dataclass holding a fusion rule.
 
-Step-1 note: dataclass body literally copied from the original
-``python/zrt/transform/fusion/rule.py``; the YAML-helper functions were
-moved to ``loading/yaml_rule_loader.py`` and ``from_yaml_dict`` now
-delegates to the loader.  No behaviour change.
+YAML-helper functions live in ``loading/yaml_rule_loader.py``;
+``from_yaml_dict`` delegates to the loader so this module stays slim.
 
 Backward compatibility: ``IOSpec`` is preserved as an alias of ``IORole``
 in ``core.io_role``.

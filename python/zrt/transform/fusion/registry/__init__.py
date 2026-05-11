@@ -1,11 +1,8 @@
 """Public registry API: process-wide singleton + module-level forwarders.
 
-Tests and CLI continue to call ``register_rule(...)`` / ``clear_rules()``
-/ ``all_rules()`` / ``lookup_rule(...)`` / ``iter_active_rules(...)``;
+Tests and CLI call ``register_rule(...)`` / ``clear_rules()`` /
+``all_rules()`` / ``lookup_rule(...)`` / ``iter_active_rules(...)``;
 those forwarders delegate to the singleton ``default_registry()``.
-
-Step-1 note: behaviour is identical to the old module-globals in
-``registry.py`` — the singleton just wraps them in an instance.
 """
 from __future__ import annotations
 

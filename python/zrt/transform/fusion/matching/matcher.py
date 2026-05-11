@@ -1,16 +1,11 @@
 """Three-tier fusion-rule matcher.
 
-Step-1 note: function bodies literally copied from the original
-``python/zrt/transform/fusion/match.py``.  ``RuleMatcher`` is a thin
-class wrapper around ``best_rule``; ``_class_matches`` is still
-enforced everywhere it was before.
-
 Contract: see ``docs/fusion_v2_rich_rules_zh.md`` §2.1.
 """
 from __future__ import annotations
 
 import re
-from typing import Optional, Sequence
+from typing import Optional
 
 from python.zrt.transform.fusion.core.pattern import MatchPattern
 from python.zrt.transform.fusion.core.rule import ModuleFusionRule
@@ -120,12 +115,12 @@ def match_group(
 ) -> bool:
     """Return True iff the group matches ``pattern`` under ``target_class``.
 
-    Step-2: ``target_class`` only gates ``class_only`` rules (which have
-    no other signal).  ``ordered_regex`` and ``dag_signature`` rules are
-    matched on operator-sequence shape alone — the bucket's
-    ``module_class`` is no longer required to match the rule's
-    ``target_class``.  The ``target_class`` parameter is preserved in
-    the signature for API stability (``best_rule`` still passes it).
+    ``target_class`` only gates ``class_only`` rules (which have no
+    other signal).  ``ordered_regex`` and ``dag_signature`` rules match
+    on operator-sequence shape alone — the bucket's ``module_class`` is
+    not required to match the rule's ``target_class``.  The
+    ``target_class`` parameter is preserved in the signature for API
+    stability (``best_rule`` still passes it).
     """
     kind = pattern.kind
     if kind == "class_only":
@@ -165,26 +160,3 @@ def best_rule(
         # only replace on strictly greater priority.
         _ = best_idx
     return best
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Class wrapper (Step-1 form: thin wrapper, single dispatch).
-# ─────────────────────────────────────────────────────────────────────────────
-
-class RuleMatcher:
-    """Picks the best (highest-priority) matching rule from a list.
-
-    Step-1: this is a one-method class around ``best_rule`` so callers
-    can move to an OO API without changing semantics.  The class still
-    enforces ``_class_matches`` (the gate is removed in Step 2).
-    """
-
-    def __init__(self, rules: Sequence[ModuleFusionRule]):
-        self._rules: list[ModuleFusionRule] = list(rules)
-
-    def best_match(
-        self,
-        operator_types: tuple[str, ...],
-        module_class: str,
-    ) -> Optional[ModuleFusionRule]:
-        return best_rule(tuple(operator_types), module_class, self._rules)

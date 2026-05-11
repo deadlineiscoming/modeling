@@ -1,8 +1,4 @@
-"""IORole / IOSpec / ShapeDerivation — IO descriptor types for fusion rules.
-
-Step-1 note: dataclasses literally copied from the original
-``python/zrt/transform/fusion/rule.py``; no behaviour change.
-"""
+"""IORole / IOSpec / ShapeDerivation — IO descriptor types for fusion rules."""
 from __future__ import annotations
 
 from dataclasses import dataclass

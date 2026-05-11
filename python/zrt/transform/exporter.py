@@ -17,6 +17,7 @@ except ImportError:
 
 from python.zrt.ir.graph import OpGraph
 from python.zrt.ir.node import OpNode
+from python.zrt.ir.param_count import op_short
 from python.zrt.transform.context import TransformContext, ParallelConfig
 
 logger = logging.getLogger(__name__)
@@ -1374,9 +1375,25 @@ def _graph_to_fused_records(graph: OpGraph,
                     return s[len(pre):]
             return s
         raw_ids_str = ",".join(_strip(s) for s in src_ids_raw)
+        # When a node was never fused (single raw op carried over), the scope
+        # tail (e.g. "norm", "attn") is meaningless as a per-op identifier.
+        # Surface the operator's own short name (e.g. "add", "rsqrt") so the
+        # row is self-describing.  Fused nodes keep their semantic op_name
+        # (the leaf attr / wrapper module name).
+        is_unfused_single = (
+            (node.num_sub_ops or 1) <= 1
+            and not node.annotations.get("fused_by_rule")
+            and (node.op_type.startswith("aten.") or node.op_type.startswith("comm."))
+        )
+        if is_unfused_single:
+            op_name_value = op_short(node.op_type)
+        else:
+            op_name_value = (
+                node.name or (node.scope.rsplit(".", 1)[-1] if node.scope else "")
+            )
         records.append({
             "node_id": idx,
-            "op_name": node.name or (node.scope.rsplit(".", 1)[-1] if node.scope else ""),
+            "op_name": op_name_value,
             "rule_name": node.annotations.get("fused_by_rule", "") or "",
             "fused_op": node.op_type,
             "aten_ops": arrow.join(constituents),

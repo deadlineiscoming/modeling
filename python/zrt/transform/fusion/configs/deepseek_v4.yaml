@@ -4,12 +4,14 @@
 # Within each section: enabled_rules / disabled_rules / allow_structural_collapse / merge_sibling_classes.
 
 training:
-  # Stateful ops left raw so loss.backward() sees the real autograd chain.
+  # kv_compressor / sparse_indexer wrap modules with KV-cache buffer writes;
+  # leave them raw so loss.backward() sees the real autograd chain.
+  # sparse_attention_kernel matches a contiguous bmm→mul→softmax→bmm→bmm
+  # subsequence inside Attention.forward — pure compute, safe to fuse in training.
   enabled_rules: null
   disabled_rules:
     - kv_compressor
     - sparse_indexer
-    - sparse_attention_kernel
   allow_structural_collapse: false
   merge_sibling_classes: []
 

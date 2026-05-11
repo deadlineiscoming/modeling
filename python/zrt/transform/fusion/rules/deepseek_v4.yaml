@@ -201,8 +201,8 @@
 - target_class: Compressor
   op_type: kv_compressor
   name: kv_compressor
-  description: "DSV4 KV Compressor — has kv_state buffer write; recommend NOT fusing in training"
-  default_phases: [inference]
+  description: "DSV4 KV Compressor — has kv_state buffer write; class_only match"
+  default_phases: [inference, training]
   priority: 35
   match:
     kind: class_only
@@ -231,7 +231,7 @@
   op_type: sparse_indexer
   name: sparse_indexer
   description: "DSV4 sparse-attention Indexer (Compressor + RoPE + einsum + relu + sum + all_reduce + topk)"
-  default_phases: [inference]
+  default_phases: [inference, training]
   priority: 35
   match:
     kind: class_only
@@ -509,11 +509,14 @@
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 15. ParallelHead.hc_head  (line 728) — RMSNorm-ish + linear + sigmoid + sum.
+#     Note: the inline ``hc_head`` method is wrapped by an ``HCHead`` capture
+#     module (see graph/patches.py::_attach_hc_module_to_head), so the bucket's
+#     module_class is ``HCHead`` — not ``ParallelHead``.
 # ─────────────────────────────────────────────────────────────────────────────
-- target_class: ParallelHead
+- target_class: HCHead
   op_type: hc_head
   name: hc_head
-  description: "ParallelHead: RMSNorm-ish + linear + sigmoid + sum"
+  description: "HCHead capture wrapper around ParallelHead.hc_head: RMSNorm-ish + linear + sigmoid + sum"
   default_phases: [inference, training]
   priority: 30
   match:
@@ -538,21 +541,22 @@
 # 16. sparse_attn  (top-level kernel function imported in model.py, called in
 #     Attention.forward at L528/L533).  Match by aten signature (gather/bmm/softmax/bmm).
 # ─────────────────────────────────────────────────────────────────────────────
-- target_class: sparse_attn
+- target_class: "*"
   op_type: sparse_attention_kernel
   name: sparse_attention_kernel
-  description: "Top-level sparse_attn kernel (gather + bmm + softmax + bmm); custom kernel — recommend NOT fusing in training"
-  default_phases: [inference]
+  description: "Top-level sparse_attn kernel called inside Attention.forward; matched as a contiguous bmm→mul→softmax→bmm→bmm subsequence by the sliding-window scanner. target_class wildcard because sparse_attn is a free function — its ops live inside the parent Attention module's bucket alongside other ops, so we cannot match the bucket as a whole."
+  default_phases: [inference, training]
   priority: 32
   match:
-    kind: dag_signature
-    op_multiset:
-      - ['aten\.(gather|index_select|index)\..*',  1]
-      - ['aten\.(bmm|matmul)\..*',                 1]
-      - ['aten\._softmax\.default|aten\.softmax\..*', 1]
-      - ['aten\.(bmm|matmul)\..*',                 1]
-    min_ops: 3
-    max_ops: 64
+    kind: ordered_regex
+    op_regexes:
+      - 'aten\.(bmm|matmul)\..*'         # Q @ K^T
+      - 'aten\.mul\.Tensor'              # softmax_scale
+      - 'aten\._softmax\.default|aten\.softmax\..*'
+      - 'aten\.(bmm|matmul)\..*'         # attn_sink @ V (or first half of output)
+      - 'aten\.(bmm|matmul)\..*'         # attn @ V
+    min_ops: 5
+    max_ops: 5
   io_roles:
     - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,N,D]"}
     - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,N,D]"}

@@ -208,8 +208,12 @@ def _attn_cost(op: Op, model: ModelSpec | None, system: SystemSpec | None = None
     Br, Bc = _fa_tile_shape(d, bpe, sram_bytes)
     Tr = math.ceil(s / Br)
     Tc = math.ceil(kv_len / Bc)
-    # Causal: average K-blocks visited per Q-block is (Tc+1)/2
-    tc_eff = (Tc + 1) / 2 if causal else Tc
+    # Causal: average K-blocks per Q-block is (Tc+1)/2 for dense contiguous mask,
+    # but top-k positions are scattered — no causal halving for sparse.
+    if sparse_topk > 0:
+        tc_eff = Tc
+    else:
+        tc_eff = (Tc + 1) / 2 if causal else Tc
 
     q_bytes  = b * h * s * d
     o_bytes  = b * h * s * d
@@ -264,7 +268,7 @@ def _sparse_attn_cost(op: Op, system: SystemSpec | None = None) -> OpCost:
     Br, Bc = _fa_tile_shape(d, bpe, sram_bytes)
     Tr = math.ceil(s / Br)
     Tc = math.ceil(effective_len / Bc)
-    tc_eff = (Tc + 1) / 2  # always causal
+    tc_eff = Tc  # top-k positions are scattered, no causal halving
     q_bytes = b * h * s * d
     o_bytes = b * h * s * d
     kv_bytes = b * h * Tr * tc_eff * Bc * d

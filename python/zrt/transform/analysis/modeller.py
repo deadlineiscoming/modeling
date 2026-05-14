@@ -217,22 +217,255 @@ def estimate_training_from_graphs(
     # can show what fusion produced and how it scales.
     fused_ops_summary = _summarise_fused_ops(results)
 
+    # Try to populate optimizer_time from metadata (set by TrainingPipelinePass)
+    opt_us = 0.0
+    if "unified" in results and results["unified"].metadata.get("optimizer_step_time_us"):
+        opt_us = float(results["unified"].metadata.get("optimizer_step_time_us", 0.0))
+    elif forward_graph.metadata.get("optimizer_step_time_us"):
+        opt_us = float(forward_graph.metadata.get("optimizer_step_time_us", 0.0))
+
+    optimizer_time_ms = opt_us / 1000.0 if opt_us else 0.0
+    optimizer_comm_ms = 0.0
+
+    # pipeline_time_ms: step minus optimizer time when optimizer time present
+    pipeline_time_ms = max(0.0, step_time_ms - optimizer_time_ms) if step_time_ms > 0 else 0.0
+
+    # Warmup/steady/cooldown durations (ms) — approximate from per_stage_ms
+    warmup_ms = per_stage_ms * warmup_steps if per_stage_ms and warmup_steps else 0.0
+    cooldown_ms = per_stage_ms * cooldown_steps if per_stage_ms and cooldown_steps else 0.0
+    steady_ms = per_stage_ms * steady_steps if per_stage_ms and steady_steps else 0.0
+
+    # Try to build a scheduler Timeline for more detailed timing if hw_spec available
+    compute_time_ms = 0.0
+    fwd_compute_ms = 0.0
+    bwd_compute_ms = 0.0
+    exposed_comm_ms = 0.0
+    total_comm_volume_ms = 0.0
+    hidden_comm_ms = 0.0
+
+    try:
+        from python.zrt.executor.scheduler import DAGScheduler
+
+        # Prefer transformed unified graph if present, else transformed forward-only
+        schedule_graph = results.get("unified") if "unified" in results else results.get("train_forward")
+        if schedule_graph is not None and ctx.hw_spec is not None:
+            tl = DAGScheduler(ctx.hw_spec).schedule(schedule_graph)
+            compute_time_ms = tl.compute_time_us / 1000.0
+            total_comm_volume_ms = tl.comm_time_us / 1000.0
+            exposed_comm_us = max(0.0, tl.comm_time_us - tl.overlap_us)
+            exposed_comm_ms = exposed_comm_us / 1000.0
+            hidden_comm_ms = tl.overlap_us / 1000.0
+
+            # Per-phase compute split
+            fwd_compute_us = sum(op.latency_us for op in tl.scheduled_ops if op.stream_type == "compute" and op.phase == "fwd")
+            bwd_compute_us = sum(op.latency_us for op in tl.scheduled_ops if op.stream_type == "compute" and op.phase in ("bwd", "backward", "train_backward"))
+            fwd_compute_ms = fwd_compute_us / 1000.0
+            bwd_compute_ms = bwd_compute_us / 1000.0
+            # Try to find optimizer node in the scheduled graph for split of optimizer compute vs comm
+            opt_node = None
+            if schedule_graph is not None:
+                opt_node = schedule_graph.nodes.get("optimizer_step")
+                if opt_node is None:
+                    for n in schedule_graph.nodes.values():
+                        if n.annotations.get("optimizer_step"):
+                            opt_node = n
+                            break
+            # If optimizer node present, estimate optimizer compute/comm separately
+            if opt_node is not None:
+                try:
+                    from python.zrt.ir.types import DType
+                    # compute_time_us
+                    optimizer = opt_node.attrs.get("optimizer", "adam")
+                    step_flops = float(opt_node.attrs.get("step_flops", 0))
+                    if optimizer == "muon":
+                        peak_flops = ctx.hw_spec.peak_flops(DType.BF16)
+                        compute_time_us_opt = (step_flops / peak_flops) * 1e6 if peak_flops > 0 else 0.0
+                    else:
+                        opt_state_bytes = float(opt_node.attrs.get("state_bytes", 0))
+                        hbm_bw = ctx.hw_spec.memory.hbm_bandwidth_gbps * 1e9 / 8
+                        compute_time_us_opt = (opt_state_bytes / hbm_bw) * 1e6 if hbm_bw > 0 else 0.0
+
+                    # comm_time_us (Muon AG+RS)
+                    comm_time_us_opt = 0.0
+                    if optimizer == "muon":
+                        ag_bytes = float(opt_node.attrs.get("muon_ag_bytes", 0))
+                        ns_rotation = opt_node.attrs.get("ns_rotation", True)
+                        if ag_bytes > 0:
+                            dp = ctx.parallel.dp if ctx.parallel else 1
+                            gpus_per_node = ctx.hw_spec.interconnect.intra_node.num_devices
+                            link = ctx.hw_spec.interconnect.inter_node if dp > gpus_per_node else ctx.hw_spec.interconnect.intra_node
+                            dp_bw = link.bandwidth_gbps * 1e9 / 8
+                            if dp_bw > 0:
+                                if ns_rotation:
+                                    ring_factor = 2.0 * (dp - 1) / dp
+                                else:
+                                    ring_factor = 1.0 * (dp - 1) / dp
+                                comm_time_us_opt = (ring_factor * ag_bytes / dp_bw) * 1e6
+
+                    # override optimizer times if we computed them
+                    optimizer_time_ms = compute_time_us_opt / 1000.0
+                    optimizer_comm_ms = comm_time_us_opt / 1000.0
+                except Exception:
+                    # leave optimizer_time_ms as previously derived from metadata
+                    optimizer_comm_ms = 0.0
+    except Exception:
+        # Scheduling is best-effort; fall back to zeros when it fails.
+        pass
+
+        # Best-effort: extract per-stage timelines if available to fill steady per-microbatch numbers
+    schedule_graph = results.get("unified") if "unified" in results else results.get("train_forward")
+    steady_fwd_per_mb_ms = 0.0
+    steady_bwd_per_mb_ms = 0.0
+    steady_per_mb_ms = 0.0
+    if schedule_graph is not None:
+        st_fwd = schedule_graph.metadata.get("stage_timelines_fwd")
+        st_bwd = schedule_graph.metadata.get("stage_timelines_bwd")
+        if st_fwd and st_bwd:
+            try:
+                steady_fwd_per_mb_ms = float(max(list(st_fwd.values()))) / 1000.0
+                steady_bwd_per_mb_ms = float(max(list(st_bwd.values()))) / 1000.0
+                steady_per_mb_ms = float(max((float(st_fwd[s]) + float(st_bwd.get(s, 0.0))) for s in list(st_fwd.keys()))) / 1000.0
+            except Exception:
+                steady_fwd_per_mb_ms = steady_bwd_per_mb_ms = steady_per_mb_ms = 0.0
+
+    # Fill warmup/cooldown per-phase estimates (composer semantics: warmup is forward-heavy)
+    warmup_fwd_ms = warmup_ms
+    warmup_bwd_ms = 0.0
+    cooldown_fwd_ms = 0.0
+    cooldown_bwd_ms = cooldown_ms
+
+    # Steady durations
+    steady_fwd_ms = steady_fwd_per_mb_ms * steady_steps if steady_fwd_per_mb_ms and steady_steps else 0.0
+    steady_bwd_ms = steady_bwd_per_mb_ms * steady_steps if steady_bwd_per_mb_ms and steady_steps else 0.0
+
+    # Best-effort: compute DP exposed ms from dp_comm annotated nodes
+    dp_exposed_ms = 0.0
+    pp_exposed_ms = 0.0
+    try:
+        if schedule_graph is not None:
+            for n in schedule_graph.nodes.values():
+                if n.category == "communication":
+                    lat = float(n.annotations.get("latency_us", 0.0))
+                    if n.annotations.get("dp_comm"):
+                        dp_exposed_ms += lat / 1000.0
+                    if n.op_type == "comm.send_recv":
+                        # stage-crossing P2P
+                        src = n.attrs.get("src_stage")
+                        dst = n.attrs.get("dst_stage")
+                        if src is not None and dst is not None and src != dst:
+                            pp_exposed_ms += lat / 1000.0
+    except Exception:
+        dp_exposed_ms = pp_exposed_ms = 0.0
+
+    tp_hidden_ms = 0.0
+    # Clamp sums
+    try:
+        remaining = max(0.0, exposed_comm_ms - dp_exposed_ms - pp_exposed_ms)
+    except Exception:
+        remaining = exposed_comm_ms
+
+    # Do not attempt to split remaining across TP/CP/EP unless we have explicit metadata.
+    tp_exposed_ms = 0.0
+    cp_exposed_ms = 0.0
+    ep_exposed_ms = 0.0
+
+    # If we did not compute optimizer_time_ms earlier from opt_node, try to derive from metadata
+    try:
+        if optimizer_time_ms == 0.0:
+            if "unified" in results and results["unified"].metadata.get("optimizer_step_time_us"):
+                optimizer_time_ms = float(results["unified"].metadata.get("optimizer_step_time_us", 0.0)) / 1000.0
+            elif forward_graph.metadata.get("optimizer_step_time_us"):
+                optimizer_time_ms = float(forward_graph.metadata.get("optimizer_step_time_us", 0.0)) / 1000.0
+    except Exception:
+        pass
+
+    # Derived metrics
+    tokens = (ctx.training.global_batch if getattr(ctx, 'training', None) and getattr(ctx.training, 'global_batch', None) else global_batch) * seq_len
+    use_time_s = (pipeline_time_ms if pipeline_time_ms > 0 else step_time_ms) / 1000.0
+    tokens_per_sec = tokens / use_time_s if use_time_s > 0 else 0.0
+    effective_params = getattr(ctx, 'profile', None).num_experts if getattr(ctx, 'profile', None) and getattr(ctx.profile, 'num_experts', 0) else total_params
+    flops_per_token = (training_flops / tokens) if tokens > 0 else 0.0
+
     report = TrainingReport(
+        # Core timing metrics
         config_summary=config_summary,
         step_time_ms=step_time_ms,
+        per_stage=[],
         per_stage_ms=per_stage_ms,
+
+        # Efficiency metrics
         mfu=mfu,
         hfu=hfu,
-        total_flops=training_flops,  # Alias for Stack A compatibility
-        training_flops=training_flops,
+
+        # FLOPs breakdown
+        total_flops=training_flops,
         forward_flops=forward_flops,
         backward_flops=backward_flops,
+        training_flops=training_flops,
+
+        # Memory metrics
+        memory=None,
         memory_breakdown=memory_breakdown.to_dict() if memory_breakdown else {},
+
+        # Pipeline metrics
+        bubble_fraction=bubble_fraction,
+        schedule_name=getattr(ctx.training, 'pp_schedule', '1f1b'),
         warmup_steps=warmup_steps,
         cooldown_steps=cooldown_steps,
         steady_steps=steady_steps,
-        bubble_fraction=bubble_fraction,
+
+        # Step time breakdown
+        pipeline_time_ms=pipeline_time_ms,
+        warmup_ms=warmup_ms,
+        steady_ms=steady_ms,
+        cooldown_ms=cooldown_ms,
+        dp_exposed_ms=dp_exposed_ms,
+        optimizer_time_ms=optimizer_time_ms,
+        optimizer_comm_ms=optimizer_comm_ms,
+
+        # Fwd/Bwd breakdown per phase
+        warmup_fwd_ms=warmup_fwd_ms,
+        warmup_bwd_ms=warmup_bwd_ms,
+        steady_fwd_ms=steady_fwd_ms,
+        steady_bwd_ms=steady_bwd_ms,
+        cooldown_fwd_ms=cooldown_fwd_ms,
+        cooldown_bwd_ms=cooldown_bwd_ms,
+
+        # Per-microbatch time in steady phase
+        steady_fwd_per_mb_ms=steady_fwd_per_mb_ms,
+        steady_bwd_per_mb_ms=steady_bwd_per_mb_ms,
+        steady_per_mb_ms=steady_per_mb_ms,
+
+        # Compute / comm breakdown
+        compute_time_ms=compute_time_ms,
+        fwd_compute_ms=fwd_compute_ms,
+        bwd_compute_ms=bwd_compute_ms,
+        exposed_comm_ms=exposed_comm_ms,
+
+        # Per-group exposed comm
+        tp_exposed_ms=tp_exposed_ms,
+        cp_exposed_ms=cp_exposed_ms,
+        ep_exposed_ms=ep_exposed_ms,
+        pp_exposed_ms=pp_exposed_ms,
+
+        # Hidden comm
+        hidden_comm_ms=hidden_comm_ms,
+        dp_hidden_ms=max(0.0, hidden_comm_ms - (tp_hidden_ms if 'tp_hidden_ms' in locals() else 0.0)),
+        tp_hidden_ms=0.0,
+
+        # Total comm volume
+        total_comm_volume_ms=total_comm_volume_ms,
+
+        # Config / model
+        warnings=[],
         total_params=total_params,
+
+        # Derived metrics
+        tokens_per_sec=tokens_per_sec,
+        effective_params=effective_params,
+        flops_per_token=flops_per_token,
+
+        # Fused ops summary
         fused_ops_summary=fused_ops_summary,
     )
 

@@ -3,20 +3,20 @@ model: deepseek_v4_pro
 
 system:
   hw: nvidia_h100_sxm
-  nodes: 8
+  nodes: 1024
   gpus_per_node: 8
   host_mem_gb: 2048
 
 strategy:
-  tp: 8
-  cp: 1
-  pp: 4
-  ep: 64
-  dp: 2
+  tp: 1
+  cp: 8
+  pp: 2
+  ep: 384
+  dp: 512
   micro_batch: 1
   global_batch: 512
   pp_schedule: dualpipev
-  zero_stage: 1
+  zero_stage: 3
   recompute:
     per_layer:
       moe: ["attn"]

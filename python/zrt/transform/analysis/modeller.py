@@ -407,7 +407,6 @@ def estimate_training_from_graphs(
         training_flops=training_flops,
         forward_flops=forward_flops,
         backward_flops=backward_flops,
-        training_flops=training_flops,
 
         # Memory metrics
         memory=None,

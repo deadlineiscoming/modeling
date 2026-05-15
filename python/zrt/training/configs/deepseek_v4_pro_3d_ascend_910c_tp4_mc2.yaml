@@ -1,0 +1,29 @@
+# Identical to ..._tp4.yaml except tp_overlap: mc2 (MC2 variant)
+model: deepseek_v4_pro
+
+system:
+  hw: nvidia_h100_sxm
+  nodes: 1024
+  gpus_per_node: 8
+  host_mem_gb: 2048
+
+strategy:
+  tp: 4
+  cp: 1
+  pp: 2
+  ep: 384
+  dp: 1024
+  micro_batch: 1
+  global_batch: 1024
+  pp_schedule: dualpipev
+  zero_stage: 3
+  recompute:
+    per_layer:
+      moe: ["attn"]
+  tp_overlap: mc2
+  optimizer: muon
+  muon_config:
+    ns_steps: 10
+    rotation: true
+    adam_param_types: ["embed", "lm_head", "router", "bias"]
+    muon_param_fraction: 0.85

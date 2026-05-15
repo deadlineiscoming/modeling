@@ -17,7 +17,7 @@ from zrt.training.models.optimizer import muon_optimizer_step_flops, adam_step_f
 from zrt.training.io.perf_tables import achieved_flops_efficiency
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import ModelSpec
-from zrt.training.spec.strategy import PPSched, Strategy, TPOverlap, resolve_muon_ns_steps
+from zrt.training.spec.strategy import PPSched, Strategy, resolve_muon_ns_steps
 from zrt.training.spec.system import SystemSpec
 
 
@@ -510,6 +510,8 @@ def pipeline_step_time(
                 bwd_dw=st.bwd_dw,
                 comm_fwd=st.comm_fwd + pp_p2p,
                 comm_bwd=st.comm_bwd + pp_p2p,
+                ep_hidden=st.ep_hidden,
+                tp_hidden=st.tp_hidden,
             )
             for st in stage_times
         ]
@@ -587,25 +589,41 @@ def pipeline_step_time(
     # PP P2P: pp_p2p already baked into bot_comm; scale to critical path via same ratio
     pp_p2p_exposed = (_pipeline_time * (2.0 * pp_p2p) / bot_total) if bot_total > 0 else 0.0
 
-    # TP/CP/EP: proportional split of remaining exposed comm after PP P2P.
-    # TP exposure factor matches stage_time() logic (CoC=0.1, MC2=0.0, none=1.0).
-    _tp_expose = (
-        0.0 if strategy.tp_overlap == TPOverlap.MC2
-        else (0.1 if strategy.tp_overlap == TPOverlap.COC else 1.0)
-    )
+    # TP exposed / hidden: use StageTime.tp_hidden (GEMM-bound, set by
+    # compose/stage.py). Scale to critical path the same way as ep_hidden.
     raw_tp = sum(comm_times.get(c.name, 0.0) for c in graph.collectives if c.group == "TP")
     raw_cp = sum(comm_times.get(c.name, 0.0) for c in graph.collectives if c.group == "CP")
     raw_ep = sum(comm_times.get(c.name, 0.0) for c in graph.collectives if c.group == "EP")
-    eff_tp = raw_tp * _tp_expose
-    eff_total = eff_tp + raw_cp + raw_ep
 
-    remain = max(0.0, exposed_comm_excl_dp - pp_p2p_exposed)
+    # tp_hidden scaled to critical path (matches the ep_hidden treatment below)
+    if bot_total > 0 and s_bot.tp_hidden > 0:
+        step.tp_hidden = _pipeline_time * s_bot.tp_hidden / bot_total
+    else:
+        step.tp_hidden = 0.0
+
+    # tp_exposed = raw TP volume (per stage, scaled to critical path) − tp_hidden
+    raw_tp_critical = (_pipeline_time * (raw_tp / max(pp, 1)) / bot_total) \
+                      if bot_total > 0 else 0.0
+    # Conservation fix: cap tp_exposed_volume so the per-group exposed
+    # times sum to exposed_comm_excl_dp exactly. Without this cap,
+    # raw_tp_critical (computed from un-overlapped raw_tp / pp) can exceed
+    # the exposed-comm budget that was already reduced by stage-level
+    # overlap, breaking the documented invariant
+    #     exposed_comm = tp + cp + ep + pp + dp_exposed
+    tp_exposed_volume = max(0.0, raw_tp_critical - step.tp_hidden)
+    tp_exposed_volume = min(tp_exposed_volume,
+                            max(0.0, exposed_comm_excl_dp - pp_p2p_exposed))
+
+    # CP / EP exposed: proportional split of the remaining exposed-comm budget
+    # after PP P2P and TP exposed have been subtracted.
+    eff_total = raw_cp + raw_ep  # TP no longer participates in proportional split
+    remain = max(0.0, exposed_comm_excl_dp - pp_p2p_exposed - tp_exposed_volume)
     if eff_total > 0 and remain > 0:
-        step.tp_exposed = remain * eff_tp / eff_total
+        step.tp_exposed = tp_exposed_volume
         step.cp_exposed = remain * raw_cp / eff_total
         step.ep_exposed = remain * raw_ep / eff_total
     else:
-        step.tp_exposed = 0.0
+        step.tp_exposed = tp_exposed_volume
         step.cp_exposed = 0.0
         step.ep_exposed = 0.0
     step.pp_exposed = pp_p2p_exposed
@@ -614,15 +632,6 @@ def pipeline_step_time(
     # ── Hidden comm ───────────────────────────────────────────────────────
     # DP AR hidden in pipeline bubble — independent, exact.
     step.dp_hidden = max(0.0, dp_ar_time - step.dp_exposed)
-
-    # TP hidden by CoC/MC2 — from exposure factor and exposed TP.
-    if _tp_expose > 0 and step.tp_exposed > 0:
-        step.tp_hidden = step.tp_exposed * (1.0 - _tp_expose) / _tp_expose
-    elif _tp_expose == 0 and raw_tp > 0 and bot_total > 0:
-        # MC2: all TP hidden; scale raw TP per stage to critical path.
-        step.tp_hidden = _pipeline_time * (raw_tp / max(pp, 1)) / bot_total
-    else:
-        step.tp_hidden = 0.0
 
     # EP hidden by wave-overlap — from StageTime.ep_hidden, scaled to critical path.
     if bot_total > 0 and s_bot.ep_hidden > 0:

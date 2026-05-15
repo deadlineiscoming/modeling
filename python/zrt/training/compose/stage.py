@@ -28,6 +28,7 @@ class StageTime:
     comm_fwd: float = 0.0   # exposed comm in fwd (after TP/EP overlap reductions)
     comm_bwd: float = 0.0   # exposed comm in bwd (after TP/EP overlap reductions)
     ep_hidden: float = 0.0  # EP comm hidden by wave-overlap (fwd + bwd combined)
+    tp_hidden: float = 0.0  # TP comm hidden by CoC/MC2 (fwd + bwd combined)
 
 
 def ep_imbalance_factor(num_experts: int, ep: int, topk: int = 1) -> float:
@@ -174,20 +175,38 @@ def stage_time(
                 t_comm_fwd += ct * 0.5
                 t_comm_bwd += ct * 0.5
         elif c.group == "TP":
+            # TP AG/RS are inserted with phase='both' by ir/shard.py and we
+            # split 50/50 across fwd/bwd because Megatron-SP performs the
+            # inverse op in backward (AG→RS, RS→AG) with the same payload.
+            # Pinned by tests/training/test_tp_overlap.py::TestTPCollectivePhaseSplit.
             t_tp_comm_fwd += ct * 0.5
             t_tp_comm_bwd += ct * 0.5
         else:
             t_comm_fwd += ct * 0.5
             t_comm_bwd += ct * 0.5
 
-    # Apply TP overlap: CoC exposes ~10%, MC2 exposes 0%, NONE exposes 100%
-    tp_expose = 1.0
-    if strategy.tp_overlap == TPOverlap.MC2:
-        tp_expose = 0.0
-    elif strategy.tp_overlap == TPOverlap.COC:
-        tp_expose = 0.1
-    t_comm_fwd += t_tp_comm_fwd * tp_expose
-    t_comm_bwd += t_tp_comm_bwd * tp_expose
+    # Apply TP overlap with GEMM bound (parallels EP wave-overlap):
+    #   CoC: K=4 wave-overlap; exposed = max(comm - gemm*(K-1)/K, 0) per phase
+    #   MC2: bounded by max(comm - gemm, 0) — fully covered iff GEMM ≥ comm
+    #   NONE: all TP comm exposed
+    t_tp_hidden = 0.0
+    if strategy.tp_overlap == TPOverlap.NONE:
+        t_comm_fwd += t_tp_comm_fwd
+        t_comm_bwd += t_tp_comm_bwd
+    else:
+        t_tp_gemm_fwd = _tp_gemm_time(stage_ops, model, system, gpu_name, "fwd")
+        t_tp_gemm_bwd = _tp_gemm_time(stage_ops, model, system, gpu_name, "bwd")
+        if strategy.tp_overlap == TPOverlap.MC2:
+            # MC2 = "as much as GEMM lets us hide". Equivalent to K → ∞ in
+            # _wave_overlap_saved, which collapses to min(comm, gemm).
+            saved_fwd = min(t_tp_comm_fwd, t_tp_gemm_fwd)
+            saved_bwd = min(t_tp_comm_bwd, t_tp_gemm_bwd)
+        else:  # COC
+            saved_fwd = _wave_overlap_saved(t_tp_comm_fwd, t_tp_gemm_fwd, K=4)
+            saved_bwd = _wave_overlap_saved(t_tp_comm_bwd, t_tp_gemm_bwd, K=4)
+        t_comm_fwd += max(0.0, t_tp_comm_fwd - saved_fwd)
+        t_comm_bwd += max(0.0, t_tp_comm_bwd - saved_bwd)
+        t_tp_hidden = saved_fwd + saved_bwd
 
     t_fwd += t_comm_fwd
     t_bwd_dx += t_comm_bwd
@@ -263,6 +282,7 @@ def stage_time(
         comm_fwd=t_comm_fwd,
         comm_bwd=t_comm_bwd,
         ep_hidden=t_ep_hidden,
+        tp_hidden=t_tp_hidden,
     )
 
 
@@ -384,6 +404,38 @@ def _ep_gemm_time(
             cost = op_cost(op, model, system)
             total += _cost_phase_time(cost, "fwd", system, gpu_name,
                                       system.gpu.overlap_ratio.get(op.kind, 0.0))
+    return total
+
+
+def _tp_gemm_time(
+    ops: list[Op], model: ModelSpec, system: SystemSpec,
+    gpu_name: str, phase: str = "fwd",
+) -> float:
+    """Total matmul time available to overlap TP AG/RS (Megatron-SP).
+
+    In Megatron-SP, each AG/RS is bracketed by a dense matmul that runs while
+    the collective is in flight. The overlappable matmuls are exactly those
+    that ir/shard.py:_insert_tp_collectives attaches an AG/RS to:
+        - qkv (AG before)        - o_proj (RS after)
+        - up_proj (AG before)    - down_proj (RS after)
+        - gate_proj (AG before, SwiGLU path)
+
+    phase="fwd" sums fwd time; phase="bwd" sums dx + dw time per matmul.
+    """
+    OVERLAPPABLE_SUBSTRINGS = ("qkv", "o_proj", "up_proj", "down_proj", "gate_proj")
+    total = 0.0
+    for op in ops:
+        if op.kind != "matmul":
+            continue
+        if not any(s in op.name for s in OVERLAPPABLE_SUBSTRINGS):
+            continue
+        cost = op_cost(op, model, system)
+        overlap = system.gpu.overlap_ratio.get(op.kind, 0.0)
+        if phase == "fwd":
+            total += _cost_phase_time(cost, "fwd", system, gpu_name, overlap)
+        else:  # "bwd"
+            total += _cost_phase_time(cost, "dx", system, gpu_name, overlap)
+            total += _cost_phase_time(cost, "dw", system, gpu_name, overlap)
     return total
 
 

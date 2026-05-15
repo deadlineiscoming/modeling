@@ -1,0 +1,30 @@
+# Variant with tp=4 so tp_overlap actually inserts TP collectives.
+# tp*cp*pp*dp = 4*1*2*1024 = 8192 (matches world_size)
+model: deepseek_v4_pro
+
+system:
+  hw: nvidia_h100_sxm
+  nodes: 1024
+  gpus_per_node: 8
+  host_mem_gb: 2048
+
+strategy:
+  tp: 4                     # ← bumped from 1 → 4
+  cp: 1                     # ← removed CP to keep the example focused on TP
+  pp: 2
+  ep: 384
+  dp: 1024
+  micro_batch: 1
+  global_batch: 1024        # 1024 % (1 * 1024) == 0
+  pp_schedule: dualpipev
+  zero_stage: 3
+  recompute:
+    per_layer:
+      moe: ["attn"]
+  tp_overlap: coc           # ← now meaningful (tp>1)
+  optimizer: muon
+  muon_config:
+    ns_steps: 10
+    rotation: true
+    adam_param_types: ["embed", "lm_head", "router", "bias"]
+    muon_param_fraction: 0.85

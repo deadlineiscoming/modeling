@@ -111,6 +111,8 @@ def estimate_training_from_graphs(
             global_batch=global_batch,
             pp_schedule=pp_schedule,
             vpp_chunks=vpp_chunks,
+            seq_len=seq_len,
+            hidden=hidden,
             cp_kind=cp_kind,
         ),
         fusion=fusion_config or FusionConfig(),

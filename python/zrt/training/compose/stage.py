@@ -231,9 +231,8 @@ def stage_time(
     # Also separate EP comm into fwd/bwd portions instead of treating them
     # as a single pool.
     t_ep_hidden = 0.0
-    if (strategy.ep_overlap and strategy.ep > 1 and model.num_experts > 0
-            and gpu.ep_overlap_waves > 0):
-        # Separate EP comm into fwd and bwd portions
+    if strategy.ep_overlap and strategy.ep > 1 and model.num_experts > 0:
+        # Separate EP comm into fwd and bwd portions (used by both overlap paths).
         t_comm_ep_fwd = 0.0
         t_comm_ep_bwd = 0.0
         for c in stage_collectives:
@@ -250,17 +249,8 @@ def stage_time(
                 t_comm_ep_fwd += ct * 0.5
                 t_comm_ep_bwd += ct * 0.5
 
-        K = gpu.ep_overlap_waves  # hardware-specific wave count (NVIDIA: 4)
-
-        # Fwd overlap: use fwd GEMM time
+        # EP GEMM times needed by both K-wave formula and inter-batch non_ep_compute.
         t_ep_gemm_fwd = _ep_gemm_time(stage_ops, model, system, strategy, gpu_name)
-        saved_fwd = _wave_overlap_saved(t_comm_ep_fwd, t_ep_gemm_fwd, K)
-        saved_fwd = min(saved_fwd, t_comm_fwd)  # can't save more than comm exists
-        t_fwd -= saved_fwd
-        t_comm_fwd -= saved_fwd
-        t_ep_hidden += saved_fwd
-
-        # Bwd overlap: use bwd GEMM time (dx + dw), not just fwd
         t_ep_gemm_bwd = 0.0
         for op in stage_ops:
             if op.kind == "matmul" and "routed_expert" in op.name:
@@ -269,15 +259,36 @@ def stage_time(
                 dx_t = _cost_phase_time(cost, "dx", system, gpu_name, op_overlap)
                 dw_t = _cost_phase_time(cost, "dw", system, gpu_name, op_overlap)
                 t_ep_gemm_bwd += dx_t + dw_t
-        saved_bwd = _wave_overlap_saved(t_comm_ep_bwd, t_ep_gemm_bwd, K)
-        saved_bwd = min(saved_bwd, t_comm_bwd)
-        t_bwd_dx -= saved_bwd
-        t_comm_bwd -= saved_bwd
-        t_ep_hidden += saved_bwd
+
+        saved_fwd = 0.0
+        saved_bwd = 0.0
+
+        # Intra-batch K-wave overlap: splits EP A2A into K sub-waves, each pipelined
+        # with expert GEMM within the same microbatch.
+        # Requires hardware-level fine-grained A2A/GEMM streaming (NVIDIA CUDA: K=4;
+        # Ascend HCCS: ep_overlap_waves=0, not supported).
+        if gpu.ep_overlap_waves > 0:
+            K = gpu.ep_overlap_waves
+            saved_fwd = _wave_overlap_saved(t_comm_ep_fwd, t_ep_gemm_fwd, K)
+            saved_fwd = min(saved_fwd, t_comm_fwd)
+            t_fwd -= saved_fwd
+            t_comm_fwd -= saved_fwd
+            t_ep_hidden += saved_fwd
+
+            saved_bwd = _wave_overlap_saved(t_comm_ep_bwd, t_ep_gemm_bwd, K)
+            saved_bwd = min(saved_bwd, t_comm_bwd)
+            t_bwd_dx -= saved_bwd
+            t_comm_bwd -= saved_bwd
+            t_ep_hidden += saved_bwd
 
         # Inter-batch EP overlap: when dual_batch=True and pp>1, two microbatches
         # run simultaneously. Batch A's residual EP A2A (after K-wave overlap)
         # can be hidden by batch B's non-EP compute.
+        #
+        # This is a DualPipe scheduling property — independent of K-wave hardware
+        # support. Ascend A6 with ep_overlap_waves=0 still benefits here because
+        # HCCS EP A2A from one microbatch can overlap with DaVinci compute from
+        # the concurrent microbatch.
         #
         # Non-EP compute = total pure compute minus expert GEMM.
         # We subtract ep_gemm to avoid double-counting: batch B's expert GEMM is
@@ -293,7 +304,6 @@ def stage_time(
             residual_ep_fwd = max(0.0, t_comm_ep_fwd - saved_fwd)
             residual_ep_bwd = max(0.0, t_comm_ep_bwd - saved_bwd)
 
-            # Non-EP compute available as overlap window (exclude ep_gemm)
             non_ep_compute_fwd = max(0.0, t_fwd - t_comm_fwd - t_ep_gemm_fwd)
             non_ep_compute_bwd = max(0.0, (t_bwd_dx + t_bwd_dw) - t_comm_bwd - t_ep_gemm_bwd)
 

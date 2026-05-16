@@ -151,7 +151,16 @@ def memory_breakdown(
     if stage_layer_ids is not None:
         layer_ids = stage_layer_ids
     else:
-        layer_ids = list(range(len(model.layers)))
+        n_layers = len(model.layers)
+        if strategy.pp > 1:
+            # When the caller doesn't pin a stage, assume the average per-stage
+            # load. _activation_memory multiplies by _pp_in_flight, which
+            # represents the number of microbatches co-resident on one rank;
+            # the sum-over-all-layers path would double-count by `pp`.
+            layers_per_stage = max(1, n_layers // strategy.pp)
+            layer_ids = list(range(layers_per_stage))
+        else:
+            layer_ids = list(range(n_layers))
 
     activations, hc_overhead = _activation_memory(model, strategy, layer_ids)
 
@@ -386,6 +395,10 @@ def _activation_memory(
         cats_to_recompute = recompute_policy.get(lk.value, set())
         attn_cats = {"attn", "attn_core", "attn_block"}
         attn_recomputed = bool(cats_to_recompute & (attn_cats | {"full"}))
+        # mhc recompute: drop the HC residual stream activations. Without this
+        # branch, "hc" added recompute time in _recompute_time but freed no
+        # memory, so mhc was always strictly worse than none.
+        hc_recomputed = bool(cats_to_recompute & {"hc", "full"})
 
         if "full" in cats_to_recompute:
             # Full checkpoint: only save input + output
@@ -400,17 +413,39 @@ def _activation_memory(
                 coeff -= REDUCE_LN
 
         layer_act = s * h * act_bytes * coeff
-        hc_layer = (hc_mult - 1) * s * h * act_bytes * COEFF_HC_RESIDUAL
+        if hc_recomputed:
+            hc_layer = 0
+        else:
+            hc_layer = (hc_mult - 1) * s * h * act_bytes * COEFF_HC_RESIDUAL
         layer_act += hc_layer
 
-        # Korthikanti attention-scores term: 5·a·s²·bytes per layer.
-        # Dominates memory at long sequence (s²·a >> s·h·coeff once s > h/a).
-        # Eliminated when attention is recomputed (the whole point of selective
-        # attention recompute is to avoid materializing this score matrix).
+        # Attention-scores term: 5·heads·s·s_kv·bytes per layer, where
+        # s_kv is the effective KV length seen by softmax.
+        # DeepSeek-V4 layer-wise rules:
+        #   compress_ratios[lid] == 0    → SWA-only, s_kv = swa_window
+        #   compress_ratios[lid] > 1     → KV pool compressed to s/ratio
+        #     CSA layers (ratio ≤ 4, indexer enabled) cap s_kv by index_topk
+        #     (the indexer selects topk tokens per query, intermediate full
+        #     scores are streamed via FlashAttention and not materialized).
+        #   otherwise (dense / no compress_ratios) → full s × s.
+        # Eliminated when attention is recomputed (selective attn recompute).
         if not attn_recomputed:
             num_heads = max(1, getattr(model, "num_heads", 1))
             attn_bytes = model.effective_attn_act_dtype().bytes
-            layer_act += 5 * num_heads * s * s * attn_bytes
+            compress_ratios = getattr(model, "compress_ratios", None) or []
+            ratio = compress_ratios[lid] if lid < len(compress_ratios) else 1
+            if ratio == 0:
+                window = getattr(model, "swa_window", 0) or s
+                s_kv = min(int(window), s)
+            elif ratio > 1:
+                s_kv = max(1, s // int(ratio))
+                if ratio <= 4:
+                    topk = getattr(model, "index_topk", 0) or 0
+                    if topk > 0:
+                        s_kv = min(s_kv, int(topk))
+            else:
+                s_kv = s
+            layer_act += 5 * num_heads * s * s_kv * attn_bytes
 
         layer_act = layer_act // total_seq_shard
         hc_layer = hc_layer // total_seq_shard

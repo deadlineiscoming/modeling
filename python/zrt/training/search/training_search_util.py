@@ -33,13 +33,13 @@ from zrt.training.spec.system import GPU, SystemSpec
 
 logger = logging.getLogger(__name__)
 
-_WORKER_MODEL_CACHE: Dict[str, ModelSpec] = {}
+_WORKER_MODEL_CACHE: Dict[Tuple[str, Optional[str]], ModelSpec] = {}
 _WORKER_HW_CACHE: Dict[str, SystemSpec] = {}
 
 _MODELS_DIR = Path(__file__).parent.parent / "configs" / "models"
 
 
-def _load_model_spec(model_name: str) -> ModelSpec:
+def _load_model_spec(model_name: str, quant_preset: Optional[str] = None) -> ModelSpec:
     import yaml
     path = _MODELS_DIR / f"{model_name}.yaml"
     if not path.exists():
@@ -48,7 +48,10 @@ def _load_model_spec(model_name: str) -> ModelSpec:
             f"Available: {[p.stem for p in _MODELS_DIR.glob('*.yaml')]}"
         )
     with open(path, encoding="utf-8") as f:
-        return _parse_model(yaml.safe_load(f))
+        d = yaml.safe_load(f)
+    if quant_preset:
+        d["quant_preset"] = quant_preset
+    return _parse_model(d)
 
 
 def _make_system_from_config(config: Dict) -> SystemSpec:
@@ -258,6 +261,7 @@ class TrainingConfigManager:
         micro_batch = other_config.get("micro_batch", 1) if other_config else 1
         zero_stage = other_config.get("zero_stage", 0) if other_config else 0
         cp_kind_str = other_config.get("cp_kind", "none") if other_config else "none"
+        pp_schedule_str = other_config.get("pp_schedule", "1f1b") if other_config else "1f1b"
 
         for tp in tp_vals:
             if model is not None:
@@ -275,6 +279,10 @@ class TrainingConfigManager:
 
                 for pp in pp_vals:
                     if model is not None and pp > len(model.layers):
+                        continue
+                    # Pipeline schedules other than 1F1B require pp > 1; at
+                    # pp=1 they degenerate to OneF1B and just pollute the grid.
+                    if pp == 1 and pp_schedule_str != "1f1b":
                         continue
 
                     remaining = target_ws // (tp * cp * pp)
@@ -297,6 +305,13 @@ class TrainingConfigManager:
                                 if model.num_experts <= 0:
                                     continue
                                 if model.num_experts % ep != 0:
+                                    continue
+                                # Must have at least ep distinct ranks outside
+                                # TP to place each expert on its own rank
+                                # group; ep > rank_pool means we can't even
+                                # cover one EP replica.
+                                rank_pool = dp * pp * cp
+                                if ep > rank_pool:
                                     continue
 
                             yield (tp, cp, pp, ep, dp)
@@ -446,7 +461,7 @@ class TrainingConfigManager:
 
 def _worker_initializer(model_name: str = "deepseek_v3_2"):
     global _WORKER_MODEL_CACHE, _WORKER_HW_CACHE
-    _WORKER_MODEL_CACHE[model_name] = _load_model_spec(model_name)
+    _WORKER_MODEL_CACHE[(model_name, None)] = _load_model_spec(model_name)
 
 
 def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
@@ -454,12 +469,14 @@ def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
 
     model_name = config.get("model", "deepseek_v3_2")
     hw_name = config.get("hw", "nvidia_h100_sxm")
+    quant_preset = config.get("quant_preset") or None
 
     try:
-        model = _WORKER_MODEL_CACHE.get(model_name)
+        model_key = (model_name, quant_preset)
+        model = _WORKER_MODEL_CACHE.get(model_key)
         if model is None:
-            model = _load_model_spec(model_name)
-            _WORKER_MODEL_CACHE[model_name] = model
+            model = _load_model_spec(model_name, quant_preset=quant_preset)
+            _WORKER_MODEL_CACHE[model_key] = model
         # Per-config seq_len override: the cached ModelSpec carries the YAML
         # default, but the grid varies seq_len, and Strategy does not own this
         # field. Mutating the cached object is safe — each worker is a single
@@ -535,13 +552,17 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         d["step_time_ms"] = round(report.step_time_ms, 3)
         d["pipeline_time_ms"] = round(report.pipeline_time_ms, 3)
         d["mfu"] = round(report.mfu, 4)
+        d["mfu_native"] = round(report.mfu_native, 4)
         d["hfu"] = round(report.hfu, 4)
         d["bubble_fraction"] = round(report.bubble_fraction, 4)
         d["tokens_per_sec"] = round(report.tokens_per_sec, 1)
         if report.memory:
-            d["weights_gb"] = round(report.memory.weights / 1e9, 2)
-            d["grads_gb"] = round(report.memory.grads / 1e9, 2)
-            d["opt_state_gb"] = round(report.memory.opt_state / 1e9, 2)
+            # Per-rank weight/grad/opt-state can drop to single-digit MB after
+            # ZeRO-3 + EP + TP sharding; 2-decimal GB rounds those to 0.00 and
+            # hides whether sharding is sane. Use 4 decimals (≈100 KB resolution).
+            d["weights_gb"] = round(report.memory.weights / 1e9, 4)
+            d["grads_gb"] = round(report.memory.grads / 1e9, 4)
+            d["opt_state_gb"] = round(report.memory.opt_state / 1e9, 4)
             d["activations_gb"] = round(report.memory.activations / 1e9, 2)
             d["comm_buffers_gb"] = round(report.memory.comm_buffers / 1e9, 2)
             d["memory_gb"] = memory_gb
@@ -556,7 +577,7 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
                                                           "ep_total_ms", "ep_exposed_ms", "pp_total_ms", "pp_exposed_ms",
                                                           "dp_total_ms", "dp_exposed_ms", "optimizer_time_ms(compute)",
                                                           "optimizer_comm_ms", "step_time_ms", "pipeline_time_ms",
-                                                          "mfu", "hfu", "bubble_fraction", "tokens_per_sec",
+                                                          "mfu", "mfu_native", "hfu", "bubble_fraction", "tokens_per_sec",
                                                           "weights_gb", "grads_gb", "opt_state_gb", "activations_gb",
                                                           "comm_buffers_gb", "memory_gb"]] if rows else []
     metric_cols = ["fwd_compute_ms", "bwd_compute_ms", "exposed_comm_ms",
@@ -564,7 +585,7 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
                                                           "ep_total_ms", "ep_exposed_ms", "pp_total_ms", "pp_exposed_ms",
                                                           "dp_total_ms", "dp_exposed_ms", "optimizer_time_ms(compute)",
                                                           "optimizer_comm_ms", "step_time_ms", "pipeline_time_ms",
-                                                          "mfu", "hfu", "bubble_fraction", "tokens_per_sec",
+                                                          "mfu", "mfu_native", "hfu", "bubble_fraction", "tokens_per_sec",
                                                           "weights_gb", "grads_gb", "opt_state_gb", "activations_gb",
                                                           "comm_buffers_gb", "memory_gb"]
     cols = config_cols + [c for c in metric_cols if c in df.columns]
@@ -743,8 +764,29 @@ def run_training_search_parallel(
         logger.error("No valid configurations found.")
         return pd.DataFrame()
 
-    all_reports = [r["report"] for r in all_results]
-    all_configs = [r["config"] for r in all_results]
+    # Memory-feasibility filter: drop configs whose per-rank memory exceeds
+    # 80% of GPU HBM capacity. Apply before BOTH the CSV table and the Excel
+    # "best" export so the latter cannot pick infeasible configs.
+    feasible_results: List[Dict] = []
+    for r in all_results:
+        rep = r["report"]
+        hw_name = r.get("hw_name") or r["config"].get("hw", "nvidia_h100_sxm")
+        cap_gb = load_hw(hw_name).memory.capacity_gb
+        if rep.memory is None:
+            feasible_results.append(r)
+            continue
+        if rep.memory.total / 1e9 <= cap_gb * 0.8:
+            feasible_results.append(r)
+    logger.info(
+        f"Memory feasibility: {len(feasible_results)}/{len(all_results)} configs "
+        f"fit within 0.8 × HBM"
+    )
+    if not feasible_results:
+        logger.error("No memory-feasible configurations found.")
+        return pd.DataFrame()
+
+    all_reports = [r["report"] for r in feasible_results]
+    all_configs = [r["config"] for r in feasible_results]
     all_df = format_results(all_reports, all_configs)
 
     filtered_df = all_df[all_df["mfu"] > mfu_threshold] if mfu_threshold > 0 else all_df
@@ -754,7 +796,7 @@ def run_training_search_parallel(
 
     save_results(filtered_df, manager.output_path)
 
-    export_best_configs_excel(all_results, manager.output_path)
+    export_best_configs_excel(feasible_results, manager.output_path)
 
     if not filtered_df.empty:
         best = filtered_df.iloc[0]
@@ -769,7 +811,7 @@ if __name__ == "__main__":
 
     training_param_grid = {
         "model": ["deepseek_v4_pro"],
-        "hw": ["nvidia_h100_sxm"],
+        "hw": ["nvidia_b300"],
         "world_size": [8192],
         "tp": [1, 2, 4, 8, 16],
         "cp": [1, 2, 4, 8, 16],
@@ -778,18 +820,17 @@ if __name__ == "__main__":
         "dp": "auto",
         "micro_batch": [1, 16, 32],
         "global_batch": [512, 1024, 2048, 4096, 8192, 65536],
-        "seq_len": [8192, 65536, 131072, 262144,52488,1048576],
-        "total_token": [536870912],
-        "zero_stage": [1, 2, 3],
+        "seq_len": [8192, 32768, 131072],
+        "zero_stage": [3],
         "pp_schedule": ["dualpipev"],
-        "vpp_chunks": [2, 4],
         "cp_kind": ["ulysses"],
         "tp_overlap": ["coc"],
         "ep_overlap": [True],
         "dualbatch": [True],
         "dp_overlap_in_bubble": [True],
-        "recompute": ["none"],
+        "recompute": ["none", "mhc"],
         "optimizer": ["muon"],
+        "quant_preset": ["deepseek_v4_fp8_fp4"],
     }
 
     df = run_training_search_parallel(

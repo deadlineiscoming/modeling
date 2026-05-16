@@ -117,3 +117,26 @@ def test_qk_score_matrix_uses_attn_act_dtype():
     mb_bf16 = memory_breakdown(g, m_bf16, sys_, st)
     mb_fp8 = memory_breakdown(g, m_fp8, sys_, st)
     assert mb_fp8.activations < mb_bf16.activations
+
+
+def test_routed_expert_grad_dtype_affects_grad_bytes_in_moe_models():
+    g = Graph()
+    sys_ = _make_system()
+    st = Strategy(optimizer=OptKind.ADAM)
+    m_fp32 = _moe_model()
+    m_bf16 = _moe_model(routed_expert_grad_dtype=Dtype.BF16)
+    mb_fp32 = memory_breakdown(g, m_fp32, sys_, st)
+    mb_bf16 = memory_breakdown(g, m_bf16, sys_, st)
+    # BF16 expert grad smaller than FP32 expert grad → total grads smaller
+    assert mb_bf16.grads < mb_fp32.grads
+
+
+def test_dense_model_grad_unaffected_by_routed_expert_grad_dtype():
+    g, sys_, st = Graph(), _make_system(), Strategy(optimizer=OptKind.ADAM)
+    base = dict(hidden=512, ffn=2048, num_heads=8, num_kv_heads=8, head_dim=64,
+                vocab=4096, seq_len=128, layers=[LayerKind.DENSE, LayerKind.DENSE])
+    m_fp32 = ModelSpec(**base)
+    m_bf16 = ModelSpec(**base, routed_expert_grad_dtype=Dtype.BF16)
+    mb_fp32 = memory_breakdown(g, m_fp32, sys_, st)
+    mb_bf16 = memory_breakdown(g, m_bf16, sys_, st)
+    assert mb_fp32.grads == mb_bf16.grads

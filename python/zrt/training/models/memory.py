@@ -129,7 +129,10 @@ def memory_breakdown(
         + P_other * model.param_dtype.stored_bytes
     )
 
-    grads = P * model.grad_dtype.bytes
+    grads = int(
+        P_expert * model.routed_expert_grad_dtype.bytes
+        + P_other * model.grad_dtype.bytes
+    )
     opt_state = _optimizer_state_bytes(P, model, strategy)
 
     # ZeRO sharding

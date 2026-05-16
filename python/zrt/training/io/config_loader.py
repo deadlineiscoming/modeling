@@ -91,8 +91,9 @@ def load_anchor_config(yaml_path: str | Path) -> tuple[ModelSpec, SystemSpec, St
         # Reference to model config in configs/models/
         model = _resolve_model(model_ref)
     elif isinstance(model_ref, dict):
-        # Inline model spec
-        model = _parse_model(model_ref)
+        # Either an inline spec or an overlay form ({base: <name>, ...}).
+        # Dispatch through _resolve_model so the overlay branch is honored.
+        model = _resolve_model(model_ref)
     else:
         raise ValueError(
             f"Anchor {yaml_path}: 'model' must be a string (reference) "
@@ -125,6 +126,21 @@ def _resolve_model(model_ref: str | dict) -> ModelSpec:
         with open(path, encoding="utf-8") as f:
             model_d = yaml.safe_load(f)
         return _parse_model(model_d)
+    if isinstance(model_ref, dict) and "base" in model_ref:
+        # Overlay form: {base: <name>, <override keys>}.
+        # Load the named base spec from configs/models/ and merge the
+        # remaining keys on top (caller wins).
+        base_name = model_ref["base"]
+        path = _MODELS_DIR / f"{base_name}.yaml"
+        if not path.exists():
+            raise KeyError(
+                f"Model {base_name!r} not found in {_MODELS_DIR}. "
+                f"Available: {[p.stem for p in sorted(_MODELS_DIR.glob('*.yaml'))]}"
+            )
+        with open(path, encoding="utf-8") as f:
+            base_d = yaml.safe_load(f)
+        merged = {**base_d, **{k: v for k, v in model_ref.items() if k != "base"}}
+        return _parse_model(merged)
     return _parse_model(model_ref)
 
 

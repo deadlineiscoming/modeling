@@ -13,7 +13,11 @@ from zrt.training.ir.training_graph import Graph
 from zrt.training.models.comm import total_comm_time, optimizer_comm_time
 from zrt.training.models.flops import recompute_overhead_flops
 from zrt.training.models.memory import MemBreakdown, memory_breakdown
-from zrt.training.models.optimizer import muon_optimizer_step_flops, adam_step_flops
+from zrt.training.models.optimizer import (
+    muon_optimizer_step_flops,
+    muon_step_flops_from_arch,
+    adam_step_flops,
+)
 from zrt.training.io.perf_tables import achieved_flops_efficiency
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import ModelSpec
@@ -754,8 +758,14 @@ def _compute_optimizer_time(model: ModelSpec, system: SystemSpec, strategy: Stra
         n_moe = sum(1 for lk in model.layers if lk == LayerKind.MOE)
         if n_moe > 0 and model.moe_ffn > 0:
             expert_p_all = n_moe * 3 * model.hidden * model.moe_ffn * model.num_experts
-            # Scale expert params by the same PP fraction already applied to P
-            expert_p_stage = expert_p_all // strategy.pp if strategy.pp > 1 else expert_p_all
+            # Match the TP+PP sharding already applied to P, otherwise the
+            # subtraction below clamps non_expert_p to 0 and we lose all
+            # non-routed params from the Muon NS budget.
+            expert_p_stage = expert_p_all
+            if strategy.tp > 1:
+                expert_p_stage //= strategy.tp
+            if strategy.pp > 1:
+                expert_p_stage //= strategy.pp
             non_expert_p = max(0, P - expert_p_stage)
             P = non_expert_p + expert_p_stage // strategy.ep
     # ZeRO-1/2/3 all shard optimizer states across DP: each GPU updates P/dp params.
@@ -774,7 +784,12 @@ def _compute_optimizer_time(model: ModelSpec, system: SystemSpec, strategy: Stra
             if strategy.muon_config and strategy.muon_config.muon_param_fraction is not None
             else 0.85
         )
-        flops = muon_optimizer_step_flops(P, K, model.hidden, f_muon)
+        # Architecture-driven NS FLOPs: walk the actual weight-matrix
+        # inventory. The legacy P/hidden² path clamps num_matrices to 1
+        # under ZeRO-3 + EP and yields a constant ~8 ms across the grid.
+        muon_flops = muon_step_flops_from_arch(model, strategy, K, f_muon)
+        adam_flops = adam_step_flops(int(P * (1 - f_muon)))
+        flops = muon_flops + adam_flops
         eff = achieved_flops_efficiency(gpu.name, Dtype.BF16, flops)
         return flops / (peak_flops * eff) if eff > 0 else 0.0
     else:

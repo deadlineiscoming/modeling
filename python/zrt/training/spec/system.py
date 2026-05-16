@@ -13,6 +13,8 @@ class GPU:
     hbm_gb: float
     hbm_bw_gbps: float  # aggregate HBM bandwidth (GB/s)
 
+    flops_fp4: float = 0.0    # peak TFLOP/s (Blackwell B200/B300+); 0 = unsupported
+
     # Heterogeneous-core fields (None = homogeneous, use flops_bf16 for all ops).
     # "cube" is the matrix/Tensor/Cube peak; both peaks must be set to enable
     # heterogeneous timing.

@@ -119,22 +119,20 @@ def memory_breakdown(
     # ── Parameters on this rank ──────────────────────────────────────────
     P = _params_on_rank(model, strategy)
 
-    # FP4 routed expert weights: 0.5 B/elem + per-block BF16 scale
-    use_fp4 = getattr(model, "routed_expert_dtype", "bf16") == "fp4"
-    if use_fp4:
-        P_expert = _routed_expert_params_on_rank(model, strategy)
-        P_other = P - P_expert
-        FP4_BYTES_PER_ELEM = 0.5
-        FP4_BLOCK_SIZE = 32
-        expert_weight_bytes = int(
-            P_expert * FP4_BYTES_PER_ELEM
-            + (P_expert / FP4_BLOCK_SIZE) * 2  # BF16 scale per block
-        )
-        weights = expert_weight_bytes + P_other * model.param_dtype.bytes
-    else:
-        weights = P * model.param_dtype.bytes
+    # Per-component weight bytes: routed-expert weights use
+    # routed_expert_weight_dtype (FP4 stored-size includes per-block BF16 scale);
+    # everything else uses param_dtype.
+    P_expert = _routed_expert_params_on_rank(model, strategy)
+    P_other = P - P_expert
+    weights = int(
+        P_expert * model.routed_expert_weight_dtype.stored_bytes
+        + P_other * model.param_dtype.stored_bytes
+    )
 
-    grads = P * model.grad_dtype.bytes
+    grads = int(
+        P_expert * model.routed_expert_grad_dtype.bytes
+        + P_other * model.grad_dtype.bytes
+    )
     opt_state = _optimizer_state_bytes(P, model, strategy)
 
     # ZeRO sharding
@@ -411,7 +409,8 @@ def _activation_memory(
         # attention recompute is to avoid materializing this score matrix).
         if not attn_recomputed:
             num_heads = max(1, getattr(model, "num_heads", 1))
-            layer_act += 5 * num_heads * s * s * act_bytes
+            attn_bytes = model.effective_attn_act_dtype().bytes
+            layer_act += 5 * num_heads * s * s * attn_bytes
 
         layer_act = layer_act // total_seq_shard
         hc_layer = hc_layer // total_seq_shard
@@ -488,7 +487,9 @@ def _comm_buffer_memory(model: ModelSpec, strategy: Strategy) -> int:
     if strategy.cp > 1:
         seq_cp = s // strategy.cp
         h_tp = h // strategy.tp if strategy.tp > 1 else h
-        per_layer_cp = 4 * seq_cp * h_tp * act_bytes
+        # CP A2A buffers shuttle attention activations across the sequence dim.
+        cp_bytes = model.effective_attn_act_dtype().bytes
+        per_layer_cp = 4 * seq_cp * h_tp * cp_bytes
         total += per_layer_cp * n_layers * strategy.micro_batch
 
     # EP A2A buffers (only when EP>1, MoE layers only)
@@ -497,7 +498,9 @@ def _comm_buffer_memory(model: ModelSpec, strategy: Strategy) -> int:
     if strategy.ep > 1 and model.num_experts > 0:
         seq_cp = s // strategy.cp if strategy.cp > 1 else s
         h_tp = h // strategy.tp if strategy.tp > 1 else h
-        per_layer_ep = 4 * seq_cp * h_tp * act_bytes
+        # EP dispatch/combine carries routed-expert activations.
+        ep_bytes = model.routed_expert_compute_dtype.bytes
+        per_layer_ep = 4 * seq_cp * h_tp * ep_bytes
         n_moe = sum(1 for lk in model.layers if lk.value == "moe")
         if strategy.pp > 1:
             n_moe = max(1, n_moe // strategy.pp)

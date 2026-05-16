@@ -28,6 +28,7 @@ class ComputeSpec:
     int8_tops:   float = 0.0
     int4_tops:   float = 0.0
     fp8_tops:    float = 0.0   # covers both FP8_E4M3 and FP8_E5M2
+    fp4_tops:    float = 0.0   # Blackwell B200/B300+ (NVFP4/MXFP4); 0 = unsupported
 
     # Heterogeneous-core fields (matrix/Tensor/Cube vs scalar/vector split).
     # None = homogeneous hardware (fall back to unified peak_flops path).

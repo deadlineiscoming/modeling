@@ -101,6 +101,7 @@ def estimate(
         dp_exposed_ms=s.dp_exposed * 1000,
         optimizer_time_ms=s.optimizer_time * 1000,
         optimizer_comm_ms=s.optimizer_comm * 1000,
+        optimizer_comm_hidden_ms=s.optimizer_comm_hidden * 1000,
         warmup_fwd_ms=s.warmup_fwd * 1000,
         warmup_bwd_ms=s.warmup_bwd * 1000,
         steady_fwd_ms=s.steady_fwd * 1000,

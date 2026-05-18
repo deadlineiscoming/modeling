@@ -26,6 +26,7 @@ def report_to_dict(report: Report) -> dict:
         "dp_exposed_ms": round(report.dp_exposed_ms, 3),
         "optimizer_time_ms": round(report.optimizer_time_ms, 3),
         "optimizer_comm_ms": round(report.optimizer_comm_ms, 3),
+        "optimizer_comm_hidden_ms": round(report.optimizer_comm_hidden_ms, 3),
         "warmup_fwd_ms": round(report.warmup_fwd_ms, 3),
         "warmup_bwd_ms": round(report.warmup_bwd_ms, 3),
         "steady_fwd_ms": round(report.steady_fwd_ms, 3),
@@ -133,6 +134,8 @@ def report_summary(report: Report) -> str:
             lines.append(f"  {'Optimizer (compute)':<38s} {report.optimizer_time_ms:>10.2f} {report.optimizer_time_ms/st*100:>7.1f}%")
         if report.optimizer_comm_ms > 0:
             lines.append(f"  {'Optimizer (comm)':<38s} {report.optimizer_comm_ms:>10.2f} {report.optimizer_comm_ms/st*100:>7.1f}%")
+        if report.optimizer_comm_hidden_ms > 0:
+            lines.append(f"  {'Optimizer (comm hidden)':<38s} {report.optimizer_comm_hidden_ms:>10.2f} {report.optimizer_comm_hidden_ms/st*100:>7.1f}%")
 
         lines.append(f"  {'─' * 38} {'─' * 10} {'─' * 8}")
         lines.append(f"  {'TOTAL STEP TIME':<38s} {st:>10.2f} {100.0:>7.1f}%")

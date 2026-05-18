@@ -52,7 +52,8 @@ class StepResult:
     step_time: float = 0.0          # Total step time (seconds)
     pipeline_time: float = 0.0      # Pipeline time = compute_time + exposed_comm
     optimizer_time: float = 0.0     # Optimizer step compute
-    optimizer_comm: float = 0.0     # Optimizer step communication (e.g. Muon AG+RS)
+    optimizer_comm: float = 0.0     # Optimizer step comm exposed on critical path (post-hide)
+    optimizer_comm_hidden: float = 0.0  # Optimizer AG hidden under NS compute (Moonshot rotation)
 
     # ── Pipeline structure (set by composers) ─────────────────────────────
     bubble_fraction: float = 0.0
@@ -710,9 +711,25 @@ def pipeline_step_time(
 
     # Optimizer time and communication
     opt_time = _compute_optimizer_time(model, system, strategy)
-    opt_comm = _compute_optimizer_comm_time(model, system, strategy)
+    opt_comm_parts = optimizer_comm_time(model, system, strategy)
+    ag_time = opt_comm_parts.get("muon_ag", 0.0)
+    rs_time = opt_comm_parts.get("muon_rs", 0.0)
+
+    # Moonshot rotation: AG is chunk-pipelined with NS compute, so the
+    # AG portion overlapped under NS is off the critical path. RS still
+    # sits between optimizer step and the next iteration's forward — keep
+    # it exposed here (next-iteration warmup overlap is not yet modeled).
+    rotation_active = (
+        strategy.optimizer.value == "muon"
+        and strategy.muon_config is not None
+        and strategy.muon_config.rotation
+    )
+    opt_comm_hidden = min(ag_time, opt_time) if rotation_active else 0.0
+    opt_comm_exposed = (ag_time + rs_time) - opt_comm_hidden
+
     step.optimizer_time = opt_time
-    step.optimizer_comm = opt_comm
+    step.optimizer_comm = opt_comm_exposed
+    step.optimizer_comm_hidden = opt_comm_hidden
 
     # Memory breakdown
     step.memory = memory_breakdown(graph, model, system, strategy)
@@ -728,7 +745,7 @@ def pipeline_step_time(
     # This must happen after MFU/HFU calculation so MFU excludes optimizer overhead.
     # pipeline_time is set after this addition to satisfy:
     #   step_time = pipeline_time + optimizer_time + optimizer_comm
-    step.step_time += opt_time + opt_comm
+    step.step_time += opt_time + opt_comm_exposed
     step.pipeline_time = step.step_time - step.optimizer_time - step.optimizer_comm
 
     return step

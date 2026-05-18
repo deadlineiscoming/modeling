@@ -17,6 +17,77 @@ pytestmark = pytest.mark.recompute
 
 _HW, _TP, _EP = "nvidia_h100_sxm", 1, 1
 _HIDDEN, _SEQ, _LAYERS, _BATCH = 7168, 128, 4, 1
+_BWD_PHASES = {"bwd", "backward", "train_backward"}
+
+
+def _is_backward_node(node):
+    return node.annotations.get("phase", "") in _BWD_PHASES
+
+
+def _is_forward_node(node):
+    return not _is_backward_node(node)
+
+
+def _forward_nodes(graph):
+    return [n for n in graph.nodes.values() if _is_forward_node(n)]
+
+
+def _backward_nodes(graph):
+    return [n for n in graph.nodes.values() if _is_backward_node(n)]
+
+
+def _base_forward_flops(graph):
+    return sum(n.annotations.get("flops", 0) for n in _forward_nodes(graph))
+
+
+def _recompute_flops_oracle(graph):
+    from python.zrt.transform.training.recompute import is_external_recompute_node
+
+    return sum(
+        n.annotations.get("flops_fwd", 0) // 2
+        for n in _forward_nodes(graph)
+        if is_external_recompute_node(n)
+    )
+
+
+def _forward_flops_annotation_sum(graph):
+    return sum(n.annotations.get("flops_fwd", 0) for n in _forward_nodes(graph))
+
+
+def _backward_flops_annotation_sum(graph):
+    return sum(n.annotations.get("flops_fwd", 0) for n in _backward_nodes(graph))
+
+
+def _saved_activation_bytes_oracle(graph, tp=_TP, cp=1):
+    fwd_ids = {n.id for n in _forward_nodes(graph)}
+    bwd_ids = {n.id for n in _backward_nodes(graph)}
+    recomputed = {
+        n.id for n in _forward_nodes(graph) if n.annotations.get("recompute")
+    }
+    saved_bytes = 0
+    for edge in graph.edges:
+        if edge.src in fwd_ids and edge.dst in bwd_ids and edge.src not in recomputed:
+            saved_bytes += getattr(edge.tensor, "mem_bytes", 0)
+    return saved_bytes / (max(tp, 1) * max(cp, 1))
+
+
+def _excel_summary_map(path):
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    ws = wb["Training Summary"]
+    result = {}
+    for row in ws.iter_rows(values_only=True):
+        if row and row[0] not in (None, ""):
+            result[str(row[0])] = row[1] if len(row) > 1 else None
+    return result
+
+
+def _header_index(header, prefix):
+    for idx, name in enumerate(header):
+        if str(name).startswith(prefix):
+            return idx
+    raise AssertionError(f"{prefix!r} column not found in {header!r}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -66,6 +137,23 @@ def full_all(captured_model):
 @pytest.fixture(scope="module")
 def sel_all(captured_model):
     return _run_estimate("selective", captured_model)
+
+
+@pytest.fixture(scope="module")
+def full_excel(tmp_path_factory, full_all):
+    from python.zrt.transform.exporter import export_training_graphs
+
+    report, ctx, transformed = full_all
+    out = tmp_path_factory.mktemp("recompute_full_report")
+    graph = transformed["unified"]
+    paths = export_training_graphs(
+        fwd_graph=graph,
+        bwd_graph=graph,
+        ctx=ctx,
+        output_dir=out,
+        training_summary=report,
+    )
+    return paths["excel"], graph, report
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -119,12 +207,28 @@ class TestRecomputeE2E:
     # ── FLOPs ─────────────────────────────────────────────────────────────
 
     def test_recompute_nodes_2x(self, full_all):
+        from python.zrt.transform.training.recompute import is_external_recompute_node
+
         _, _, t = full_all
         for n in t["unified"].nodes.values():
             flops = n.annotations.get("flops", 0)
             ff = n.annotations.get("flops_fwd", 0)
-            if n.annotations.get("recompute") and flops > 0:
+            if is_external_recompute_node(n) and flops > 0:
                 assert ff == flops * 2, f"{n.id}: flops_fwd={ff} != 2x{flops}"
+
+    def test_internal_recompute_ops_not_double_charged(self, full_all):
+        from python.zrt.transform.training.recompute import has_internal_recompute
+
+        _, _, t = full_all
+        internal = [
+            n for n in _forward_nodes(t["unified"])
+            if n.annotations.get("recompute") and has_internal_recompute(n)
+        ]
+        if not internal:
+            pytest.skip("captured DSv4 E2E graph uses unfused attention in this environment")
+        for n in internal:
+            assert n.annotations.get("flops_fwd", 0) != n.annotations.get("flops", 0) * 2
+            assert n.annotations.get("recompute_flops", 0) == 0
 
     def test_non_recompute_nodes_1x(self, none_all):
         _, _, t = none_all
@@ -139,6 +243,38 @@ class TestRecomputeE2E:
         u_none = none_all[2]["unified"]
         assert u_full.metadata.get("recompute_flops", 0) > 0
         assert u_none.metadata.get("recompute_flops", 0) == 0
+
+    def test_full_recompute_flops_matches_oracle(self, full_all):
+        _, _, t = full_all
+        u = t["unified"]
+        expected = _recompute_flops_oracle(u)
+        assert expected > 0
+        assert u.metadata.get("recompute_flops", 0) == expected
+
+    def test_selective_recompute_flops_matches_oracle(self, sel_all):
+        _, _, t = sel_all
+        u = t["unified"]
+        expected = _recompute_flops_oracle(u)
+        assert expected > 0
+        assert u.metadata.get("recompute_flops", 0) == expected
+
+    @pytest.mark.parametrize("fixture_name", ["full_all", "sel_all"])
+    def test_recompute_forward_flops_split_is_exact(self, request, fixture_name):
+        _, _, t = request.getfixturevalue(fixture_name)
+        u = t["unified"]
+        recompute = u.metadata.get("recompute_flops", 0)
+        assert u.metadata.get("forward_flops", 0) == _forward_flops_annotation_sum(u)
+        assert u.metadata.get("forward_flops", 0) - recompute == _base_forward_flops(u)
+
+    @pytest.mark.parametrize("fixture_name", ["full_all", "sel_all"])
+    def test_recompute_training_flops_identity(self, request, fixture_name):
+        _, _, t = request.getfixturevalue(fixture_name)
+        u = t["unified"]
+        assert u.metadata.get("forward_flops", 0) == _forward_flops_annotation_sum(u)
+        assert u.metadata.get("backward_flops", 0) == _backward_flops_annotation_sum(u)
+        assert u.metadata.get("training_flops", 0) == (
+            u.metadata.get("forward_flops", 0) + u.metadata.get("backward_flops", 0)
+        )
 
     # ── timing ────────────────────────────────────────────────────────────
 
@@ -198,6 +334,21 @@ class TestRecomputeE2E:
         if pm is not None:
             assert pm.hfu > pm.mfu, f"HFU={pm.hfu} <= MFU={pm.mfu}"
 
+    def test_none_mfu_equals_hfu(self, none_all):
+        _, _, t = none_all
+        pm = t["unified"].metadata.get("pipeline_metrics")
+        assert pm is not None
+        assert pm.hfu == pytest.approx(pm.mfu)
+
+    @pytest.mark.parametrize("fixture_name", ["full_all", "sel_all"])
+    def test_recompute_hfu_exceeds_mfu(self, request, fixture_name):
+        _, _, t = request.getfixturevalue(fixture_name)
+        u = t["unified"]
+        pm = u.metadata.get("pipeline_metrics")
+        assert pm is not None
+        assert u.metadata.get("recompute_flops", 0) > 0
+        assert pm.hfu > pm.mfu
+
     # ── memory ────────────────────────────────────────────────────────────
 
     def test_activation_memory_reduced(self, none_all, full_all):
@@ -208,6 +359,54 @@ class TestRecomputeE2E:
             f"activations: full={mb_full.activations} >= none={mb_none.activations}"
 
     # ── per-node memory access ────────────────────────────────────────────
+
+    @pytest.mark.parametrize("fixture_name", ["full_all", "sel_all"])
+    def test_recompute_activation_memory_matches_saved_edge_oracle(self, request, fixture_name):
+        _, _, t = request.getfixturevalue(fixture_name)
+        u = t["unified"]
+        mb = u.metadata.get("memory_breakdown")
+        assert mb is not None
+        assert mb.activations == pytest.approx(_saved_activation_bytes_oracle(u, _TP, 1))
+
+    def test_exported_excel_recompute_time_is_separate(self, full_excel):
+        excel_path, graph, report = full_excel
+        recompute_compute_ms = graph.metadata.get("recompute_compute_ms", 0.0)
+        summary = _excel_summary_map(excel_path)
+        assert "Backward compute (ms)" in summary
+        assert "Recompute compute (ms)" in summary
+        assert float(summary["Recompute compute (ms)"]) > 0
+        assert float(summary["Backward compute (ms)"]) == pytest.approx(
+            report.bwd_compute_ms, abs=1e-3
+        )
+        assert float(summary["Recompute compute (ms)"]) == pytest.approx(
+            recompute_compute_ms, abs=1e-3
+        )
+        assert report.compute_time_ms == pytest.approx(
+            report.fwd_compute_ms + report.bwd_compute_ms + recompute_compute_ms,
+            abs=1e-6,
+        )
+
+    def test_exported_excel_recompute_ops_match_oracle(self, full_excel):
+        import openpyxl
+        from python.zrt.transform.training.recompute import has_internal_recompute
+
+        excel_path, graph, report = full_excel
+        wb = openpyxl.load_workbook(excel_path, data_only=True, read_only=True)
+        assert "Recompute Ops" in wb.sheetnames
+        ws = wb["Recompute Ops"]
+        rows = list(ws.iter_rows(values_only=True))
+        header = list(rows[0])
+        total_row = next(row for row in rows if row and row[0] == "TOTAL")
+        flops_idx = _header_index(header, "FLOPs")
+        latency_idx = _header_index(header, "Latency")
+        assert int(total_row[flops_idx]) == _recompute_flops_oracle(graph)
+        assert float(total_row[latency_idx]) / 1000.0 == pytest.approx(
+            graph.metadata.get("recompute_compute_ms", 0.0),
+            abs=1e-3,
+        )
+        node_ids = {row[0] for row in rows[1:] if row and row[0] not in (None, "TOTAL")}
+        for node_id in node_ids:
+            assert not has_internal_recompute(graph.nodes[node_id])
 
     def test_read_write_bytes_unchanged(self, none_all, full_all):
         u_none = none_all[2]["unified"]

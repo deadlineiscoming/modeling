@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from python.zrt.ir.param_count import count_params
 from python.zrt.transform.base import GraphPass
+from python.zrt.transform.training.recompute import is_external_recompute_node
 
 if TYPE_CHECKING:
     from python.zrt.hardware.spec import HardwareSpec
@@ -97,13 +98,14 @@ class TrainingFlopsPass(GraphPass):
         g.metadata["total_params"] = total_params
         g.metadata["layer_scale"] = layer_scale
 
-        # Recompute overhead: for nodes with recompute annotation, flops_fwd
-        # already includes 2x multiplier (passes.py FlopsPass), so base fwd = flops_fwd / 2
-        # Only fwd-phase nodes can be recomputed (bwd-phase nodes are not recomputed)
+        # External activation-checkpoint replay overhead. FA/SDPA attention
+        # cores may still carry recompute=True for activation memory, but their
+        # backward formula already includes internal recompute and is not charged
+        # as an extra replay here.
         recompute_flops = sum(
             n.annotations.get("flops_fwd", 0) // 2
             for n in g.nodes.values()
-            if n.annotations.get("recompute")
+            if is_external_recompute_node(n)
             and n.annotations.get("phase", "fwd") not in _BWD_PHASES
         )
         if layer_scale != 1.0:
@@ -400,6 +402,10 @@ class PipelineStepMetrics:
     bubble_fraction: float = 0.0
     mfu: float = 0.0  # Model FLOPs Utilization
     hfu: float = 0.0  # Hardware FLOPs Utilization (includes recompute overhead)
+    compute_time_ms: float = 0.0
+    fwd_compute_ms: float = 0.0
+    bwd_compute_ms: float = 0.0
+    recompute_compute_ms: float = 0.0
     exposed_comm_ms: float = 0.0
     hidden_comm_ms: float = 0.0
     total_comm_ms: float = 0.0
@@ -414,6 +420,10 @@ class PipelineStepMetrics:
             "bubble_fraction": self.bubble_fraction,
             "mfu": self.mfu,
             "hfu": self.hfu,
+            "compute_time_ms": self.compute_time_ms,
+            "fwd_compute_ms": self.fwd_compute_ms,
+            "bwd_compute_ms": self.bwd_compute_ms,
+            "recompute_compute_ms": self.recompute_compute_ms,
             "exposed_comm_ms": self.exposed_comm_ms,
             "hidden_comm_ms": self.hidden_comm_ms,
             "total_comm_ms": self.total_comm_ms,
@@ -655,6 +665,30 @@ class TrainingPipelinePass(GraphPass):
         mfu = util_from_flops(model_flops * num_microbatches, peak_flops_per_gpu, step_time_sec)
         hfu = util_from_flops(total_flops_for_hfu * num_microbatches, peak_flops_per_gpu, step_time_sec)
 
+        def _is_bwd_node(node):
+            return node.annotations.get("phase", "") in _BWD_PHASES
+
+        fwd_compute_ms = sum(
+            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+            for n in g.nodes.values()
+            if not _is_bwd_node(n) and n.category != "communication"
+        ) / 1000.0
+        bwd_compute_ms = sum(
+            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+            for n in g.nodes.values()
+            if _is_bwd_node(n) and n.category != "communication"
+        ) / 1000.0
+        recompute_compute_ms = sum(
+            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+            for n in g.nodes.values()
+            if not _is_bwd_node(n) and is_external_recompute_node(n)
+        ) / 1000.0
+        if layer_scale != 1.0:
+            fwd_compute_ms *= layer_scale
+            bwd_compute_ms *= layer_scale
+            recompute_compute_ms *= layer_scale
+        compute_time_ms = fwd_compute_ms + bwd_compute_ms + recompute_compute_ms
+
         metrics = PipelineStepMetrics(
             step_time_ms=step_time_ms,
             per_stage_ms=per_stage_ms,
@@ -664,12 +698,17 @@ class TrainingPipelinePass(GraphPass):
             bubble_fraction=step_result.bubble_fraction,
             mfu=min(mfu, 1.0),
             hfu=min(hfu, 1.0),
+            compute_time_ms=compute_time_ms,
+            fwd_compute_ms=fwd_compute_ms,
+            bwd_compute_ms=bwd_compute_ms,
+            recompute_compute_ms=recompute_compute_ms,
             exposed_comm_ms=exposed_comm_ms,
             hidden_comm_ms=hidden_comm_ms,
             total_comm_ms=total_comm_ms,
         )
 
         g.metadata["pipeline_metrics"] = metrics
+        g.metadata["recompute_compute_ms"] = recompute_compute_ms
 
         # Add optimizer step time (per §5.5.2 of design doc)
         opt_step_time_us = self._compute_optimizer_step_time(g, hw, ctx)

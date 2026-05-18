@@ -9,6 +9,26 @@ from python.zrt.transform.context import TransformContext
 logger = logging.getLogger(__name__)
 
 
+def has_internal_recompute(node: OpNode) -> bool:
+    """Return True for ops whose backward formula already includes replay.
+
+    FlashAttention/SDPA-style attention cores do not materialize the full
+    attention matrix in forward. Their backward kernels recompute the
+    attention probabilities internally, so activation-checkpoint reporting
+    should not charge an additional external replay for the same op.
+    """
+    op_type = node.op_type.lower()
+    return any(
+        key in op_type
+        for key in ("flash_attn", "flashattention", "scaled_dot_product", "sdpa", "attention", "attn")
+    )
+
+
+def is_external_recompute_node(node: OpNode) -> bool:
+    """Activation-checkpoint replay nodes charged as extra backward work."""
+    return bool(node.annotations.get("recompute")) and not has_internal_recompute(node)
+
+
 class RecomputePass(GraphPass):
     """Recompute pass for activation recomputation.
 

@@ -19,6 +19,10 @@ from python.zrt.ir.graph import OpGraph
 from python.zrt.ir.node import OpNode
 from python.zrt.ir.param_count import op_short
 from python.zrt.transform.context import TransformContext, ParallelConfig
+from python.zrt.transform.training.recompute import (
+    has_internal_recompute,
+    is_external_recompute_node,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1234,7 +1238,7 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
             self._write_backward_ops_sheet(wb, bwd_graph, ctx)
             self._write_recompute_sheet(wb, bwd_graph)
         if training_summary is not None:
-            self._write_training_summary_sheet(wb, training_summary)
+            self._write_training_summary_sheet(wb, training_summary, bwd_graph)
 
         wb.save(output_path)
         logger.info(f"Exported training graphs to {output_path}")
@@ -1335,7 +1339,12 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
 
         recompute_nodes = [
             n for n in bwd_graph.nodes.values()
-            if n.annotations.get("recompute", False) or n.attrs.get("recompute", False)
+            if is_external_recompute_node(n)
+            or (
+                n.attrs.get("recompute", False)
+                and not n.annotations.get("recompute")
+                and not has_internal_recompute(n)
+            )
         ]
 
         if not recompute_nodes:
@@ -1359,8 +1368,13 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
         total_flops = 0
 
         for row_idx, node in enumerate(recompute_nodes, 2):
-            lat = node.annotations.get("latency_us", 0) or 0
-            flops = node.annotations.get("flops_fwd", node.annotations.get("flops", 0)) or 0
+            lat = (
+                node.annotations.get("recompute_latency_us", 0)
+                or node.annotations.get("base_latency_us", 0)
+                or node.annotations.get("latency_us", 0)
+                or 0
+            )
+            flops = node.annotations.get("flops", 0) or 0
             total_lat   += lat
             total_flops += flops
             values = [
@@ -1385,10 +1399,10 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
 
         ws.freeze_panes = "A2"
 
-    def _write_training_summary_sheet(self, wb: openpyxl.Workbook, ts) -> None:
+    def _write_training_summary_sheet(self, wb: openpyxl.Workbook, ts, graph: OpGraph | None = None) -> None:
         """Write TrainingSummary metrics as a key-value sheet."""
         if hasattr(ts, "step_time_ms"):
-            self._write_training_report_sheet(wb, ts)
+            self._write_training_report_sheet(wb, ts, graph)
             return
 
         ws = wb.create_sheet("Training Summary")
@@ -1473,11 +1487,17 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
         ws.column_dimensions["A"].width = 32
         ws.column_dimensions["B"].width = 28
 
-    def _write_training_report_sheet(self, wb: openpyxl.Workbook, report) -> None:
+    def _write_training_report_sheet(
+        self, wb: openpyxl.Workbook, report, graph: OpGraph | None = None
+    ) -> None:
         """Write graph-native TrainingReport metrics as a key-value sheet."""
         ws = wb.create_sheet("Training Summary")
         ws.append(["Training Step Summary"])
         ws["A1"].font = Font(bold=True, size=13)
+        recompute_compute_ms = (
+            graph.metadata.get("recompute_compute_ms", 0.0)
+            if graph is not None else 0.0
+        )
 
         rows = [
             ("Model", ""),
@@ -1490,6 +1510,9 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
             ("Step latency (ms)", round(report.step_time_ms, 3)),
             ("Pipeline time (ms)", round(report.pipeline_time_ms, 3)),
             ("Compute time (ms)", round(report.compute_time_ms, 3)),
+            ("Forward compute (ms)", round(report.fwd_compute_ms, 3)),
+            ("Backward compute (ms)", round(report.bwd_compute_ms, 3)),
+            ("Recompute compute (ms)", round(recompute_compute_ms, 3)),
             ("Exposed comm (ms)", round(report.exposed_comm_ms, 3)),
             ("", ""),
             ("=== HW Efficiency ===", ""),

@@ -198,6 +198,9 @@ def estimate_training_from_graphs(
     cooldown_steps = pipeline_metrics.cooldown_steps if pipeline_metrics else 0
     steady_steps = pipeline_metrics.steady_steps if pipeline_metrics else 0
     bubble_fraction = pipeline_metrics.bubble_fraction if pipeline_metrics else 0.0
+    compute_time_ms = pipeline_metrics.compute_time_ms if pipeline_metrics else 0.0
+    fwd_compute_ms = pipeline_metrics.fwd_compute_ms if pipeline_metrics else 0.0
+    bwd_compute_ms = pipeline_metrics.bwd_compute_ms if pipeline_metrics else 0.0
     exposed_comm_ms = pipeline_metrics.exposed_comm_ms if pipeline_metrics else 0.0
     hidden_comm_ms = pipeline_metrics.hidden_comm_ms if pipeline_metrics else 0.0
     total_comm_ms = pipeline_metrics.total_comm_ms if pipeline_metrics else 0.0
@@ -241,6 +244,9 @@ def estimate_training_from_graphs(
         bubble_fraction=bubble_fraction,
         total_params=total_params,
         fused_ops_summary=fused_ops_summary,
+        compute_time_ms=compute_time_ms,
+        fwd_compute_ms=fwd_compute_ms,
+        bwd_compute_ms=bwd_compute_ms,
         exposed_comm_ms=exposed_comm_ms,
         hidden_comm_ms=hidden_comm_ms,
         total_comm_volume_ms=total_comm_ms,

@@ -826,6 +826,7 @@ if __name__ == "__main__":
         "micro_batch": [1, 16, 32],
         "global_batch": [512, 1024, 2048, 4096, 8192, 65536],
         "seq_len": [8192, 32768, 131072],
+        "total_token": [536870912],
         "zero_stage": [3],
         "pp_schedule": ["dualpipev"],
         "cp_kind": ["ulysses"],

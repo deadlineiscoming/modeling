@@ -186,9 +186,15 @@ def optimizer_comm_time(
 ) -> dict[str, float]:
     """Return Muon optimizer communication time in seconds.
 
-    Muon with ZeRO-1 requires:
-      - AllGather before optimizer step to gather full Muon parameters
-      - ReduceScatter after optimizer step to distribute updated gradients
+    Whenever ZeRO stage ≥ 1 (1, 2, or FSDP/ZeRO-3), the FP32 master copy
+    is sharded across DP, so Muon-rotation must:
+      - AllGather full FP32 master params before the NS step
+      - ReduceScatter updated params after the NS step (when rotation=True)
+
+    The byte count and group sizes are identical across ZeRO 1/2/3 — they
+    all shard the optimizer state by ``strategy.dp``. ZeRO-3 additionally
+    shards forward-pass weights, but that AG is per-layer in fwd/bwd and
+    is accounted for as graph-level collectives, not here.
 
     Sharding groups (matches Megatron-Core distributed optimizer):
       - Non-routed params (dense + shared experts + embed/lm_head):
@@ -197,13 +203,7 @@ def optimizer_comm_time(
         ``max(1, dp // ep)``. When ``dp == ep`` the expert-DP group has a
         single rank and routed AG/RS is free.
 
-    Args:
-        model: ModelSpec with hidden dimension and param count
-        system: SystemSpec with network tiers
-        strategy: Strategy with optimizer config and muon_config
-
-    Returns:
-        Dict with "muon_ag" and "muon_rs" time in seconds
+    Returns: dict with "muon_ag" and "muon_rs" time in seconds.
     """
     if strategy.optimizer.value != "muon" or strategy.dp <= 1 or strategy.zero_stage < 1:
         return {"muon_ag": 0.0, "muon_rs": 0.0}

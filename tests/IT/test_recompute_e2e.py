@@ -319,16 +319,16 @@ class TestRecomputeE2E:
                    for n in g.nodes.values()
                    if n.annotations.get("phase") == phase)
 
-    def test_fwd_latency_includes_checkpoint_memory(self, none_all, full_all, sel_all):
+    def test_fwd_latency_unchanged(self, none_all, full_all, sel_all):
         u_none = none_all[2]["unified"]
         u_full = full_all[2]["unified"]
         u_sel  = sel_all[2]["unified"]
         f_none = self._phase_latency_sum(u_none, "fwd")
         f_full = self._phase_latency_sum(u_full, "fwd")
         f_sel  = self._phase_latency_sum(u_sel, "fwd")
-        assert f_none <= f_sel <= f_full, \
+        assert f_none == f_full == f_sel, \
             f"fwd latency differs: none={f_none} full={f_full} sel={f_sel}"
-        assert sum(n.annotations.get("checkpoint_memory_us", 0) for n in _forward_nodes(u_full)) > 0
+        assert sum(n.annotations.get("checkpoint_activation_bytes", 0) for n in _forward_nodes(u_full)) == 0
         assert sum(n.annotations.get("checkpoint_memory_us", 0) for n in _forward_nodes(u_none)) == 0
 
     def test_bwd_latency_full_greater_than_none(self, none_all, full_all):
@@ -445,27 +445,26 @@ class TestRecomputeE2E:
         for node_id in node_ids:
             assert not has_internal_recompute(graph.nodes[node_id])
 
-    def test_exported_forward_ops_show_checkpoint_memory(self, full_excel):
+    def test_exported_forward_ops_show_reduced_activation(self, full_excel):
         excel_path, graph, _report = full_excel
         rows = _sheet_rows(excel_path, "Forward Operators")
         for col in (
-            "Checkpoint Activation Bytes",
-            "Checkpoint Memory (us)",
-            "Final Latency (us)",
+            "Activation (B)",
+            "Final Latency (µs)",
         ):
             assert col in rows[0]
+        assert "Checkpoint Memory (µs)" not in rows[0]
 
         recompute_rows = [
             row for row in rows
             if row["Node ID"] in graph.nodes
-            and graph.nodes[row["Node ID"]].annotations.get("checkpoint_activation_bytes", 0) > 0
+            and graph.nodes[row["Node ID"]].annotations.get("recompute")
         ]
         assert recompute_rows
-        assert any(float(row["Checkpoint Activation Bytes"] or 0) > 0 for row in recompute_rows)
-        assert any(float(row["Checkpoint Memory (us)"] or 0) > 0 for row in recompute_rows)
+        assert all(float(row["Activation (B)"] or 0) == 0 for row in recompute_rows)
         for row in recompute_rows[:20]:
             node = graph.nodes[row["Node ID"]]
-            assert float(row["Final Latency (us)"]) == pytest.approx(
+            assert float(row["Final Latency (µs)"]) == pytest.approx(
                 node.annotations.get("latency_us", 0.0),
                 abs=1e-3,
             )
@@ -473,20 +472,20 @@ class TestRecomputeE2E:
     def test_exported_backward_ops_show_recompute_replay(self, full_excel):
         excel_path, graph, _report = full_excel
         rows = _sheet_rows(excel_path, "Backward Operators")
-        assert "Recompute Replay (us)" in rows[0]
-        assert "Final Latency (us)" in rows[0]
+        assert "Recompute Replay (µs)" in rows[0]
+        assert "Final Latency (µs)" in rows[0]
 
         replay_rows = [
             row for row in rows
-            if float(row.get("Recompute Replay (us)") or 0) > 0
+            if float(row.get("Recompute Replay (µs)") or 0) > 0
         ]
         assert replay_rows
         for row in replay_rows[:20]:
             node = graph.nodes[row["Node ID"]]
             replay = node.annotations.get("recompute_latency_us", 0.0)
             final = node.annotations.get("latency_us", 0.0)
-            assert float(row["Recompute Replay (us)"]) == pytest.approx(replay, abs=1e-3)
-            assert float(row["Final Latency (us)"]) == pytest.approx(final, abs=1e-3)
+            assert float(row["Recompute Replay (µs)"]) == pytest.approx(replay, abs=1e-3)
+            assert float(row["Final Latency (µs)"]) == pytest.approx(final, abs=1e-3)
             assert final == pytest.approx(
                 node.annotations.get("base_latency_us", 0.0) + replay,
                 abs=1e-6,

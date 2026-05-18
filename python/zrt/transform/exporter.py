@@ -339,15 +339,13 @@ class TransformedGraphExcelWriter:
             ("Write Formula (sym)", 24),
             ("Write Formula (num)", 32),
             ("Activation (B)", 16),
-            ("Checkpoint Activation Bytes", 18),
-            ("Checkpoint Memory (us)", 18),
             # ── comm volume ───────────────────────────────────────────────────
             ("Comm Volume (B)", 14),
             # ── timing & bound ────────────────────────────────────────────────
             ("Compute (µs)", 12),
             ("Memory (µs)", 12),
             ("Total Latency (µs)", 14),
-            ("Final Latency (us)", 14),
+            ("Final Latency (µs)", 14),
             ("Bound", 10),
             ("Arith Intensity", 14),
             ("Annotations", 60),
@@ -428,8 +426,6 @@ class TransformedGraphExcelWriter:
                 formulas["write_sym"],
                 formulas["write_num"],
                 0 if node.annotations.get("recompute") else sum(t.mem_bytes for t in node.outputs),
-                node.annotations.get("checkpoint_activation_bytes", 0) or "",
-                round(node.annotations.get("checkpoint_memory_us", 0), 3) if node.annotations.get("checkpoint_memory_us") else "",
                 # comm
                 comm_vol,
                 # timing & bound
@@ -445,7 +441,7 @@ class TransformedGraphExcelWriter:
             # Choose fill color based on category
             if node.is_comm:
                 fill = self._comm_fill
-            elif node.annotations.get("checkpoint_activation_bytes", 0) > 0:
+            elif node.annotations.get("recompute"):
                 fill = PatternFill(start_color="fce4ec", end_color="fce4ec", fill_type="solid")
             elif node.category == "memory":
                 fill = self._memory_fill
@@ -1285,8 +1281,8 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
             ("Compute (µs)", 12),
             ("Memory (µs)", 12),
             ("Total Latency (µs)", 14),
-            ("Recompute Replay (us)", 18),
-            ("Final Latency (us)", 14),
+            ("Recompute Replay (µs)", 18),
+            ("Final Latency (µs)", 14),
             ("Bound", 10),
             ("Arith Intensity", 14),
         ]

@@ -24,7 +24,6 @@ from zrt.training.spec.model import ModelSpec
 from zrt.training.spec.strategy import PPSched, Strategy, resolve_muon_ns_steps
 from zrt.training.spec.system import SystemSpec
 
-
 PP_SCHED_BY_NAME: dict[str, PPSched] = {
     "1f1b": PPSched.ONE_F_ONE_B,
     "interleaved": PPSched.INTERLEAVED,
@@ -51,19 +50,19 @@ class StepResult:
     """
 
     # ── Core step timing ──────────────────────────────────────────────────
-    step_time: float = 0.0          # Total step time (seconds)
-    pipeline_time: float = 0.0      # Pipeline time = compute_time + exposed_comm
-    optimizer_time: float = 0.0     # Optimizer step compute
-    optimizer_comm: float = 0.0     # Optimizer step comm exposed on critical path (post-hide)
+    step_time: float = 0.0  # Total step time (seconds)
+    pipeline_time: float = 0.0  # Pipeline time = compute_time + exposed_comm
+    optimizer_time: float = 0.0  # Optimizer step compute
+    optimizer_comm: float = 0.0  # Optimizer step comm exposed on critical path (post-hide)
     optimizer_comm_hidden: float = 0.0  # Optimizer AG hidden under NS compute (Moonshot rotation)
 
     # ── Pipeline structure (set by composers) ─────────────────────────────
     bubble_fraction: float = 0.0
-    bubble: float = 0.0             # Absolute pipeline-idle time = warmup + cooldown (s)
+    bubble: float = 0.0  # Absolute pipeline-idle time = warmup + cooldown (s)
     warmup: float = 0.0
     steady: float = 0.0
     cooldown: float = 0.0
-    dp_exposed: float = 0.0         # DP AR/RS on critical path (set by composer; also DP group share)
+    dp_exposed: float = 0.0  # DP AR/RS on critical path (set by composer; also DP group share)
     schedule_name: str = "1f1b"
     warmup_steps: int = 0
     cooldown_steps: int = 0
@@ -71,7 +70,7 @@ class StepResult:
     memory: MemBreakdown | None = None
     mfu: float = 0.0
     hfu: float = 0.0
-    mfu_native: float = 0.0   # MFU vs op-mix-weighted effective peak
+    mfu_native: float = 0.0  # MFU vs op-mix-weighted effective peak
 
     # ── Fwd/Bwd phase breakdown (seconds) ────────────────────────────────
     warmup_fwd: float = 0.0
@@ -85,31 +84,31 @@ class StepResult:
     steady_per_mb: float = 0.0
 
     # ── Compute / comm breakdown (set by pipeline_step_time) ─────────────
-    compute_time: float = 0.0       # Pure compute on critical path
-    fwd_compute: float = 0.0        # Forward compute only (excludes all comm)
-    bwd_compute: float = 0.0        # Backward compute only (excludes comm AND recompute)
-    recompute_time: float = 0.0     # Activation-recompute fwd-redo on critical path.
-                                    # 0 with no recompute policy; >0 for full/selective.
-                                    # Part of compute_time, attributed out of bwd_compute.
+    compute_time: float = 0.0  # Pure compute on critical path
+    fwd_compute: float = 0.0  # Forward compute only (excludes all comm)
+    bwd_compute: float = 0.0  # Backward compute only (excludes comm AND recompute)
+    recompute_time: float = 0.0  # Activation-recompute fwd-redo on critical path.
+    # 0 with no recompute policy; >0 for full/selective.
+    # Part of compute_time, attributed out of bwd_compute.
     recompute_time_raw: float = 0.0  # Raw recompute magnitude = M × max-over-stages
-                                    # per-mb recompute. NOT in step_time / compute_time:
-                                    # when the recomputed stage is not the pipeline
-                                    # bottleneck this work is hidden and recompute_time
-                                    # (critical-path) is 0 while this stays > 0.
-    exposed_comm: float = 0.0       # Comm on critical path = Σ *_exposed fields
+    # per-mb recompute. NOT in step_time / compute_time:
+    # when the recomputed stage is not the pipeline
+    # bottleneck this work is hidden and recompute_time
+    # (critical-path) is 0 while this stays > 0.
+    exposed_comm: float = 0.0  # Comm on critical path = Σ *_exposed fields
 
     # Per-group exposed comm (Σ = exposed_comm)
-    tp_exposed: float = 0.0         # TP RS/AG (after CoC/MC2 reduction)
-    cp_exposed: float = 0.0         # CP A2A
-    ep_exposed: float = 0.0         # EP A2A (after wave-overlap reduction)
-    pp_exposed: float = 0.0         # PP P2P
+    tp_exposed: float = 0.0  # TP RS/AG (after CoC/MC2 reduction)
+    cp_exposed: float = 0.0  # CP A2A
+    ep_exposed: float = 0.0  # EP A2A (after wave-overlap reduction)
+    pp_exposed: float = 0.0  # PP P2P
     # dp_exposed declared in pipeline section; equals DP group contribution to exposed_comm
 
     # Hidden comm — runs in parallel with compute, NOT on critical path
-    hidden_comm: float = 0.0        # Total hidden = Σ *_hidden fields
-    dp_hidden: float = 0.0          # DP AR absorbed in pipeline bubble
-    tp_hidden: float = 0.0          # TP hidden by CoC/MC2
-    ep_hidden: float = 0.0          # EP hidden by wave-overlap
+    hidden_comm: float = 0.0  # Total hidden = Σ *_hidden fields
+    dp_hidden: float = 0.0  # DP AR absorbed in pipeline bubble
+    tp_hidden: float = 0.0  # TP hidden by CoC/MC2
+    ep_hidden: float = 0.0  # EP hidden by wave-overlap
 
     # Total comm volume = exposed + hidden
     total_comm_volume: float = 0.0  # All comm in step
@@ -124,9 +123,9 @@ class StepResult:
 
 
 def _dp_hide_window(
-    cooldown: float,
-    steady_bwd_total: float,
-    strategy: Strategy,
+        cooldown: float,
+        steady_bwd_total: float,
+        strategy: Strategy,
 ) -> float:
     """Time window in which DP grad-reduce can be hidden.
 
@@ -149,10 +148,10 @@ def _dp_hide_window(
 
 
 def _dp_hidden(
-    dp_ar_time: float,
-    cooldown: float,
-    steady_bwd_total: float,
-    strategy: Strategy,
+        dp_ar_time: float,
+        cooldown: float,
+        steady_bwd_total: float,
+        strategy: Strategy,
 ) -> float:
     """Hidden portion of DP grad-reduce time (seconds).
 
@@ -188,12 +187,12 @@ class PipelineComposer(ABC):
 
     @abstractmethod
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         ...
 
@@ -201,12 +200,12 @@ class PipelineComposer(ABC):
 class OneF1BComposer(PipelineComposer):
 
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         """Standard 1F1B pipeline schedule.
 
@@ -309,12 +308,12 @@ class Interleaved1F1BComposer(PipelineComposer):
     """
 
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         V = strategy.vpp_chunks
         if V <= 1 or pp <= 1:
@@ -377,12 +376,12 @@ class DualPipeComposer(PipelineComposer):
     """
 
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         if pp <= 1:
             return OneF1BComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
@@ -390,13 +389,25 @@ class DualPipeComposer(PipelineComposer):
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
         t_stage_max = t_fwd_max + t_bwd_max
-        t_fb = max(t_fwd_max, t_bwd_max)                              # F&B = max(F,B)
-        t_w  = max((st.bwd_dw for st in stage_times), default=0.0)   # W = bwd_dw
+        t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
+        t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
-        # (PP/2-1)(F&B+B-3W) — DualPipe README
-        bubble = max(pp / 2 - 1, 0) * max(t_fb + t_bwd_max - 3 * t_w, 0.0)
-        warmup = bubble / 2.0
-        cooldown = bubble / 2.0
+        # Per design doc §7.2.1 and §7.2.4:
+        #   warmup   = (PP/2-1) * max(F&B - 2*W, ZB_BUBBLE_FLOOR)
+        #   cooldown = (PP/2-1) * max(B - W, ZB_BUBBLE_FLOOR)
+        #   bubble   = warmup + cooldown = (PP/2-1)(F&B+B-3W) with floor per-slot
+        #
+        # DualPipe cooldown uses full B (not B_dx) because the backward drain
+        # phase in DualPipe's antiparallel design does NOT split B into dX/dW —
+        # W fills part of the backward slot, but unlike ZeroBubble the split
+        # is implicit in the overlapping schedule.
+        ZB_BUBBLE_FLOOR_PER_TRANSITION = 2e-6  # 2 µs P2P latency per slot
+        slots = max(pp / 2 - 1, 0)
+        warmup_bubble_per_slot = max(t_fb - 2 * t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        cooldown_bubble_per_slot = max(t_bwd_max - t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        warmup = slots * warmup_bubble_per_slot
+        cooldown = slots * cooldown_bubble_per_slot
+        bubble = warmup + cooldown
         steady = M * t_stage_max
         steady_bwd_total = M * t_bwd_max
         hidden = _dp_hidden(dp_ar_time, cooldown, steady_bwd_total, strategy)
@@ -437,12 +448,12 @@ class DualPipeVComposer(PipelineComposer):
     """
 
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         V = strategy.vpp_chunks
         if V <= 1:
@@ -453,13 +464,20 @@ class DualPipeVComposer(PipelineComposer):
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
         t_stage_max = t_fwd_max + t_bwd_max
-        t_fb = max(t_fwd_max, t_bwd_max)                              # F&B = max(F,B)
-        t_w  = max((st.bwd_dw for st in stage_times), default=0.0)   # W = bwd_dw
+        t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
+        t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
-        # (PP/2-1)(F&B+B-3W)/V — DualPipe README (V-chunk variant)
-        bubble = max(pp / 2 - 1, 0) / V * max(t_fb + t_bwd_max - 3 * t_w, 0.0)
-        warmup = bubble / 2.0
-        cooldown = bubble / 2.0
+        # Per design doc §7.2.1 and §7.2.4 (V-chunk variant):
+        #   warmup   = (PP/2-1)/V * max(F&B - 2*W, ZB_BUBBLE_FLOOR)
+        #   cooldown = (PP/2-1)/V * max(B - W, ZB_BUBBLE_FLOOR)
+        #   bubble   = warmup + cooldown = (PP/2-1)(F&B+B-3W)/V with floor per-slot
+        ZB_BUBBLE_FLOOR_PER_TRANSITION = 2e-6  # 2 µs P2P latency per slot
+        slots = max(pp / 2 - 1, 0)
+        warmup_bubble_per_slot = max(t_fb - 2 * t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        cooldown_bubble_per_slot = max(t_bwd_max - t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        warmup = slots / V * warmup_bubble_per_slot
+        cooldown = slots / V * cooldown_bubble_per_slot
+        bubble = warmup + cooldown
         steady = M * t_stage_max
         steady_bwd_total = M * t_bwd_max
         hidden = _dp_hidden(dp_ar_time, cooldown, steady_bwd_total, strategy)
@@ -505,12 +523,12 @@ class ZeroBubbleComposer(PipelineComposer):
     """
 
     def compose(
-        self,
-        stage_times: list[StageTime],
-        M: int,
-        pp: int,
-        dp_ar_time: float,
-        strategy: Strategy,
+            self,
+            stage_times: list[StageTime],
+            M: int,
+            pp: int,
+            dp_ar_time: float,
+            strategy: Strategy,
     ) -> StepResult:
         if pp <= 1:
             return OneF1BComposer().compose(stage_times, M, pp, dp_ar_time, strategy)
@@ -523,22 +541,31 @@ class ZeroBubbleComposer(PipelineComposer):
 
         # ZB-1P/ZB-V keep a residual per-transition bubble even when t_w ≈ t_stage.
         # The empirical floor is roughly 2 microseconds (P2P latency) per pp-1
-        # transition. We use 1e-6 s here as the minimum unit; callers that want
-        # a hardware-derived floor can pass it in via stage_times comm_bwd already
-        # baked into t_stage. This avoids the "0 bubble" artifact in search.
+        # transition. This avoids the "0 bubble" artifact in search.
         #
-        # Reference formula (F+B-2W) from DualPipe README: weight-gradient work
-        # (W) fills bubbles on BOTH forward and backward passes, so we subtract
-        # 2*t_w instead of t_w.
+        # Per design doc §7.2.1 and §7.2.4:
+        #   warmup   = (PP-1) * max(F - W, ZB_BUBBLE_FLOOR)
+        #   cooldown = (PP-1) * max(B_dx - W, ZB_BUBBLE_FLOOR)
+        #   bubble   = warmup + cooldown = (PP-1)(F+B_dx-2W) with floor per-transition
+        #
+        # Note: cooldown uses B_dx (activation gradient backward) not B (full backward),
+        # because W (weight gradient) can fill only the activation-gradient portion.
         ZB_BUBBLE_FLOOR_PER_TRANSITION = 2e-6  # 2 µs P2P latency per pp transition
-        bubble = max((pp - 1) * max(t_stage - 2 * t_w, 0.0),
-                     (pp - 1) * ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        warmup_bubble_per_stage = max(t_fwd - t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        cooldown_bubble_per_stage = max(bottleneck.bwd_dx - t_w, ZB_BUBBLE_FLOOR_PER_TRANSITION)
+        warmup = (pp - 1) * warmup_bubble_per_stage
+        cooldown = (pp - 1) * cooldown_bubble_per_stage
+        bubble = warmup + cooldown
+
         if strategy.dualbatch and pp > 1:
             V = max(1, strategy.vpp_chunks)
-            bubble = min(bubble, _dualbatch_bubble_floor(pp, V, t_stage))
-        warmup = bubble / 2.0
+            dual_batch_bubble = _dualbatch_bubble_floor(pp, V, t_stage)
+            if dual_batch_bubble < bubble:
+                bubble = dual_batch_bubble
+                warmup = bubble / 2.0
+                cooldown = bubble / 2.0
+
         steady = M * t_stage
-        cooldown = bubble / 2.0
 
         steady_bwd_total = M * t_bwd
         hidden = _dp_hidden(dp_ar_time, cooldown, steady_bwd_total, strategy)
@@ -580,10 +607,10 @@ COMPOSER_BY_SCHED: dict[PPSched, type[PipelineComposer]] = {
 
 
 def pipeline_step_time(
-    graph: Graph,
-    model: ModelSpec,
-    system: SystemSpec,
-    strategy: Strategy,
+        graph: Graph,
+        model: ModelSpec,
+        system: SystemSpec,
+        strategy: Strategy,
 ) -> StepResult:
     """Compute full training step time from IR + strategy.
 
@@ -690,7 +717,7 @@ def pipeline_step_time(
         step.tp_hidden = step.ep_hidden = 0.0
 
     exposed_comm_excl_dp = (step.tp_exposed + step.ep_exposed
-                          + step.cp_exposed + step.pp_exposed)
+                            + step.cp_exposed + step.pp_exposed)
     step.exposed_comm = exposed_comm_excl_dp + step.dp_exposed
     # compute_time exact: compute_time + exposed_comm == pipeline_time (by construction from composer)
     step.compute_time = step.pipeline_time - step.exposed_comm
@@ -760,9 +787,9 @@ def pipeline_step_time(
     #      assumption, matches Megatron-Core distributed-optimizer behavior.
     #      Hide window: warmup_fwd for pp>1; one microbatch fwd for pp=1.
     rotation_active = (
-        strategy.optimizer.value == "muon"
-        and strategy.muon_config is not None
-        and strategy.muon_config.rotation
+            strategy.optimizer.value == "muon"
+            and strategy.muon_config is not None
+            and strategy.muon_config.rotation
     )
     if rotation_active:
         fwd_window = max(step.warmup_fwd, step.steady_fwd_per_mb)
@@ -907,9 +934,9 @@ def util_from_flops(flops: float, peak_flops_total: float, step_time_s: float) -
 
 
 def compute_mfu(
-    model: ModelSpec, strategy: Strategy,
-    system: SystemSpec, step_time: float,
-    graph: Graph,
+        model: ModelSpec, strategy: Strategy,
+        system: SystemSpec, step_time: float,
+        graph: Graph,
 ) -> float:
     """Model FLOPs Utilization.
 
@@ -939,9 +966,9 @@ def compute_mfu(
 
 
 def compute_hfu(
-    model: ModelSpec, strategy: Strategy,
-    system: SystemSpec, step_time: float,
-    graph: Graph,
+        model: ModelSpec, strategy: Strategy,
+        system: SystemSpec, step_time: float,
+        graph: Graph,
 ) -> float:
     """Hardware FLOPs Utilization — accounts for recomputed activations.
 
@@ -962,9 +989,9 @@ def compute_hfu(
 
 
 def compute_mfu_native(
-    model: ModelSpec, strategy: Strategy,
-    system: SystemSpec, step_time: float,
-    graph: Graph,
+        model: ModelSpec, strategy: Strategy,
+        system: SystemSpec, step_time: float,
+        graph: Graph,
 ) -> float:
     """MFU with denominator = effective hardware peak under mixed precision.
 

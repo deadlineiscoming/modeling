@@ -1,22 +1,33 @@
 """HTML exporter for spec-based training estimation (--estimate-config).
 
-Produces a self-contained HTML page showing the hierarchical model structure
-(model -> layer -> block -> op) as a computational graph with timing info.
+Produces a self-contained HTML page with:
+1. Summary: model / hardware / topology / strategy / performance / memory / bound.
+2. Logical cluster topology with PP / DP / TP / EP / CP rank labels.
+3. Model-level timing overview in Transformer-Explainer-like blocks.
+4. Expandable model -> layer/block -> op timing/formula/bound analysis.
+5. Calibration table with public/official reference points.
+
+Security notes:
+- JSON payload is injected with JSON.parse(<safe JS string literal>), not as a raw
+  object literal.
+- HTML title is escaped.
+- User/model/op strings are escaped again in browser-side rendering.
 """
+
 from __future__ import annotations
 
+import html as html_lib
 import json
-import math
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from zrt.training.ir.training_graph import Graph, Op
     from zrt.training.models.flops import OpCost
     from zrt.training.spec.model import ModelSpec
+    from zrt.training.spec.report import TrainingReport
     from zrt.training.spec.strategy import Strategy
     from zrt.training.spec.system import SystemSpec
-    from zrt.training.spec.report import TrainingReport
 
 
 def _fmt_shape(shape: tuple[int, ...]) -> str:
@@ -27,24 +38,79 @@ def _fmt_shape(shape: tuple[int, ...]) -> str:
 
 
 def _fmt_tensor(t) -> str:
-    """Format a Tensor as 'name: shape dtype'."""
-    return f"{_fmt_shape(t.shape_local)} {t.dtype.value}"
+    """Format a Tensor as 'shape dtype'."""
+    dtype = getattr(getattr(t, "dtype", None), "value", getattr(t, "dtype", ""))
+    return f"{_fmt_shape(t.shape_local)} {dtype}"
 
 
 def _tensor_list_info(tensors: list, label: str = "") -> str:
     """Format input/output tensor list."""
     if not tensors:
         return "-"
+
     parts = []
     for t in tensors:
-        flag = "W" if t.is_param else "A"  # Weight vs Activation
-        parts.append(f"[{flag}] {_fmt_tensor(t)}")
+        flag = "W" if getattr(t, "is_param", False) else "A"
+        name = getattr(t, "name", "")
+        parts.append(f"[{flag}] {name}: {_fmt_tensor(t)}")
     return " | ".join(parts)
 
 
+def _bpe_from_op(op) -> int:
+    """Bytes per element from op tensors."""
+    if getattr(op, "inputs", None):
+        return op.inputs[0].dtype.bytes
+    if getattr(op, "outputs", None):
+        return op.outputs[0].dtype.bytes
+    return 2
+
+
+def _fmt_e(v: float) -> str:
+    """Format a number in compact scientific-like units."""
+    try:
+        v = float(v)
+    except Exception:
+        return "-"
+
+    if v <= 0:
+        return "-"
+    if v >= 1e15:
+        return f"{v / 1e15:.2f}P"
+    if v >= 1e12:
+        return f"{v / 1e12:.2f}T"
+    if v >= 1e9:
+        return f"{v / 1e9:.2f}G"
+    if v >= 1e6:
+        return f"{v / 1e6:.2f}M"
+    if v >= 1e3:
+        return f"{v / 1e3:.2f}K"
+    return f"{v:.0f}"
+
+
+def _fwd_flops(cost) -> float:
+    return cost.fwd_cube_flops + cost.fwd_vector_flops
+
+
+def _dx_flops(cost) -> float:
+    return cost.dx_cube_flops + cost.dx_vector_flops
+
+
+def _dw_flops(cost) -> float:
+    return cost.dw_cube_flops + cost.dw_vector_flops
+
+
 def _op_formula(op, cost):
-    """Return (fwd_formula, bwd_formula, fwd_bytes_formula, bwd_bytes_formula) for an op."""
-    m = op.meta
+    """Return formula strings for one op.
+
+    Returns:
+        tuple:
+            fwd_formula,
+            bwd_formula,
+            fwd_bytes_formula,
+            bwd_bytes_formula
+    """
+    m = getattr(op, "meta", {}) or {}
+
     ff = _fwd_flops(cost)
     df = _dx_flops(cost)
     wf = _dw_flops(cost)
@@ -55,15 +121,26 @@ def _op_formula(op, cost):
         kk = m.get("k_local", m.get("k", 0))
         mult = m.get("fwd_multiplier", 1.0)
         bpe = _bpe_from_op(op)
+
         fwd_val = ff
         bytes_val = cost.fwd_bytes
 
         if mult != 1.0:
-            fwd_str = f"2×m×n×k×{mult} = 2×{mm}×{nn}×{kk}×{mult} = {_fmt_e(fwd_val)}"
+            fwd_str = (
+                f"2×m×n×k×{mult} = "
+                f"2×{mm}×{nn}×{kk}×{mult} = {_fmt_e(fwd_val)}"
+            )
         else:
-            fwd_str = f"2×m×n×k = 2×{mm}×{nn}×{kk} = {_fmt_e(fwd_val)}"
+            fwd_str = (
+                f"2×m×n×k = "
+                f"2×{mm}×{nn}×{kk} = {_fmt_e(fwd_val)}"
+            )
+
         bwd_str = f"dx+dw = 2×fwd = {_fmt_e(df + wf)}"
-        bytes_str = f"(m×k+k×n+m×n)×bpe = ({mm}×{kk}+{kk}×{nn}+{mm}×{nn})×{bpe} = {_fmt_e(bytes_val)}"
+        bytes_str = (
+            f"(m×k+k×n+m×n)×bpe = "
+            f"({mm}×{kk}+{kk}×{nn}+{mm}×{nn})×{bpe} = {_fmt_e(bytes_val)}"
+        )
         return fwd_str, bwd_str, bytes_str, bytes_str
 
     if op.kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn"):
@@ -77,19 +154,45 @@ def _op_formula(op, cost):
 
         if topk > 0:
             eff = topk + swa
-            fwd_str = f"2×b×s×(topk+swa)×h×d = 2×{b}×{s}×{eff}×{h}×{d} = {_fmt_e(ff)}"
+            fwd_str = (
+                f"2×b×s×(topk+swa)×h×d = "
+                f"2×{b}×{s}×{eff}×{h}×{d} = {_fmt_e(ff)}"
+            )
         elif cr > 0:
             c_len = max(1, s // cr)
             eff = c_len + swa
-            fwd_str = f"2×b×s×(s/r+swa)×h×d = 2×{b}×{s}×{eff}×{h}×{d} = {_fmt_e(ff)}"
+            fwd_str = (
+                f"2×b×s×(s/r+swa)×h×d = "
+                f"2×{b}×{s}×{eff}×{h}×{d} = {_fmt_e(ff)}"
+            )
         elif swa > 0:
-            fwd_str = f"2×b×s×swa×h×d = 2×{b}×{s}×{swa}×{h}×{d} = {_fmt_e(ff)}"
+            fwd_str = (
+                f"2×b×s×swa×h×d = "
+                f"2×{b}×{s}×{swa}×{h}×{d} = {_fmt_e(ff)}"
+            )
         else:
-            fwd_str = f"2×b×s²×h×d = 2×{b}×{s}²×{h}×{d} = {_fmt_e(ff)}"
-        bwd_str = f"2.5×fwd (FlashAttn internal recompute) = {_fmt_e(df)}"
-        kv_len = (topk + swa) if topk > 0 else (max(1, s // cr) + swa if cr > 0 else (swa if swa > 0 else s))
-        bytes_str = f"(2×b×h×s×d + 2×b×h×kv_len×d)×bpe = (2×{b}×{h}×{s}×{d} + 2×{b}×{h}×{kv_len}×{d})×bpe = {_fmt_e(cost.fwd_bytes)}"
-        bwd_bytes_str = f"(3×b×h×s×d + 4×b×h×kv_len×d)×bpe = {_fmt_e(cost.dx_bytes)}"
+            fwd_str = (
+                f"2×b×s²×h×d = "
+                f"2×{b}×{s}²×{h}×{d} = {_fmt_e(ff)}"
+            )
+
+        bwd_str = f"2.5×fwd, including attention backward/recompute approximation = {_fmt_e(df)}"
+
+        kv_len = (
+            (topk + swa)
+            if topk > 0
+            else (max(1, s // cr) + swa if cr > 0 else (swa if swa > 0 else s))
+        )
+
+        bytes_str = (
+            f"(2×b×h×s×d + 2×b×h×kv_len×d)×bpe = "
+            f"(2×{b}×{h}×{s}×{d} + 2×{b}×{h}×{kv_len}×{d})×bpe "
+            f"= {_fmt_e(cost.fwd_bytes)}"
+        )
+        bwd_bytes_str = (
+            f"(3×b×h×s×d + 4×b×h×kv_len×d)×bpe "
+            f"= {_fmt_e(cost.dx_bytes)}"
+        )
         return fwd_str, bwd_str, bytes_str, bwd_bytes_str
 
     if op.kind in ("rmsnorm", "ln"):
@@ -103,7 +206,7 @@ def _op_formula(op, cost):
 
     if op.kind == "rope":
         n = sum(t.num_elements() for t in op.outputs) if op.outputs else 0
-        fwd_str = f"2×N (sin/cos mul) = 2×{n} = {_fmt_e(ff)}"
+        fwd_str = f"2×N, sin/cos mul = 2×{n} = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df)}"
         bytes_str = f"tensor I/O = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
@@ -111,7 +214,7 @@ def _op_formula(op, cost):
 
     if op.kind == "swiglu":
         n = sum(t.num_elements() for t in op.outputs) if op.outputs else 0
-        fwd_str = f"5×N (sig+mul) = 5×{n} = {_fmt_e(ff)}"
+        fwd_str = f"5×N, sigmoid + mul = 5×{n} = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df)}"
         bytes_str = f"tensor I/O = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
@@ -119,7 +222,7 @@ def _op_formula(op, cost):
 
     if op.kind == "add":
         n = sum(t.num_elements() for t in op.outputs) if op.outputs else 0
-        fwd_str = f"1×N (add) = {n} = {_fmt_e(ff)}"
+        fwd_str = f"1×N, add = {n} = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df)}"
         bytes_str = f"tensor I/O = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
@@ -127,7 +230,7 @@ def _op_formula(op, cost):
 
     if op.kind == "softmax":
         n = sum(t.num_elements() for t in op.outputs) if op.outputs else 0
-        fwd_str = f"4×N (max/sub/exp/div) = 4×{n} = {_fmt_e(ff)}"
+        fwd_str = f"4×N, max/sub/exp/div = 4×{n} = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df)}"
         bytes_str = f"tensor I/O = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
@@ -138,10 +241,13 @@ def _op_formula(op, cost):
         kv = m.get("kv_len", s)
         ih = m.get("ih_local", m.get("ih", 0))
         id_ = m.get("id", 0)
-        fwd_str = f"2×s×kv_len×ih×id_ = 2×{s}×{kv}×{ih}×{id_} = {_fmt_e(ff)}"
-        bwd_str = f"2×fwd (idx_q grad only) = {_fmt_e(df)}"
+        fwd_str = (
+            f"2×s×kv_len×ih×id = "
+            f"2×{s}×{kv}×{ih}×{id_} = {_fmt_e(ff)}"
+        )
+        bwd_str = f"2×fwd, indexer query gradient approximation = {_fmt_e(df)}"
         bytes_str = f"fwd_bytes = {_fmt_e(cost.fwd_bytes)}"
-        bwd_bytes_str = f"dx_bytes = - (grad via matmul bwd)"
+        bwd_bytes_str = "dx_bytes = - or folded into matmul backward"
         return fwd_str, bwd_str, bytes_str, bwd_bytes_str
 
     if op.kind == "compressor_pool":
@@ -149,7 +255,10 @@ def _op_formula(op, cost):
         mm_ = m.get("m", 4)
         co = m.get("coff", 1)
         dd = m.get("d_local", m.get("d", 0))
-        fwd_str = f"4×(s/m)×coff×m×d = 4×({s}//{mm_})×{co}×{mm_}×{dd} = {_fmt_e(ff)}"
+        fwd_str = (
+            f"4×(s/m)×coff×m×d = "
+            f"4×({s}//{mm_})×{co}×{mm_}×{dd} = {_fmt_e(ff)}"
+        )
         bwd_str = f"= fwd = {_fmt_e(df)}"
         bytes_str = f"bytes = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
@@ -158,14 +267,14 @@ def _op_formula(op, cost):
     if op.kind == "embed":
         s = m.get("m", 0)
         h = m.get("n", 0)
-        fwd_str = f"0 (gather, no FLOPs)"
-        bwd_str = f"0 (scatter, no FLOPs)"
+        fwd_str = "0, gather-style embedding lookup has no modeled FLOPs"
+        bwd_str = "0, scatter-style embedding gradient has no modeled FLOPs"
         bytes_str = f"s×h×bpe = {s}×{h}×bpe = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"same as fwd = {_fmt_e(cost.dx_bytes)}"
         return fwd_str, bwd_str, bytes_str, bwd_bytes_str
 
     if op.kind in ("mhc_pre", "mhc_post", "mhc_head"):
-        fwd_str = f"fwd = {_fmt_e(ff)}"
+        fwd_str = f"mHC fused op fwd = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df + wf)}"
         bytes_str = f"= {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"= {_fmt_e(cost.dx_bytes + cost.dw_bytes)}"
@@ -174,51 +283,20 @@ def _op_formula(op, cost):
     if op.kind == "hash_route":
         return "negligible", "negligible", "negligible", "negligible"
 
-    # Fallback
-    return f"fwd = {_fmt_e(ff)}", f"bwd = {_fmt_e(df + wf)}", \
-           f"bytes = {_fmt_e(cost.fwd_bytes)}", f"dx_bytes = {_fmt_e(cost.dx_bytes + cost.dw_bytes)}"
+    return (
+        f"fwd = {_fmt_e(ff)}",
+        f"bwd = {_fmt_e(df + wf)}",
+        f"bytes = {_fmt_e(cost.fwd_bytes)}",
+        f"dx+dw bytes = {_fmt_e(cost.dx_bytes + cost.dw_bytes)}",
+    )
 
-
-def _bpe_from_op(op) -> int:
-    """Bytes per element from op tensors."""
-    if op.inputs:
-        return op.inputs[0].dtype.bytes
-    if op.outputs:
-        return op.outputs[0].dtype.bytes
-    return 2
-
-
-def _fmt_e(v: float) -> str:
-    """Format a number in scientific notation."""
-    if v <= 0:
-        return "-"
-    if v >= 1e15:
-        return f"{v/1e15:.2f}P"
-    if v >= 1e12:
-        return f"{v/1e12:.2f}T"
-    if v >= 1e9:
-        return f"{v/1e9:.2f}G"
-    if v >= 1e6:
-        return f"{v/1e6:.2f}M"
-    if v >= 1e3:
-        return f"{v/1e3:.2f}K"
-    return f"{v:.0f}"
-
-
-def _fwd_flops(cost) -> float:
-    return cost.fwd_cube_flops + cost.fwd_vector_flops
-
-def _dx_flops(cost) -> float:
-    return cost.dx_cube_flops + cost.dx_vector_flops
-
-def _dw_flops(cost) -> float:
-    return cost.dw_cube_flops + cost.dw_vector_flops
 
 def _op_detail(op, cost):
-    """Return a dict with full op info for Excel/HTML."""
+    """Return a dict with full op info for HTML."""
     inputs_info = _tensor_list_info(op.inputs, "input")
     outputs_info = _tensor_list_info(op.outputs, "output")
     fwd_formula, bwd_formula, fwd_bytes_formula, bwd_bytes_formula = _op_formula(op, cost)
+
     return {
         "inputs": inputs_info,
         "outputs": outputs_info,
@@ -229,60 +307,124 @@ def _op_detail(op, cost):
     }
 
 
-def _classify_ops_in_layer(ops: list[Op], layer_kind: str) -> list[dict]:
-    """Split a layer's ops into logical blocks using explicit name markers."""
-    if layer_kind == "moe":
-        boundaries = [
-            ("Attention + Indexer", "ln1", "residual1"),
-            ("Router + Shared Expert", "ln2", "shared_down_proj"),
-            ("Routed Expert", "routed_expert_ffn", "residual2"),
-        ]
-    elif layer_kind == "mtp":
-        boundaries = [
-            ("MTP Embed", None, "ln1"),
-            ("Attention + Indexer", "ln1", "residual1"),
-            ("Router + Shared Expert", "ln2", "residual2"),
-        ]
-    else:
-        boundaries = [
-            ("Attention", "ln1", "residual1"),
-            ("FFN", "ln2", "residual2"),
-        ]
+def _classify_ops_in_layer(ops: list["Op"], layer_kind: str) -> list[dict]:
+    """Split a layer's ops into logical blocks.
 
-    blocks = []
-    for name, start_marker, end_marker in boundaries:
-        block_ops = []
-        capturing = start_marker is None
-        for op in ops:
-            if start_marker and start_marker in op.name:
-                capturing = True
-            if capturing:
-                block_ops.append(op)
-                if end_marker and end_marker in op.name:
-                    # Remove end marker op from this block if it's the start of next
-                    if start_marker is None or (start_marker and start_marker in op.name):
-                        block_ops.pop()
-                    break
-        if block_ops:
-            blocks.append({"name": name, "ops": block_ops})
+    This function is intentionally heuristic. It groups common DeepSeek-like
+    layer op names into user-facing blocks for the expandable report.
+    """
+    layer_kind = str(layer_kind).lower()
 
-    return blocks
+    blocks = {
+        "HyperConnection": [],
+        "Attention + Indexer": [],
+        "Router + Shared Expert": [],
+        "Routed Expert": [],
+        "MTP Embed": [],
+        "FFN": [],
+        "Other Ops": [],
+    }
+
+    for op in ops:
+        name = op.name.lower()
+        kind = op.kind.lower()
+        comp = str(getattr(op, "component", "") or "").lower()
+
+        if kind in ("mhc_pre", "mhc_post", "mhc_head") or "mhc" in name or "hc_" in name:
+            blocks["HyperConnection"].append(op)
+            continue
+
+        if layer_kind == "mtp" and ("mtp" in name or "embed_proj" in name):
+            blocks["MTP Embed"].append(op)
+            continue
+
+        if (
+            "attn" in name
+            or "attention" in comp
+            or "ln1" in name
+            or "wq" in name
+            or "wkv" in name
+            or "q_norm" in name
+            or "kv_norm" in name
+            or "rope" in name
+            or "compress" in name
+            or "indexer" in name
+            or "idx_" in name
+            or "wo_" in name
+            or kind in ("attn_core", "sparse_attn", "hca_attn", "swa_attn")
+        ):
+            blocks["Attention + Indexer"].append(op)
+            continue
+
+        if (
+            "router" in name
+            or "topk" in name
+            or "hash_route" in name
+            or "shared_" in name
+            or "shared" in comp
+        ):
+            blocks["Router + Shared Expert"].append(op)
+            continue
+
+        if (
+            "routed" in name
+            or "expert_agg" in name
+            or "expert" in comp
+        ):
+            blocks["Routed Expert"].append(op)
+            continue
+
+        if (
+            "ln2" in name
+            or "ffn" in name
+            or "up_proj" in name
+            or "down_proj" in name
+            or "gate_proj" in name
+            or "swiglu" in name
+        ):
+            blocks["FFN"].append(op)
+            continue
+
+        blocks["Other Ops"].append(op)
+
+    ordered_names = [
+        "MTP Embed",
+        "HyperConnection",
+        "Attention + Indexer",
+        "Router + Shared Expert",
+        "Routed Expert",
+        "FFN",
+        "Other Ops",
+    ]
+
+    return [
+        {"name": name, "ops": blocks[name]}
+        for name in ordered_names
+        if blocks[name]
+    ]
 
 
-def _op_to_dict(op: Op, cost: OpCost, system) -> dict:
-    """Convert an op + its cost to a dict for the HTML template."""
+def _op_to_dict(op: "Op", cost: "OpCost", system) -> dict:
+    """Convert an op + cost to a dict for the HTML template."""
     from zrt.training.compose.stage import _cost_phase_time, has_heterogeneous_compute
+
     gpu_name = system.gpu.name
     overlap = system.gpu.overlap_ratio.get(op.kind, 0.0) if has_heterogeneous_compute(system) else 0.0
+
     fwd_t = _cost_phase_time(cost, "fwd", system, gpu_name, overlap)
     dx_t = _cost_phase_time(cost, "dx", system, gpu_name, overlap)
     dw_t = _cost_phase_time(cost, "dw", system, gpu_name, overlap)
 
     detail = _op_detail(op, cost)
 
+    component = str(getattr(op, "component", "") or "")
+
     return {
         "name": op.name,
         "kind": op.kind,
+        "component": component,
+        "layer_id": getattr(op, "layer_id", None),
+        "layer_kind": str(getattr(op, "layer_kind", "") or ""),
         "fwd_flops": _fwd_flops(cost),
         "dx_flops": _dx_flops(cost),
         "dw_flops": _dw_flops(cost),
@@ -300,6 +442,7 @@ def _op_to_dict(op: Op, cost: OpCost, system) -> dict:
         "bwd_formula": detail["bwd_formula"],
         "fwd_bytes_formula": detail["fwd_bytes_formula"],
         "bwd_bytes_formula": detail["bwd_bytes_formula"],
+        "meta": getattr(op, "meta", {}) or {},
     }
 
 
@@ -321,41 +464,14 @@ def _safe_get(obj, name: str, default=None):
     return v
 
 
-def _fmt_ms(v: float) -> str:
-    try:
-        v = float(v)
-    except Exception:
-        return "-"
-    if abs(v) >= 1000:
-        return f"{v/1000:.2f}s"
-    if abs(v) >= 1:
-        return f"{v:.2f}ms"
-    return f"{v*1000:.2f}us"
-
-
-def _fmt_gb(v: float) -> str:
-    try:
-        return f"{float(v):.2f} GB"
-    except Exception:
-        return "-"
-
-
-def _fmt_pct(v: float) -> str:
-    try:
-        return f"{float(v) * 100:.2f}%"
-    except Exception:
-        return "-"
-
-
-def _sum_op_ms(ops: list[dict]) -> float:
-    return sum(float(op.get("total_ms", 0.0) or 0.0) for op in ops)
-
-
 def _component_of_op(op) -> str:
     """Map IR op to high-level model block for model-level summary."""
     name = op.name.lower()
     kind = op.kind.lower()
     comp = str(getattr(op, "component", "") or "").lower()
+
+    if "input" in name:
+        return "input"
 
     if "embed" in name:
         return "embedding"
@@ -388,24 +504,43 @@ def _component_of_op(op) -> str:
     ):
         return "moe"
 
-    if "lm_head" in name or "final" in name or "logit" in name:
+    if "lm_head" in name or "final" in name or "logit" in name or "output" in name:
         return "output"
-
-    if "input" in name:
-        return "input"
 
     return "other"
 
 
-def _build_summary(report, graph, model, system, strategy, op_dicts: list[dict]) -> dict:
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _to_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def _build_summary(
+    report: "TrainingReport",
+    graph: "Graph",
+    model: "ModelSpec",
+    system: "SystemSpec",
+    strategy: "Strategy",
+    op_dicts: list[dict],
+) -> dict:
     gpu = getattr(system, "gpu", None)
+
     nodes = _safe_get(system, "nodes", 1) or 1
     gpus_per_node = _safe_get(system, "gpus_per_node", 1) or 1
     world_size = _safe_get(system, "world_size", None)
     if world_size is None:
         world_size = int(nodes) * int(gpus_per_node)
 
-    layer_kinds = [_enum_value(x) for x in getattr(model, "layers", [])]
+    layer_kinds = [_enum_value(x).lower() for x in getattr(model, "layers", [])]
     layer_count = len(layer_kinds)
 
     memory = {}
@@ -419,7 +554,7 @@ def _build_summary(report, graph, model, system, strategy, op_dicts: list[dict])
 
     for od in op_dicts:
         bound = str(od.get("bound", "")).lower()
-        total_ms = float(od.get("total_ms", 0.0) or 0.0)
+        total_ms = _to_float(od.get("total_ms", 0.0))
         if "memory" in bound or "hbm" in bound:
             memory_bound_ms += total_ms
         elif "comm" in bound:
@@ -428,8 +563,8 @@ def _build_summary(report, graph, model, system, strategy, op_dicts: list[dict])
             compute_bound_ms += total_ms
 
     comm_ms = (
-        float(getattr(report, "exposed_comm_ms", 0.0) or 0.0)
-        + float(getattr(report, "optimizer_comm_ms", 0.0) or 0.0)
+        _to_float(getattr(report, "exposed_comm_ms", 0.0))
+        + _to_float(getattr(report, "optimizer_comm_ms", 0.0))
     )
     bound_total = max(compute_bound_ms + memory_bound_ms + comm_ms, 1e-12)
 
@@ -478,7 +613,11 @@ def _build_summary(report, graph, model, system, strategy, op_dicts: list[dict])
             "dp": getattr(strategy, "dp", 1),
             "micro_batch": getattr(strategy, "micro_batch", None),
             "global_batch": getattr(strategy, "global_batch", None),
-            "num_microbatches": strategy.num_microbatches() if hasattr(strategy, "num_microbatches") else None,
+            "num_microbatches": (
+                strategy.num_microbatches()
+                if hasattr(strategy, "num_microbatches")
+                else None
+            ),
             "pp_schedule": _enum_value(getattr(strategy, "pp_schedule", "")),
             "zero_stage": getattr(strategy, "zero_stage", None),
             "optimizer": _enum_value(getattr(strategy, "optimizer", "")),
@@ -522,9 +661,69 @@ def _build_summary(report, graph, model, system, strategy, op_dicts: list[dict])
     }
 
 
+def _get_rank_placement_from_config(system, strategy):
+    """Best-effort optional hook for real runtime rank placement.
+
+    Supported shapes:
+    1. strategy.rank_placement / system.rank_placement as list[dict]:
+       [
+         {"rank": 0, "node": 0, "local_rank": 0,
+          "tp": 0, "pp": 0, "dp": 0, "ep": 0, "cp": 0},
+         ...
+       ]
+
+    2. dict with key "ranks":
+       {"ranks": [ ... ]}
+
+    Existing configs continue to work. If no explicit placement is found, the
+    report will fall back to an inferred visualization-only layout.
+    """
+    candidates = [
+        getattr(strategy, "rank_placement", None),
+        getattr(strategy, "rank_map", None),
+        getattr(system, "rank_placement", None),
+        getattr(system, "rank_map", None),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        if isinstance(candidate, dict) and "ranks" in candidate:
+            candidate = candidate["ranks"]
+
+        if isinstance(candidate, list):
+            normalized = []
+            for item in candidate:
+                if not isinstance(item, dict):
+                    continue
+                if "rank" not in item:
+                    continue
+
+                rank = _to_int(item.get("rank", 0))
+                normalized.append(
+                    {
+                        "rank": rank,
+                        "node": _to_int(item.get("node", 0)),
+                        "local_rank": _to_int(item.get("local_rank", rank)),
+                        "tp": _to_int(item.get("tp", 0)),
+                        "pp": _to_int(item.get("pp", 0)),
+                        "dp": _to_int(item.get("dp", 0)),
+                        "ep": _to_int(item.get("ep", 0)),
+                        "cp": _to_int(item.get("cp", 0)),
+                    }
+                )
+
+            if normalized:
+                return normalized
+
+    return None
+
+
 def _build_topology_data(system, strategy) -> dict:
     nodes = int(_safe_get(system, "nodes", 1) or 1)
     gpus_per_node = int(_safe_get(system, "gpus_per_node", 1) or 1)
+
     world_size = _safe_get(system, "world_size", None)
     if world_size is None:
         world_size = nodes * gpus_per_node
@@ -536,6 +735,35 @@ def _build_topology_data(system, strategy) -> dict:
     dp = max(1, int(getattr(strategy, "dp", 1) or 1))
     cp = max(1, int(getattr(strategy, "cp", 1) or 1))
 
+    real_placement = _get_rank_placement_from_config(system, strategy)
+
+    if real_placement:
+        by_node: dict[int, list[dict]] = {}
+        for r in real_placement:
+            by_node.setdefault(int(r["node"]), []).append(r)
+
+        rank_nodes = []
+        for n in sorted(by_node):
+            ranks = sorted(by_node[n], key=lambda x: x["local_rank"])
+            rank_nodes.append({"node": n, "ranks": ranks})
+
+        return {
+            "nodes": rank_nodes,
+            "legend": {
+                "mapping_source": "configured_runtime_rank_placement",
+                "is_inferred": False,
+                "note": (
+                    "Rank placement is loaded from configured runtime rank placement. "
+                    "It should match the launcher or distributed runtime mapping."
+                ),
+                "tp": tp,
+                "pp": pp,
+                "ep": ep,
+                "dp": dp,
+                "cp": cp,
+            },
+        }
+
     rank_nodes = []
     for n in range(nodes):
         ranks = []
@@ -544,30 +772,40 @@ def _build_topology_data(system, strategy) -> dict:
             if r >= world_size:
                 continue
 
-            # Logical placement heuristic for visualization.
-            # The actual framework may have its own rank-ordering convention.
+            # Visualization-only heuristic.
+            # Do not treat this as authoritative runtime rank placement.
             tp_idx = r % tp
             pp_idx = (r // tp) % pp
             dp_idx = (r // max(1, tp * pp)) % dp
             ep_idx = r % ep
             cp_idx = r % cp
 
-            ranks.append({
-                "rank": r,
-                "local_rank": local,
-                "node": n,
-                "tp": tp_idx,
-                "pp": pp_idx,
-                "dp": dp_idx,
-                "ep": ep_idx,
-                "cp": cp_idx,
-            })
+            ranks.append(
+                {
+                    "rank": r,
+                    "local_rank": local,
+                    "node": n,
+                    "tp": tp_idx,
+                    "pp": pp_idx,
+                    "dp": dp_idx,
+                    "ep": ep_idx,
+                    "cp": cp_idx,
+                }
+            )
+
         rank_nodes.append({"node": n, "ranks": ranks})
 
     return {
         "nodes": rank_nodes,
         "legend": {
-            "note": "Logical rank mapping for report visualization. Verify against runtime rank mapping if the launcher uses a custom placement order.",
+            "mapping_source": "inferred_visualization_only",
+            "is_inferred": True,
+            "note": (
+                "This topology is an inferred logical visualization only. "
+                "It may not match the real runtime rank placement used by torchrun, "
+                "MindSpore, HCCL, Megatron, or a custom launcher. For accurate topology "
+                "validation, provide explicit rank_placement data."
+            ),
             "tp": tp,
             "pp": pp,
             "ep": ep,
@@ -579,31 +817,72 @@ def _build_topology_data(system, strategy) -> dict:
 
 def _build_model_overview(op_dicts: list[dict]) -> list[dict]:
     buckets = {
-        "input": {"name": "Input", "desc": "tokens / batch / sequence", "total_ms": 0.0, "ops": 0},
-        "embedding": {"name": "Embedding", "desc": "token embedding / hc_expand", "total_ms": 0.0, "ops": 0},
-        "attention": {"name": "Attention", "desc": "Q/KV, RoPE, CSA/HCA/SWA, output proj", "total_ms": 0.0, "ops": 0},
-        "moe": {"name": "MoE", "desc": "router, shared expert, routed experts", "total_ms": 0.0, "ops": 0},
-        "output": {"name": "Output", "desc": "final norm / lm_head", "total_ms": 0.0, "ops": 0},
-        "other": {"name": "Other", "desc": "residual / misc ops", "total_ms": 0.0, "ops": 0},
+        "input": {
+            "name": "Input",
+            "desc": "tokens / batch / sequence",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
+        "embedding": {
+            "name": "Embedding",
+            "desc": "token embedding / hc_expand",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
+        "attention": {
+            "name": "Attention",
+            "desc": "Q/KV, RoPE, CSA/HCA/SWA, output projection",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
+        "moe": {
+            "name": "MoE",
+            "desc": "router, shared expert, routed experts",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
+        "output": {
+            "name": "Output",
+            "desc": "final norm / lm_head",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
+        "other": {
+            "name": "Other",
+            "desc": "residual / misc ops",
+            "total_ms": 0.0,
+            "ops": 0,
+        },
     }
 
     for od in op_dicts:
         comp = od.get("component_group", "other")
         if comp not in buckets:
             comp = "other"
-        buckets[comp]["total_ms"] += float(od.get("total_ms", 0.0) or 0.0)
+        buckets[comp]["total_ms"] += _to_float(od.get("total_ms", 0.0))
         buckets[comp]["ops"] += 1
 
-    ordered = [buckets[k] for k in ("input", "embedding", "attention", "moe", "output", "other")]
+    ordered = [
+        buckets[k]
+        for k in ("input", "embedding", "attention", "moe", "output", "other")
+    ]
+
     total = max(sum(x["total_ms"] for x in ordered), 1e-12)
     for x in ordered:
         x["pct"] = x["total_ms"] / total
+
     return ordered
 
 
-def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]:
+def _build_layer_tree(
+    graph: "Graph",
+    model: "ModelSpec",
+    system: "SystemSpec",
+    op_costs: dict[str, "OpCost"],
+) -> tuple[dict, list[dict]]:
     """Build hierarchical tree: model -> layer -> block -> op."""
     layers = getattr(model, "layers", [])
+
     tree = {
         "model_name": f"{len(layers)} layers, hidden={getattr(model, 'hidden', '-')}",
         "total_ops": len(graph.ops),
@@ -613,26 +892,27 @@ def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]
 
     all_op_dicts: list[dict] = []
 
+    from zrt.training.models.flops import op_cost
+
     # Global ops: embedding / final head etc.
     for op in graph.ops:
         if getattr(op, "layer_id", -1) < 0:
             cost = op_costs.get(op.name)
             if cost is None:
-                from zrt.training.models.flops import op_cost
                 cost = op_cost(op, model, system)
+
             od = _op_to_dict(op, cost, system)
             od["component_group"] = _component_of_op(op)
+
             tree["global_ops"].append(od)
             all_op_dicts.append(od)
 
     # Per-layer data.
     for lid in range(len(layers)):
-        lk = _enum_value(layers[lid])
+        lk = _enum_value(layers[lid]).lower()
         layer_ops = graph.ops_for_layer(lid)
         blocks = _classify_ops_in_layer(layer_ops, lk)
 
-        # If marker-based classification misses some ops, place them into "Other".
-        captured = set()
         layer_data = {
             "id": lid,
             "kind": lk,
@@ -641,28 +921,36 @@ def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]
             "blocks": [],
         }
 
+        captured = set()
+
         for blk in blocks:
             blk_data = {
                 "name": blk["name"],
                 "ops": [],
                 "total_ms": 0.0,
-                "bound": {"compute_ms": 0.0, "memory_ms": 0.0, "other_ms": 0.0},
+                "bound": {
+                    "compute_ms": 0.0,
+                    "memory_ms": 0.0,
+                    "other_ms": 0.0,
+                },
             }
 
             for op in blk["ops"]:
                 captured.add(op.name)
+
                 cost = op_costs.get(op.name)
                 if cost is None:
-                    from zrt.training.models.flops import op_cost
                     cost = op_cost(op, model, system)
 
                 od = _op_to_dict(op, cost, system)
                 od["component_group"] = _component_of_op(op)
+
                 blk_data["ops"].append(od)
                 all_op_dicts.append(od)
 
-                ms = float(od.get("total_ms", 0.0) or 0.0)
+                ms = _to_float(od.get("total_ms", 0.0))
                 blk_data["total_ms"] += ms
+
                 b = str(od.get("bound", "")).lower()
                 if "memory" in b or "hbm" in b:
                     blk_data["bound"]["memory_ms"] += ms
@@ -680,19 +968,27 @@ def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]
                 "name": "Other Ops",
                 "ops": [],
                 "total_ms": 0.0,
-                "bound": {"compute_ms": 0.0, "memory_ms": 0.0, "other_ms": 0.0},
+                "bound": {
+                    "compute_ms": 0.0,
+                    "memory_ms": 0.0,
+                    "other_ms": 0.0,
+                },
             }
+
             for op in missed:
                 cost = op_costs.get(op.name)
                 if cost is None:
-                    from zrt.training.models.flops import op_cost
                     cost = op_cost(op, model, system)
+
                 od = _op_to_dict(op, cost, system)
                 od["component_group"] = _component_of_op(op)
+
                 blk_data["ops"].append(od)
                 all_op_dicts.append(od)
-                ms = float(od.get("total_ms", 0.0) or 0.0)
+
+                ms = _to_float(od.get("total_ms", 0.0))
                 blk_data["total_ms"] += ms
+
                 b = str(od.get("bound", "")).lower()
                 if "memory" in b or "hbm" in b:
                     blk_data["bound"]["memory_ms"] += ms
@@ -700,6 +996,7 @@ def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]
                     blk_data["bound"]["compute_ms"] += ms
                 else:
                     blk_data["bound"]["other_ms"] += ms
+
             layer_data["blocks"].append(blk_data)
             layer_data["total_ms"] += blk_data["total_ms"]
 
@@ -708,18 +1005,20 @@ def _build_layer_tree(graph, model, system, op_costs) -> tuple[dict, list[dict]]
     return tree, all_op_dicts
 
 
-def _build_calibration_data(report, graph, model, strategy, all_op_dicts: list[dict]) -> list[dict]:
+def _build_calibration_data(
+    report: "TrainingReport",
+    graph: "Graph",
+    model: "ModelSpec",
+    strategy: "Strategy",
+    all_op_dicts: list[dict],
+) -> list[dict]:
     """Build reference calibration rows.
 
-    These references are intentionally explicit:
-    - Some are architecture/reference checks.
-    - Some are performance calibration points.
-    - A row is marked comparable only when the current run roughly matches the
-      reference scenario.
+    Public references are used as sanity checks, not as automatic correction
+    unless the current scenario is known to be comparable.
     """
     rows = []
 
-    model_name = str(getattr(model, "model_type", "") or "").lower()
     hidden = getattr(model, "hidden", None)
     num_experts = getattr(model, "num_experts", None)
     top_k = getattr(model, "top_k", None)
@@ -732,30 +1031,43 @@ def _build_calibration_data(report, graph, model, strategy, all_op_dicts: list[d
         and moe_ffn == 3072
     )
 
-    rows.append({
-        "name": "DeepSeek-V4-Pro architecture",
-        "official": "1.6T total params, 49B activated params, 1M context, FP4+FP8 mixed precision.",
-        "modeled": (
-            f"hidden={hidden}, experts={num_experts}, top_k={top_k}, moe_ffn={moe_ffn}, "
-            f"layers={len(getattr(model, 'layers', []))}"
-        ),
-        "status": "pass" if is_dsv4_pro_like else "check",
-        "delta": "structure check",
-        "source": "DeepSeek-V4-Pro model card / technical report",
-        "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro",
-        "note": "Use this row to confirm the YAML/model spec matches the official DeepSeek-V4-Pro geometry.",
-    })
+    rows.append(
+        {
+            "name": "DeepSeek-V4-Pro architecture",
+            "official": (
+                "DeepSeek-V4-Pro public model card/technical material: "
+                "1.6T total params, 49B activated params, 1M context, "
+                "FP4+FP8 mixed precision."
+            ),
+            "modeled": (
+                f"hidden={hidden}, experts={num_experts}, top_k={top_k}, "
+                f"moe_ffn={moe_ffn}, layers={len(getattr(model, 'layers', []))}"
+            ),
+            "status": "pass" if is_dsv4_pro_like else "check",
+            "delta": "structure check",
+            "source": "DeepSeek-V4-Pro model card / technical report",
+            "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro",
+            "note": (
+                "Use this row to confirm the YAML/model spec matches the public "
+                "DeepSeek-V4-Pro geometry."
+            ),
+        }
+    )
 
-    # DeepGEMM PR #316 Mega MoE calibration point.
     routed_ops = [
-        od for od in all_op_dicts
+        od
+        for od in all_op_dicts
         if "routed_expert_ffn" in od.get("name", "")
         or "routed" in od.get("component", "").lower()
     ]
+
     modeled_us = None
     if routed_ops:
-        # Use average fwd routed expert op time as a kernel-level sanity check.
-        modeled_us = sum(float(x.get("fwd_ms", 0.0) or 0.0) for x in routed_ops) / len(routed_ops) * 1000.0
+        modeled_us = (
+            sum(_to_float(x.get("fwd_ms", 0.0)) for x in routed_ops)
+            / len(routed_ops)
+            * 1000.0
+        )
 
     ep = getattr(strategy, "ep", 1)
     comparable = is_dsv4_pro_like and int(ep) == 8
@@ -775,38 +1087,60 @@ def _build_calibration_data(report, graph, model, strategy, all_op_dicts: list[d
         status = "check"
         modeled = "-"
 
-    rows.append({
-        "name": "DeepGEMM Mega MoE benchmark",
-        "official": "DeepSeek-V4-Pro EP8, 512 tokens/rank: 369.6 us; 1098 TFLOPS; 4619 GB/s global memory; 182 GB/s interconnect.",
-        "modeled": modeled,
-        "status": status,
-        "delta": delta,
-        "source": "DeepGEMM PR #316",
-        "url": "https://github.com/deepseek-ai/DeepGEMM/pull/316",
-        "note": (
-            "This is a serving MegaMoE kernel reference. For this training report, treat it as a routed expert "
-            "kernel sanity check unless EP=8, token shape and dtype match the PR scenario."
-        ),
-    })
+    rows.append(
+        {
+            "name": "DeepGEMM Mega MoE benchmark",
+            "official": (
+                "DeepSeek-V4-Pro EP8, 512 tokens/rank: 369.6 us; "
+                "1098 TFLOPS; 4619 GB/s global memory; 182 GB/s interconnect."
+            ),
+            "modeled": modeled,
+            "status": status,
+            "delta": delta,
+            "source": "DeepGEMM PR #316",
+            "url": "https://github.com/deepseek-ai/DeepGEMM/pull/316",
+            "note": (
+                "This is a serving MegaMoE kernel reference. For this training "
+                "report, treat it as a routed expert kernel sanity check unless "
+                "EP=8, token shape and dtype match the PR scenario."
+            ),
+        }
+    )
 
-    rows.append({
-        "name": "Step-level calibration placeholder",
-        "official": "No public official full-step Ascend 910C DeepSeek-V4-Pro training reference was embedded.",
-        "modeled": f"step_time={getattr(report, 'step_time_ms', 0.0):.3f} ms, MFU={getattr(report, 'mfu', 0.0)*100:.2f}%",
-        "status": "check",
-        "delta": "requires local cluster sampling",
-        "source": "Local benchmark hook",
-        "url": "",
-        "note": (
-            "Recommended: add one measured step-time sample from target cluster and store it in config/report metadata; "
-            "then compute correction_factor = measured_step_ms / modeled_step_ms."
-        ),
-    })
+    rows.append(
+        {
+            "name": "Step-level calibration placeholder",
+            "official": (
+                "No public official full-step Ascend 910C DeepSeek-V4-Pro "
+                "training reference is embedded in this exporter."
+            ),
+            "modeled": (
+                f"step_time={getattr(report, 'step_time_ms', 0.0):.3f} ms, "
+                f"MFU={getattr(report, 'mfu', 0.0) * 100:.2f}%"
+            ),
+            "status": "check",
+            "delta": "requires local cluster sampling",
+            "source": "Local benchmark hook",
+            "url": "",
+            "note": (
+                "Recommended: add one measured step-time sample from the target "
+                "cluster and store it in report metadata; then compute "
+                "correction_factor = measured_step_ms / modeled_step_ms."
+            ),
+        }
+    )
 
     return rows
 
 
-def _build_html_data(graph, model, system, strategy, report, op_costs) -> dict:
+def _build_html_data(
+    graph: "Graph",
+    model: "ModelSpec",
+    system: "SystemSpec",
+    strategy: "Strategy",
+    report: "TrainingReport",
+    op_costs: dict[str, "OpCost"],
+) -> dict:
     tree, all_op_dicts = _build_layer_tree(graph, model, system, op_costs)
     summary = _build_summary(report, graph, model, system, strategy, all_op_dicts)
 
@@ -815,16 +1149,42 @@ def _build_html_data(graph, model, system, strategy, report, op_costs) -> dict:
         "topology": _build_topology_data(system, strategy),
         "model_overview": _build_model_overview(all_op_dicts),
         "tree": tree,
-        "calibration": _build_calibration_data(report, graph, model, strategy, all_op_dicts),
+        "calibration": _build_calibration_data(
+            report,
+            graph,
+            model,
+            strategy,
+            all_op_dicts,
+        ),
         "warnings": getattr(report, "warnings", []),
     }
 
 
+def _json_parse_literal_for_script(data) -> str:
+    """Return a safe JavaScript string literal for JSON.parse(...).
+
+    This avoids raw object literal injection inside <script>. The data becomes a
+    JS string literal argument to JSON.parse, so substrings such as ${...} or
+    backticks inside model/op names are data, not executable template syntax.
+    """
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+    # Prevent data from closing the script element.
+    payload = payload.replace("</", "<\\/")
+
+    # Defensive escaping for JavaScript string literal compatibility.
+    payload = payload.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+    # Return a quoted JS string literal. ensure_ascii=True makes the outer JS
+    # literal ASCII-safe even when the report contains Chinese text.
+    return json.dumps(payload, ensure_ascii=True)
+
+
 _HTML_TEMPLATE = r"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>ZRT Training Estimate — __TITLE__</title>
+<title>__TITLE__</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
 :root {
@@ -1143,7 +1503,7 @@ details[open] > summary::before { content: "−"; }
 </main>
 
 <script>
-const DATA = __DATA__;
+const DATA = JSON.parse(__DATA_JSON__);
 
 const fmt = {
   ms(v) {
@@ -1155,11 +1515,11 @@ const fmt = {
   pct(v) { return (Number(v || 0) * 100).toFixed(2) + "%"; },
   num(v) {
     v = Number(v || 0);
-    if (Math.abs(v) >= 1e15) return (v/1e15).toFixed(2) + "P";
-    if (Math.abs(v) >= 1e12) return (v/1e12).toFixed(2) + "T";
-    if (Math.abs(v) >= 1e9) return (v/1e9).toFixed(2) + "G";
-    if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(2) + "M";
-    if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(2) + "K";
+    if (Math.abs(v) >= 1e15) return (v / 1e15).toFixed(2) + "P";
+    if (Math.abs(v) >= 1e12) return (v / 1e12).toFixed(2) + "T";
+    if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(2) + "G";
+    if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(2) + "K";
     return String(v.toFixed ? v.toFixed(2) : v);
   },
   gb(v) { return Number(v || 0).toFixed(2) + " GB"; }
@@ -1167,7 +1527,11 @@ const fmt = {
 
 function esc(x) {
   return String(x ?? "").replace(/[&<>"']/g, ch => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
   }[ch]));
 }
 
@@ -1209,6 +1573,7 @@ function renderSummary() {
           <div>dtype</div><div>param=${esc(s.model.param_dtype)}, act=${esc(s.model.act_dtype)}</div>
         </div>
       </div>
+
       <div class="card">
         <h3>Hardware / Topology</h3>
         <div class="kv">
@@ -1231,12 +1596,14 @@ function renderSummary() {
         <div>exposed comm</div><div>${fmt.ms(p.exposed_comm_ms)}</div>
         <div>hidden comm</div><div>${fmt.ms(p.hidden_comm_ms)}</div>
       </div>
+
       <div class="card kv">
         <div>optimizer time</div><div>${fmt.ms(p.optimizer_time_ms)}</div>
         <div>optimizer comm</div><div>${fmt.ms(p.optimizer_comm_ms)}</div>
         <div>bubble fraction</div><div>${fmt.pct(p.bubble_fraction)}</div>
         <div>FLOPs/token</div><div>${fmt.num(p.flops_per_token)}</div>
       </div>
+
       <div class="card kv">
         <div>TP exposed</div><div>${fmt.ms(s.comm_breakdown.tp_exposed_ms)}</div>
         <div>EP exposed</div><div>${fmt.ms(s.comm_breakdown.ep_exposed_ms)}</div>
@@ -1275,9 +1642,23 @@ function renderSummary() {
 
 function renderTopology() {
   const t = DATA.topology;
+
   document.getElementById("topology").innerHTML = `
     <h2>2. 集群逻辑拓扑</h2>
+
+    ${t.legend.is_inferred ? `
+      <div class="warning">
+        <strong>注意：</strong>当前 Rank 拓扑是 inferred visualization only，不代表真实 runtime rank placement。
+        如果 launcher 使用自定义 rank order，请在配置中提供 rank_placement 后再用于拓扑校验。
+      </div>
+    ` : `
+      <div class="card">
+        <strong>Rank placement source:</strong> ${esc(t.legend.mapping_source)}
+      </div>
+    `}
+
     <p class="muted">${esc(t.legend.note)}</p>
+
     <div class="topology">
       ${t.nodes.map(node => `
         <div class="node">
@@ -1305,9 +1686,11 @@ function renderTopology() {
 
 function renderModelOverview() {
   const blocks = DATA.model_overview || [];
+
   document.getElementById("model-overview").innerHTML = `
     <h2>3. 模型级计算耗时</h2>
     <p class="muted">Transformer Explainer 风格概览：Input → Embedding → Attention → MoE → Output。耗时来自 IR op 的 fwd + dx + dw 估算。</p>
+
     <div class="model-flow">
       ${blocks.map(b => `
         <div class="flow-block">
@@ -1370,9 +1753,11 @@ function renderOpTable(ops) {
 
 function renderHierarchy() {
   const tree = DATA.tree;
+
   document.getElementById("hierarchy").innerHTML = `
     <h2>4. 分层展示计算耗时</h2>
     <p class="muted">模型 → Layer / Block → 算子。每一层可以展开和收缩，算子层包含耗时、公式、公式原理和 bound 类型。</p>
+
     <div class="toolbar">
       <button onclick="setAllDetails(true)">expand all</button>
       <button onclick="setAllDetails(false)">collapse all</button>
@@ -1401,6 +1786,7 @@ function renderHierarchy() {
             <span class="summary-left">Layer ${layer.id} · ${esc(layer.kind)}</span>
             <span class="summary-right">${layer.op_count} ops · ${fmt.ms(layer.total_ms)}</span>
           </summary>
+
           ${layer.blocks.map(block => `
             <details>
               <summary>
@@ -1433,9 +1819,11 @@ function filterOps(q) {
 
 function renderCalibration() {
   const rows = DATA.calibration || [];
+
   document.getElementById("calibration").innerHTML = `
     <h2>5. 报告校准</h2>
     <p class="muted">校准分为结构校验、公开 kernel benchmark 对齐、以及目标集群本地 step-time 采样。公开 benchmark 不一定与当前训练配置完全同构，需要看 status 和 note。</p>
+
     <table class="calib-table">
       <thead>
         <tr>
@@ -1454,7 +1842,7 @@ function renderCalibration() {
             <td>${esc(r.official)}</td>
             <td>${esc(r.modeled)}</td>
             <td><span class="status ${esc(r.status)}">${esc(r.status)}</span><br/>${esc(r.delta)}</td>
-            <td>${r.url ? `<a href="${esc(r.url)}" target="_blank">${esc(r.source)}</a>` : esc(r.source)}</td>
+            <td>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.source)}</a>` : esc(r.source)}</td>
             <td>${esc(r.note)}</td>
           </tr>
         `).join("")}
@@ -1491,20 +1879,26 @@ def export_estimate_html(
     2. Logical cluster topology with rank-level PP/DP/TP/EP/CP labels.
     3. Model-level timing overview in Transformer-Explainer-like blocks.
     4. Expandable model -> layer/block -> op timing/formula/bound analysis.
-    5. Calibration table with official/public reference points.
+    5. Calibration table with public/official reference points.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = _build_html_data(graph, model, system, strategy, report, op_costs)
-    json_data = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 
-    title = f"{getattr(model, 'hidden', '-')}d_{len(getattr(model, 'layers', []))}L"
-    html = (
+    title = (
+        f"ZRT Training Estimate — "
+        f"{getattr(model, 'hidden', '-')}d_{len(getattr(model, 'layers', []))}L"
+    )
+    safe_title = html_lib.escape(title, quote=True)
+
+    json_data = _json_parse_literal_for_script(data)
+
+    html_text = (
         _HTML_TEMPLATE
-        .replace("__TITLE__", title)
-        .replace("__DATA__", json_data)
+        .replace("__TITLE__", safe_title)
+        .replace("__DATA_JSON__", json_data)
     )
 
-    output_path.write_text(html, encoding="utf-8")
+    output_path.write_text(html_text, encoding="utf-8")
     return output_path

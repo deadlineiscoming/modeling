@@ -18,6 +18,8 @@ a2a_before + routed_expert_ffn + a2a_after
 
 - vLLM-Ascend: `csrc/mc2/dispatch_ffn_combine`
   <https://github.com/vllm-project/vllm-ascend/tree/main/csrc/mc2/dispatch_ffn_combine>
+- vLLM-Ascend W4A8 variant: `csrc/mc2/dispatch_ffn_combine_w4_a8`
+  <https://github.com/vllm-project/vllm-ascend/tree/main/csrc/mc2/dispatch_ffn_combine_w4_a8>
 - DeepSeek-V4 technical report, Section 3.1, fine-grained communication-computation overlap in expert parallelism
   <https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/DeepSeek_V4.pdf>
 - Existing local analysis: `mega_moe_v2.md`, `docs/ep_spec_path_analysis.md`, `docs/dualpipe_ep_overlap_analysis.md`
@@ -29,6 +31,7 @@ a2a_before + routed_expert_ffn + a2a_after
 3. 开关打开时，不再为该 MoE routed expert 插入独立 EP A2A collectives，而是在 `mega_moe.meta` 中携带 dispatch/combine payload、expert compute、wave 划分和融合调度参数。
 4. 在 stage time 中使用 wave 级 dispatch/compute/combine 流水模型估算 `mega_moe` 时间。
 5. 报告和调试输出中能看到算子名 `mega_moe`，用于和外部 fused kernel 名称对齐。
+6. 支持普通 fused 版本和 W4A8 fused 版本两种量化变体；当前通过已有 model dtype/quant preset 自动推导。
 
 ## Non-Goals
 
@@ -66,6 +69,32 @@ strategy:
 
 - `mega_moe=false`: `ep_overlap` 继续控制现有 A2A 与 GEMM overlap。
 - `mega_moe=true`: `mega_moe` 自带 wave 流水建模，忽略该 Op 上的 `ep_overlap` 后处理，避免重复隐藏通信。
+
+量化配置不新增重复开关。`mega_moe` 从现有 `ModelSpec` dtype 字段推导量化变体:
+
+- `quant_variant="w4a8"`: `routed_expert_weight_dtype == Dtype.FP4` 且 `effective_moe_act_dtype()` 为 FP8。
+- `quant_variant="standard"`: 其他组合，覆盖 BF16/BF16、FP8/BF16、BF16/FP4 等非 W4A8 fused 建模。
+
+现有 YAML 示例:
+
+```yaml
+model:
+  base: deepseek_v4_pro
+  quant_preset: deepseek_v4_fp8_fp4
+strategy:
+  ep: 8
+  mega_moe: true
+```
+
+其中 `deepseek_v4_fp8_fp4` 已展开为:
+
+```text
+routed_expert_compute_dtype = fp8_e4m3
+routed_expert_weight_dtype  = fp4
+moe_act_dtype               = fp8_e4m3
+```
+
+因此自动选择 W4A8 `mega_moe` 计时路径。
 
 ## IR Design
 
@@ -122,6 +151,8 @@ output: routed_ffn_out  shape=(seq, hidden)
     "act_bytes": model.effective_moe_act_dtype().bytes,
     "out_bytes": model.act_dtype.bytes,
     "weight_bytes": model.routed_expert_weight_dtype.bytes,
+    "weight_stored_bytes": model.routed_expert_weight_dtype.stored_bytes,
+    "quant_variant": "standard" | "w4a8",
     "fwd_multiplier": 3 * model.top_k,
     "fused_dispatch_compute_combine": True,
 }
@@ -151,6 +182,27 @@ The skip should be op-local, not global. If a future model contains both legacy 
 ## Cost Model
 
 Add an `op.kind == "mega_moe"` branch in `flops.py` and `stage.py`.
+
+### Quantization Variants
+
+`mega_moe` uses one IR kind for all fused variants and selects the internal cost path through `op.meta["quant_variant"]`.
+
+`standard` variant:
+
+- follows the current routed expert compute dtype for peak FLOPs;
+- uses `effective_moe_act_dtype().bytes` for dispatch activation payload;
+- uses `routed_expert_weight_dtype.stored_bytes` for weight traffic;
+- covers the non-W4A8 fused `dispatch_ffn_combine` path.
+
+`w4a8` variant:
+
+- selected when routed expert weights are FP4 and MoE activations are FP8;
+- uses FP4 stored weight bytes, including block scale overhead from `Dtype.stored_bytes`;
+- uses FP8 activation bytes for dispatch and expert GEMM input;
+- uses the FP4/FP8 peak path already supported by `perf_tables.peak_tflops_for`;
+- covers the vLLM-Ascend `dispatch_ffn_combine_w4_a8` path.
+
+The first implementation should not introduce new dtype enums for W4A8. It is a compound kernel variant inferred from existing weight and activation dtypes.
 
 ### FLOPs
 
@@ -185,6 +237,8 @@ The fused path should count:
 - reduced intermediate activation HBM traffic compared with unfused up/gate/swiglu/down.
 
 Intermediate up/gate/SwiGLU tensors should not be counted as full HBM read/write traffic in `mega_moe`, because the fused operator keeps those within the fused pipeline.
+
+For W4A8, weight traffic uses `routed_expert_weight_dtype.stored_bytes`, not `.bytes`, so FP4 block-scale overhead is included. Activation traffic uses `effective_moe_act_dtype().bytes`, which is FP8 for the existing `deepseek_v4_fp8_fp4` preset.
 
 ### Communication Bytes
 
@@ -281,6 +335,8 @@ When `mega_moe=true`, reports should show:
 
 - op name: `Lx.mega_moe`;
 - op kind: `mega_moe`;
+- quant variant: `standard` or `w4a8`;
+- activation dtype and routed expert weight dtype;
 - dispatch bytes;
 - combine bytes;
 - waves;
@@ -299,12 +355,14 @@ Add focused tests:
    - default `mega_moe` is false;
    - YAML can set `mega_moe: true`;
    - YAML can set `mega_moe_waves`.
+   - `quant_preset: deepseek_v4_fp8_fp4` plus `mega_moe: true` resolves `quant_variant="w4a8"`.
 
 2. IR shape:
    - off path contains `routed_expert_ffn` and two EP A2A collectives;
    - on path contains `mega_moe`;
    - on path contains no EP A2A collectives around that op;
    - shared expert ops and `expert_agg` remain.
+   - `mega_moe.meta` records `quant_variant`, activation dtype bytes, and stored weight bytes.
 
 3. Cost behavior:
    - `mega_moe` has nonzero forward/backward compute;
@@ -316,7 +374,12 @@ Add focused tests:
    - increasing valid waves reduces exposed communication when compute can cover comm;
    - invalid wave counts are normalized or rejected deterministically.
 
-5. Backward compatibility:
+5. Quantization:
+   - standard and W4A8 variants both produce nonzero compute and memory cost;
+   - W4A8 weight bytes are lower than BF16 standard weight bytes;
+   - W4A8 activation dispatch bytes use FP8 bytes.
+
+6. Backward compatibility:
    - with `mega_moe=false`, existing EP tests and anchors remain unchanged.
 
 ## Risks
@@ -325,6 +388,7 @@ Add focused tests:
 2. Current `stage.py` applies EP imbalance after base timing. `mega_moe` must still apply imbalance to expert compute and dispatch/combine traffic, but not to unrelated attention/shared expert compute.
 3. Anchor changes can be noisy if `mega_moe` is enabled in existing configs. Mitigation: default off and add dedicated mega_moe configs/tests.
 4. Backward pass for a fused inference-oriented kernel may not map 1:1 to training. Mitigation: keep phase-specific meta and start with conservative current backward conventions.
+5. W4A8 kernels may have backend-specific scale handling. Mitigation: initial model uses existing `Dtype.stored_bytes` and reports scale-overhead assumptions explicitly.
 
 ## Decisions
 
@@ -333,6 +397,7 @@ Add focused tests:
 3. `mega_moe_waves=0` resolves to `system.gpu.ep_overlap_waves` when positive, else `4`, clamped to valid experts-per-rank divisors.
 4. The initial scheduler uses one communication resource for dispatch/combine. Separate send/recv engines can be added later as a hardware capability flag without changing IR shape.
 5. Timing payload uses the current EP A2A per-rank convention. Reporting payload also includes remote-total bytes.
+6. Quantization variant is inferred from existing model dtypes. `FP4` routed expert weights plus FP8 MoE activations select `w4a8`; all other combinations select `standard`.
 
 ## Approval State
 

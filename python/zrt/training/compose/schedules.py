@@ -229,6 +229,7 @@ class OneF1BComposer(PipelineComposer):
 
             return StepResult(
                 step_time=step * M + dp_exposed,
+                pipeline_time=step * M + dp_exposed,
                 bubble_fraction=bubble_frac,
                 warmup=0.0,
                 steady=step * M,
@@ -274,6 +275,7 @@ class OneF1BComposer(PipelineComposer):
 
         return StepResult(
             step_time=step,
+            pipeline_time=step,
             bubble_fraction=bubble_frac,
             warmup=warmup,
             steady=steady,
@@ -343,6 +345,7 @@ class Interleaved1F1BComposer(PipelineComposer):
 
         return StepResult(
             step_time=step,
+            pipeline_time=step,
             bubble_fraction=bubble_frac,
             warmup=warmup,
             steady=steady,
@@ -404,6 +407,7 @@ class DualPipeComposer(PipelineComposer):
 
         return StepResult(
             step_time=step,
+            pipeline_time=step,
             bubble_fraction=bubble_frac,
             warmup=warmup,
             steady=steady,
@@ -466,6 +470,7 @@ class DualPipeVComposer(PipelineComposer):
 
         return StepResult(
             step_time=step,
+            pipeline_time=step,
             bubble_fraction=bubble_frac,
             warmup=warmup,
             steady=steady,
@@ -544,6 +549,7 @@ class ZeroBubbleComposer(PipelineComposer):
 
         return StepResult(
             step_time=step,
+            pipeline_time=step,
             bubble_fraction=bubble_frac,
             warmup=warmup,
             steady=steady,
@@ -649,7 +655,7 @@ def pipeline_step_time(
     step.per_stage = stage_times
 
     # === Communication and compute breakdown ===
-    # Placed after dual-batch so step.step_time / step.dp_exposed are final.
+    # Placed after compose() so step.pipeline_time / step.dp_exposed are final.
     #
     # Invariants enforced here:
     #   pipeline_time    = compute_time + exposed_comm            (exact)
@@ -665,7 +671,7 @@ def pipeline_step_time(
     bot_total = s_bot.fwd + s_bot.bwd
 
     # pipeline_time excludes the exposed DP AR tail (which sits after cooldown)
-    _pipeline_time = step.step_time - step.dp_exposed
+    _pipeline_time = step.pipeline_time - step.dp_exposed
 
     # ── Exposed comm: bottom-up from per-type fields ─────────────────────
     # Scale each comm type's exposed time directly from bottleneck stage.
@@ -686,8 +692,8 @@ def pipeline_step_time(
     exposed_comm_excl_dp = (step.tp_exposed + step.ep_exposed
                           + step.cp_exposed + step.pp_exposed)
     step.exposed_comm = exposed_comm_excl_dp + step.dp_exposed
-    # compute_time exact: compute_time + exposed_comm == _pipeline_time + dp_exposed == step_time(pre-opt)
-    step.compute_time = step.step_time - step.exposed_comm
+    # compute_time exact: compute_time + exposed_comm == pipeline_time (by construction from composer)
+    step.compute_time = step.pipeline_time - step.exposed_comm
 
     # Split compute_time into fwd vs bwd using bottleneck stage ratios.
     # Each stage's fwd/bwd already includes embedded exposed comm, so we
@@ -777,19 +783,16 @@ def pipeline_step_time(
     # Memory breakdown
     step.memory = memory_breakdown(graph, model, system, strategy)
 
-    # MFU (before adding optimizer time, per design doc §5.5.2)
-    step.mfu = compute_mfu(model, strategy, system, step.step_time, graph)
+    # MFU uses pipeline_time (excludes optimizer, per design doc §5.5.2)
+    step.mfu = compute_mfu(model, strategy, system, step.pipeline_time, graph)
 
     # HFU
-    step.hfu = compute_hfu(model, strategy, system, step.step_time, graph)
-    step.mfu_native = compute_mfu_native(model, strategy, system, step.step_time, graph)
+    step.hfu = compute_hfu(model, strategy, system, step.pipeline_time, graph)
+    step.mfu_native = compute_mfu_native(model, strategy, system, step.pipeline_time, graph)
 
-    # Add optimizer time to step_time (per §5.5.2 of muon_optimizer_design.md)
-    # This must happen after MFU/HFU calculation so MFU excludes optimizer overhead.
-    # pipeline_time is set after this addition to satisfy:
-    #   step_time = pipeline_time + optimizer_time + optimizer_comm
-    step.step_time += opt_time + opt_comm_exposed
-    step.pipeline_time = step.step_time - step.optimizer_time - step.optimizer_comm
+    # Assemble step_time additively: pipeline + optimizer.
+    # Invariant holds by construction: step_time = pipeline_time + optimizer_time + optimizer_comm
+    step.step_time = step.pipeline_time + step.optimizer_time + step.optimizer_comm
 
     return step
 

@@ -8,6 +8,7 @@ from zrt.training.search.training_search_util import (
     _load_model_spec,
     _make_strategy_from_config,
     _make_system_from_config,
+    _passes_pod_packing,
     format_results,
     run_training_task_wrapper,
 )
@@ -321,6 +322,51 @@ class TestTrainingConfigManager:
 
         assert combos == {(32, 4, 1, 8)}
         assert all(c["tp"] * c["cp"] * c["pp"] * c["dp"] == 1024 for c in configs)
+
+    def test_pod_packing_requires_system(self):
+        with pytest.raises(ValueError, match="requires system"):
+            _passes_pod_packing(
+                tp=2, cp=1, pp=1, dp=5,
+                target_ws=10, system=None, other_config=None,
+            )
+
+    def test_pod_packing_rejects_2tier_partial_tp_crossing_innermost_tier(self):
+        system = _make_system_from_config({
+            "hw": "nvidia_h100_sxm",
+            "world_size": 10,
+        })
+
+        assert not _passes_pod_packing(
+            tp=10, cp=1, pp=1, dp=1,
+            target_ws=10, system=system, other_config=None,
+        )
+
+    def test_ep_auto_uses_num_experts_divisors_not_rank_divisors(self):
+        manager = TrainingConfigManager(
+            param_grid={
+                "model": ["deepseek_v3_2"],
+                "hw": ["nvidia_h100_sxm"],
+                "world_size": [384],
+                "seq_len": [4096],
+                "tp": [1],
+                "cp": [1],
+                "pp": [1],
+                "ep": ["auto"],
+                "dp": [384],
+                "micro_batch": [1],
+                "global_batch": [384],
+                "zero_stage": [0],
+                "pp_schedule": ["1f1b"],
+                "recompute": ["none"],
+                "optimizer": ["adam"],
+            }
+        )
+
+        configs = manager.generate_static_configs()
+        ep_values = {cfg["ep"] for cfg in configs}
+
+        assert 256 in ep_values
+        assert manager.count_total_configs() == len(configs)
 
     def test_count_total_configs_matches_generated_configs_without_gpus_per_node_grid(self):
         manager = TrainingConfigManager(

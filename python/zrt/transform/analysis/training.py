@@ -415,6 +415,8 @@ class PipelineStepMetrics:
     optimizer_comm_hidden_ms: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
+        # The graph metadata value is the authoritative source used by reports;
+        # this field keeps PipelineStepMetrics self-contained for JSON consumers.
         return {
             "step_time_ms": self.step_time_ms,
             "per_stage_ms": self.per_stage_ms,
@@ -712,6 +714,9 @@ class TrainingPipelinePass(GraphPass):
         def _is_bwd_node(node):
             return node.annotations.get("phase", "") in _BWD_PHASES
 
+        # Forward latency includes activation-save overhead added by RooflinePass.
+        # Recompute uses base latency below because replayed external checkpoints
+        # should not pay activation-save memory time a second time.
         fwd_compute_ms = sum(
             n.annotations.get("latency_us", 0.0)
             for n in g.nodes.values()

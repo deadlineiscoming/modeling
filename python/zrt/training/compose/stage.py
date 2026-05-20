@@ -289,25 +289,26 @@ def stage_time(
     t_fwd += t_comm_fwd
     t_bwd_dx += t_comm_bwd
 
+    ep_imbalance = 1.0
     if strategy.ep > 1 and model.num_experts > 0:
         has_moe = any(op.layer_kind == LayerKind.MOE for op in stage_ops)
         if has_moe:
-            imb = ep_imbalance_factor(model.num_experts, strategy.ep,
-                                       getattr(model, 'top_k', 1))
+            ep_imbalance = ep_imbalance_factor(model.num_experts, strategy.ep,
+                                               getattr(model, 'top_k', 1))
             # Apply imbalance only to EP-parallel fraction (routed expert FFN ops)
             # Non-EP ops (attention, shared expert, embed) are replicated and not imbalanced
             ep_frac = _ep_parallel_fraction(stage_ops, model, system, strategy, gpu_name)
-            t_fwd = t_fwd * (1 - ep_frac) + t_fwd * ep_frac * imb
-            t_bwd_dx = t_bwd_dx * (1 - ep_frac) + t_bwd_dx * ep_frac * imb
-            t_bwd_dw = t_bwd_dw * (1 - ep_frac) + t_bwd_dw * ep_frac * imb
+            t_fwd = t_fwd * (1 - ep_frac) + t_fwd * ep_frac * ep_imbalance
+            t_bwd_dx = t_bwd_dx * (1 - ep_frac) + t_bwd_dx * ep_frac * ep_imbalance
+            t_bwd_dw = t_bwd_dw * (1 - ep_frac) + t_bwd_dw * ep_frac * ep_imbalance
             # Keep tracked recompute consistent with the scaled bwd it lives in.
-            t_recompute = t_recompute * (1 - ep_frac) + t_recompute * ep_frac * imb
+            t_recompute = t_recompute * (1 - ep_frac) + t_recompute * ep_frac * ep_imbalance
             # Apply imbalance to EP comm only (CP and TP are not EP-parallel)
             # Track the EP comm before imbalance to compute the delta
             ep_comm_fwd_before = t_ep_raw_comm_fwd
             ep_comm_bwd_before = t_ep_raw_comm_bwd
-            t_ep_raw_comm_fwd *= imb
-            t_ep_raw_comm_bwd *= imb
+            t_ep_raw_comm_fwd *= ep_imbalance
+            t_ep_raw_comm_bwd *= ep_imbalance
             # Rebuild combined t_comm_fwd/bwd with imbalanced EP
             t_comm_fwd = t_other_comm_fwd + t_tp_exposed_fwd + t_cp_comm_fwd + t_ep_raw_comm_fwd
             t_comm_bwd = t_other_comm_bwd + t_tp_exposed_bwd + t_cp_comm_bwd + t_ep_raw_comm_bwd
@@ -407,13 +408,19 @@ def stage_time(
         t_ep_exposed_fwd = max(0.0, t_ep_raw_comm_fwd - saved_fwd)
         t_ep_exposed_bwd = max(0.0, t_ep_raw_comm_bwd - saved_bwd)
 
-    t_comm_fwd += t_fused_ep_comm_fwd
-    t_comm_bwd += t_fused_ep_comm_bwd
-    t_fwd += t_fused_ep_comm_fwd
-    t_bwd_dx += t_fused_ep_comm_bwd
-    t_ep_hidden += t_fused_ep_hidden
-    t_ep_exposed_fwd += t_fused_ep_comm_fwd
-    t_ep_exposed_bwd += t_fused_ep_comm_bwd
+    # MegaMoE fused internal dispatch/combine is not part of the raw external
+    # EP A2A pool above, so scale it here without feeding it back through the
+    # legacy ep_overlap post-process.
+    fused_ep_comm_fwd = t_fused_ep_comm_fwd * ep_imbalance
+    fused_ep_comm_bwd = t_fused_ep_comm_bwd * ep_imbalance
+    fused_ep_hidden = t_fused_ep_hidden * ep_imbalance
+    t_comm_fwd += fused_ep_comm_fwd
+    t_comm_bwd += fused_ep_comm_bwd
+    t_fwd += fused_ep_comm_fwd
+    t_bwd_dx += fused_ep_comm_bwd
+    t_ep_hidden += fused_ep_hidden
+    t_ep_exposed_fwd += fused_ep_comm_fwd
+    t_ep_exposed_bwd += fused_ep_comm_bwd
 
     t_bwd = t_bwd_dx + t_bwd_dw
     return StageTime(

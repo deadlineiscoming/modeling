@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from zrt.hardware.spec import InterconnectSpec, LinkSpec
+from zrt.training.compose import stage as stage_mod
 from zrt.training.compose.stage import _ep_gemm_time, stage_time
 from zrt.training.ir.builders import build_graph
 from zrt.training.spec.model import LayerKind, ModelSpec
@@ -122,3 +125,22 @@ def test_switch_on_mega_moe_stage_timing_does_not_require_separate_a2a_collectiv
     assert st_without_ep_collectives.ep_exposed > 0.0
     assert st_without_ep_collectives.comm_fwd > 0.0
     assert st_without_ep_collectives.comm_bwd > 0.0
+
+
+def test_mega_moe_fused_ep_comm_uses_ep_imbalance_factor(monkeypatch):
+    model = _moe_model()
+    strategy = Strategy(ep=4, dp=4, mega_moe=True, mega_moe_waves=4, micro_batch=2)
+    graph = build_graph(model, strategy)
+
+    assert _ep_a2a_collectives(graph) == []
+
+    monkeypatch.setattr(stage_mod, "ep_imbalance_factor", lambda *_args: 1.0)
+    balanced = stage_time(graph.ops, graph.collectives, model, _system(), strategy)
+
+    monkeypatch.setattr(stage_mod, "ep_imbalance_factor", lambda *_args: 2.0)
+    imbalanced = stage_time(graph.ops, graph.collectives, model, _system(), strategy)
+
+    assert imbalanced.comm_fwd == pytest.approx(balanced.comm_fwd * 2.0)
+    assert imbalanced.comm_bwd == pytest.approx(balanced.comm_bwd * 2.0)
+    assert imbalanced.ep_hidden == pytest.approx(balanced.ep_hidden * 2.0)
+    assert imbalanced.ep_exposed > balanced.ep_exposed

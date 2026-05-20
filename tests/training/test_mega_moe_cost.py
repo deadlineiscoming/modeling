@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+from zrt.training.ir.builders import build_graph
+from zrt.training.ir.training_graph import Op
+from zrt.training.models.flops import op_cost
 from zrt.training.models.mega_moe import (
     infer_quant_variant,
+    mega_moe_cost_terms,
     resolve_mega_moe_waves,
     simulate_wave_pipeline,
 )
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import LayerKind, ModelSpec
+from zrt.training.spec.strategy import Strategy
 
 
 def _moe_model(**kwargs) -> ModelSpec:
@@ -28,6 +33,28 @@ def _moe_model(**kwargs) -> ModelSpec:
     )
     base.update(kwargs)
     return ModelSpec(**base)
+
+
+def _mega_moe_op(**meta) -> Op:
+    base = {
+        "m": 128,
+        "n": 1024,
+        "k": 2048,
+        "micro_batch": 3,
+        "num_experts": 8,
+        "top_k": 2,
+        "requested_waves": 4,
+        "act_bytes": 2,
+        "out_bytes": 2,
+        "weight_bytes": 2,
+        "weight_stored_bytes": 2,
+        "quant_variant": "standard",
+        "fwd_multiplier": 3,
+        "swiglu_clamp": None,
+        "fused_dispatch_compute_combine": True,
+    }
+    base.update(meta)
+    return Op(name="L0.mega_moe", kind="mega_moe", meta=base)
 
 
 def test_infer_quant_variant_standard_for_bf16():
@@ -66,3 +93,91 @@ def test_wave_pipeline_more_waves_hide_comm_when_compute_dominates():
 
     assert four.total_s < one.total_s
     assert four.hidden_comm_s > 0.0
+
+
+def test_op_cost_returns_nonzero_flops_and_bytes_for_mega_moe():
+    cost = op_cost(_mega_moe_op(), _moe_model())
+
+    assert cost.fwd_cube_flops > 0
+    assert cost.dx_cube_flops > 0
+    assert cost.dw_cube_flops > 0
+    assert cost.fwd_bytes > 0
+    assert cost.dx_bytes > 0
+    assert cost.dw_bytes > 0
+
+
+def test_mega_moe_flops_scale_with_tokens_topk_dimensions_and_multiplier():
+    op = _mega_moe_op(m=11, micro_batch=5, top_k=4, n=13, k=17, fwd_multiplier=7)
+
+    terms = mega_moe_cost_terms(op)
+
+    assert terms.tokens == 55
+    assert terms.fwd_flops == 2 * 55 * 4 * 17 * 13 * 7
+
+
+def test_mega_moe_cost_preserves_legacy_builder_multiplier_intent():
+    model = _moe_model(top_k=2)
+    graph = build_graph(model, Strategy(mega_moe=True, micro_batch=3))
+    op = [op for op in graph.ops if op.kind == "mega_moe"][0]
+
+    terms = mega_moe_cost_terms(op)
+
+    assert op.meta["fwd_multiplier"] == 3 * model.top_k
+    assert terms.fwd_multiplier == 3
+    assert terms.fwd_flops == 2 * 3 * model.seq_len * model.top_k * model.moe_ffn * model.hidden * 3
+
+
+def test_mega_moe_bytes_include_visible_activations_and_stored_weight_traffic():
+    op = _mega_moe_op(
+        m=16,
+        micro_batch=2,
+        n=32,
+        k=64,
+        num_experts=3,
+        act_bytes=2,
+        out_bytes=4,
+        weight_bytes=2,
+        weight_stored_bytes=1,
+        fwd_multiplier=3,
+    )
+
+    terms = mega_moe_cost_terms(op)
+
+    assert terms.activation_input_bytes == 16 * 2 * 32 * 2
+    assert terms.activation_output_bytes == 16 * 2 * 32 * 4
+    assert terms.weight_bytes == 3 * 64 * 32 * 3 * 1
+    assert terms.fwd_bytes == (
+        terms.activation_input_bytes
+        + terms.activation_output_bytes
+        + terms.weight_bytes
+    )
+
+
+def test_mega_moe_cost_uses_local_k_and_local_experts_when_sharded():
+    terms = mega_moe_cost_terms(
+        _mega_moe_op(k=64, k_local=16, num_experts=8, experts_per_rank=2, fwd_multiplier=3)
+    )
+
+    assert terms.k_eff == 16
+    assert terms.local_experts == 2
+    assert terms.fwd_flops == 2 * terms.tokens * 2 * 16 * 1024 * 3
+    assert terms.weight_bytes == 2 * 16 * 1024 * 3 * 2
+
+
+def test_mega_moe_w4a8_bytes_use_stored_fp4_weight_bytes():
+    op = _mega_moe_op(
+        quant_variant="w4a8",
+        moe_act_dtype=Dtype.FP8_E4M3,
+        moe_act_bytes=Dtype.FP8_E4M3.bytes,
+        weight_bytes=Dtype.FP8_E4M3.bytes,
+        weight_stored_bytes=Dtype.FP4.stored_bytes,
+        num_experts=4,
+        n=32,
+        k=64,
+        fwd_multiplier=3,
+    )
+
+    terms = mega_moe_cost_terms(op)
+
+    assert terms.quant_variant == "w4a8"
+    assert terms.weight_bytes == 4 * 64 * 32 * 3 * Dtype.FP4.stored_bytes

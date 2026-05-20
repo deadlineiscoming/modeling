@@ -10,6 +10,7 @@ import math
 from dataclasses import dataclass
 
 from zrt.training.ir.training_graph import Graph, Op
+from zrt.training.models.mega_moe import mega_moe_cost_terms
 from zrt.training.spec.model import ModelSpec
 from zrt.training.spec.strategy import Strategy
 from zrt.training.spec.system import SystemSpec
@@ -73,6 +74,8 @@ def op_cost(op: Op, model: ModelSpec, system: SystemSpec | None = None) -> OpCos
         return _embed_cost(op)
     if op.kind == "lm_head":
         return _matmul_cost(op)
+    if op.kind == "mega_moe":
+        return _mega_moe_cost(op)
     if op.kind == "compressor_pool":
         return _compressor_pool_cost(op)
     if op.kind == "indexer_topk":
@@ -135,6 +138,18 @@ def _matmul_cost(op: Op) -> OpCost:
         fwd_cube_flops=fwd,
         dx_cube_flops=fwd,
         dw_cube_flops=fwd,
+    )
+
+
+def _mega_moe_cost(op: Op) -> OpCost:
+    terms = mega_moe_cost_terms(op)
+    return OpCost(
+        fwd_bytes=terms.fwd_bytes,
+        dx_bytes=terms.fwd_bytes,
+        dw_bytes=terms.fwd_bytes,
+        fwd_cube_flops=terms.fwd_flops,
+        dx_cube_flops=terms.fwd_flops,
+        dw_cube_flops=terms.fwd_flops,
     )
 
 

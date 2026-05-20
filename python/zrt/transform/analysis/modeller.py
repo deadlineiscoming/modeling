@@ -240,6 +240,7 @@ def estimate_training_from_graphs(
         steady_steps=steady_steps,
         dp_exposed_ms=dp_exposed_from_metrics,
         dp_hidden_ms=dp_hidden_from_metrics,
+        dp_total_ms=dp_exposed_from_metrics + dp_hidden_from_metrics,
         bubble_fraction=bubble_fraction,
         bubble_time_ms=bubble_time_ms,
         total_params=total_params,

@@ -165,9 +165,10 @@ def test_dp_communication_nonzero_for_dp_gt1(dp_reports):
         rep = dp_reports[dp]
         dp_hidden = rep.get("dp_hidden_ms")
         dp_exposed = rep.get("dp_exposed_ms")
+        dp_comm = rep.get("dp_total_ms", 0.0)
         assert dp_hidden is not None, f"dp_hidden_ms missing for dp={dp}"
         assert dp_exposed is not None, f"dp_exposed_ms missing for dp={dp}"
-        assert (dp_hidden + dp_exposed) > 0, (
+        assert dp_comm > 0, (
             f"dp_hidden + dp_exposed should be >0 for dp={dp}, "
             f"got hidden={dp_hidden}, exposed={dp_exposed}"
         )
@@ -184,7 +185,7 @@ def test_dp_comm_volume_monotonic(dp_reports):
     dp_comm = {}
     for dp in (4, 8):
         rep = dp_reports[dp]
-        dp_comm[dp] = rep.get("dp_hidden_ms", 0.0) + rep.get("dp_exposed_ms", 0.0)
+        dp_comm[dp] = rep.get("dp_total_ms", 0.0)
 
     assert dp_comm[8] > dp_comm[4], (
         f"DP comm volume should increase with dp: "

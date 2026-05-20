@@ -610,11 +610,8 @@ class TrainingPipelinePass(GraphPass):
             dp_overlap_in_bubble=ctx.training.dp_overlap_in_bubble if ctx.training else True,
         )
         # Derive per-device microbatch count from the Strategy (includes DP)
-        try:
-            M = strategy_proxy.num_microbatches()
-        except Exception:
-            # Fallback to TrainingConfig property for backward compatibility
-            M = ctx.training.num_microbatches if ctx.training else 1
+
+        M = strategy_proxy.num_microbatches()
 
         composer_cls = COMPOSER_BY_SCHED.get(strategy_proxy.pp_schedule)
         if composer_cls is None:

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from zrt.training.ir.training_graph import Op
+from zrt.training.ir.training_graph import Collective, Op
+from zrt.training.models.comm import collective_time, tier_for_group
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import ModelSpec
+from zrt.training.spec.strategy import Strategy
+from zrt.training.spec.system import GPU, SystemSpec
 
 
 FP8_DTYPES = {Dtype.FP8_E4M3, Dtype.FP8_E5M2}
@@ -32,6 +35,38 @@ class MegaMoECostTerms:
     weight_bytes: float
     fwd_bytes: float
     fwd_flops: float
+
+
+@dataclass(frozen=True)
+class MegaMoEPhaseTime:
+    compute_s: float
+    dispatch_s: float
+    combine_s: float
+    exposed_comm_s: float
+    hidden_comm_s: float
+    total_s: float
+
+
+@dataclass(frozen=True)
+class MegaMoEStageTime:
+    fwd: MegaMoEPhaseTime
+    bwd: MegaMoEPhaseTime
+
+    @property
+    def comm_fwd_s(self) -> float:
+        return self.fwd.exposed_comm_s
+
+    @property
+    def comm_bwd_s(self) -> float:
+        return self.bwd.exposed_comm_s
+
+    @property
+    def ep_exposed_s(self) -> float:
+        return self.fwd.exposed_comm_s + self.bwd.exposed_comm_s
+
+    @property
+    def ep_hidden_s(self) -> float:
+        return self.fwd.hidden_comm_s + self.bwd.hidden_comm_s
 
 
 def infer_quant_variant(model: ModelSpec) -> str:
@@ -77,6 +112,108 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
         weight_bytes=weight_bytes,
         fwd_bytes=fwd_bytes,
         fwd_flops=fwd_flops,
+    )
+
+
+def mega_moe_stage_time(
+    op: Op,
+    model: ModelSpec,
+    system: SystemSpec,
+    strategy: Strategy,
+    gpu_name_or_gpu: str | GPU,
+    *,
+    fwd_compute_s: float,
+    dx_compute_s: float,
+    dw_compute_s: float,
+) -> MegaMoEStageTime:
+    """Internal dispatch/compute/combine timing for one fused mega_moe op."""
+    terms = mega_moe_cost_terms(op)
+    ep = int(op.meta.get("ep", strategy.ep))
+    experts_per_rank = int(
+        op.meta.get("experts_per_rank", max(1, terms.local_experts))
+    )
+    if ep <= 1:
+        empty_fwd = MegaMoEPhaseTime(fwd_compute_s, 0.0, 0.0, 0.0, 0.0, fwd_compute_s)
+        bwd_compute_s = dx_compute_s + dw_compute_s
+        empty_bwd = MegaMoEPhaseTime(bwd_compute_s, 0.0, 0.0, 0.0, 0.0, bwd_compute_s)
+        return MegaMoEStageTime(fwd=empty_fwd, bwd=empty_bwd)
+
+    gpu = gpu_name_or_gpu if isinstance(gpu_name_or_gpu, GPU) else system.gpu
+    requested = int(strategy.mega_moe_waves or op.meta.get("requested_waves", 0))
+    waves = resolve_mega_moe_waves(
+        requested=requested,
+        hardware_waves=gpu.ep_overlap_waves,
+        experts_per_rank=experts_per_rank,
+    )
+
+    dispatch_s = _mega_moe_a2a_time(
+        name=f"{op.name}.dispatch",
+        bytes_=_mega_moe_dispatch_bytes(terms, ep),
+        ep=ep,
+        system=system,
+    )
+    combine_s = _mega_moe_a2a_time(
+        name=f"{op.name}.combine",
+        bytes_=_mega_moe_combine_bytes(terms, ep),
+        ep=ep,
+        system=system,
+    )
+
+    fwd = _phase_time(
+        waves=waves,
+        compute_s=fwd_compute_s,
+        dispatch_s=dispatch_s,
+        combine_s=combine_s,
+    )
+    bwd = _phase_time(
+        waves=waves,
+        compute_s=dx_compute_s + dw_compute_s,
+        dispatch_s=dispatch_s,
+        combine_s=combine_s,
+    )
+    return MegaMoEStageTime(fwd=fwd, bwd=bwd)
+
+
+def _mega_moe_dispatch_bytes(terms: MegaMoECostTerms, ep: int) -> float:
+    return terms.activation_input_bytes * terms.top_k / max(1, ep)
+
+
+def _mega_moe_combine_bytes(terms: MegaMoECostTerms, ep: int) -> float:
+    return terms.activation_output_bytes * terms.top_k / max(1, ep)
+
+
+def _mega_moe_a2a_time(
+    *, name: str, bytes_: float, ep: int, system: SystemSpec,
+) -> float:
+    collective = Collective(name=name, kind="A2A", group="EP", bytes_=int(bytes_))
+    tier = tier_for_group("EP", ep, system)
+    return collective_time(collective, ep, tier)
+
+
+def _phase_time(
+    *, waves: int, compute_s: float, dispatch_s: float, combine_s: float,
+) -> MegaMoEPhaseTime:
+    if waves <= 1:
+        pipeline = simulate_wave_pipeline(
+            waves=1,
+            dispatch_s=dispatch_s,
+            compute_s=compute_s,
+            combine_s=combine_s,
+        )
+    else:
+        pipeline = simulate_wave_pipeline(
+            waves=waves,
+            dispatch_s=dispatch_s / waves,
+            compute_s=compute_s / waves,
+            combine_s=combine_s / waves,
+        )
+    return MegaMoEPhaseTime(
+        compute_s=compute_s,
+        dispatch_s=dispatch_s,
+        combine_s=combine_s,
+        exposed_comm_s=pipeline.exposed_comm_s,
+        hidden_comm_s=pipeline.hidden_comm_s,
+        total_s=pipeline.total_s,
     )
 
 

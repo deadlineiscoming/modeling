@@ -15,6 +15,7 @@ from zrt.training.io.perf_tables import (
 )
 from zrt.training.models.comm import collective_time, tier_for_group, total_comm_time
 from zrt.training.models.flops import OpCost, op_cost
+from zrt.training.models.mega_moe import mega_moe_stage_time
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import LayerKind, ModelSpec
 from zrt.training.spec.strategy import Strategy, TPOverlap
@@ -179,6 +180,9 @@ def stage_time(
     t_fwd = 0.0
     t_bwd_dx = 0.0
     t_bwd_dw = 0.0
+    t_fused_ep_comm_fwd = 0.0
+    t_fused_ep_comm_bwd = 0.0
+    t_fused_ep_hidden = 0.0
 
     for op in stage_ops:
         cost = op_cost(op, model, system)
@@ -190,6 +194,16 @@ def stage_time(
         t_fwd    += fwd_t
         t_bwd_dx += dx_t
         t_bwd_dw += dw_t
+        if op.kind == "mega_moe":
+            mega_time = mega_moe_stage_time(
+                op, model, system, strategy, gpu,
+                fwd_compute_s=fwd_t,
+                dx_compute_s=dx_t,
+                dw_compute_s=dw_t,
+            )
+            t_fused_ep_comm_fwd += mega_time.comm_fwd_s
+            t_fused_ep_comm_bwd += mega_time.comm_bwd_s
+            t_fused_ep_hidden += mega_time.ep_hidden_s
 
     # Recompute: re-do forward for selected ops before backward. It stays
     # inside t_bwd_dx (it IS on the backward critical path, so the pipeline
@@ -316,7 +330,7 @@ def stage_time(
         t_ep_gemm_fwd = _ep_gemm_time(stage_ops, model, system, strategy, gpu_name)
         t_ep_gemm_bwd = 0.0
         for op in stage_ops:
-            if op.kind == "matmul" and "routed_expert" in op.name:
+            if _is_routed_expert_compute(op):
                 cost = op_cost(op, model, system)
                 op_overlap = gpu.overlap_ratio.get(op.kind, 0.0)
                 op_dtype = _resolve_compute_dtype(op, model)
@@ -392,6 +406,14 @@ def stage_time(
         # EP exposed per direction
         t_ep_exposed_fwd = max(0.0, t_ep_raw_comm_fwd - saved_fwd)
         t_ep_exposed_bwd = max(0.0, t_ep_raw_comm_bwd - saved_bwd)
+
+    t_comm_fwd += t_fused_ep_comm_fwd
+    t_comm_bwd += t_fused_ep_comm_bwd
+    t_fwd += t_fused_ep_comm_fwd
+    t_bwd_dx += t_fused_ep_comm_bwd
+    t_ep_hidden += t_fused_ep_hidden
+    t_ep_exposed_fwd += t_fused_ep_comm_fwd
+    t_ep_exposed_bwd += t_fused_ep_comm_bwd
 
     t_bwd = t_bwd_dx + t_bwd_dw
     return StageTime(
@@ -472,7 +494,7 @@ def _ep_parallel_fraction(
         else:
             continue
         t_total += t
-        if op.kind == "matmul" and "routed_expert" in op.name:
+        if _is_routed_expert_compute(op):
             t_ep += t
     if t_total <= 0:
         return 0.0
@@ -526,12 +548,18 @@ def _ep_gemm_time(
     """Routed expert GEMM time (seconds) — the compute that overlaps with EP A2A."""
     total = 0.0
     for op in ops:
-        if op.kind == "matmul" and "routed_expert" in op.name:
+        if _is_routed_expert_compute(op):
             cost = op_cost(op, model, system)
             op_dtype = _resolve_compute_dtype(op, model)
             total += _cost_phase_time(cost, "fwd", system, gpu_name,
                                       system.gpu.overlap_ratio.get(op.kind, 0.0), op_dtype)
     return total
+
+
+def _is_routed_expert_compute(op: Op) -> bool:
+    return op.kind == "mega_moe" or (
+        op.kind == "matmul" and "routed_expert" in op.name
+    )
 
 
 def _tp_gemm_time(

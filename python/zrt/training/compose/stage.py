@@ -14,6 +14,7 @@ from zrt.training.io.perf_tables import (
     effective_flops, effective_hbm_bw_bps, peak_tflops_for,
 )
 from zrt.training.models.comm import collective_time, tier_for_group, total_comm_time
+from zrt.training.topology import CommDomain
 from zrt.training.models.flops import OpCost, op_cost
 from zrt.training.models.mega_moe import mega_moe_stage_time
 from zrt.training.spec.dtype import Dtype
@@ -172,8 +173,22 @@ def stage_time(
     model: ModelSpec,
     system: SystemSpec,
     strategy: Strategy,
+    domain: CommDomain | None = None,
 ) -> StageTime:
-    """Compute forward + backward time for one PP stage and one microbatch."""
+    """Compute forward + backward time for one PP stage and one microbatch.
+
+    Parameters
+    ----------
+    domain
+        Optional shared :class:`CommDomain`. When provided, ALL
+        per-collective costs are priced through it — picking up the
+        N-tier explicit-ranks path automatically for 3+ tier systems
+        (no per-call rebuilds of ParallelGroups). When ``None``, a
+        local domain is constructed inline; callers in the search hot
+        path should pass a pre-built one to avoid the rebuild.
+    """
+    if domain is None:
+        domain = CommDomain(system=system, strategy=strategy)
     gpu_name = system.gpu.name
     gpu = system.gpu
 
@@ -226,9 +241,10 @@ def stage_time(
     t_other_comm_fwd = 0.0  # DP and any other groups
     t_other_comm_bwd = 0.0
     for c in stage_collectives:
-        group_size = _group_size(c.group, strategy)
-        tier = tier_for_group(c.group, group_size, system)
-        ct = collective_time(c, group_size, tier)
+        # All per-collective pricing goes through the unified resolver —
+        # picks the right tier (N-tier for 3+ levels, legacy for 2-tier)
+        # without each call site re-deriving the dispatch.
+        ct = domain.time(c)
 
         if c.group == "CP":
             if c.phase == "fwd":
@@ -461,6 +477,13 @@ def _recompute_time(
     for op in ops:
         if op.layer_id < 0:
             continue
+        # v2 cast ops: their cost is tied to the consumer's HBM read and
+        # is already counted in the main stage_time loop. Recomputing them
+        # is conceptually "redo the consumer's input cast" — handled as a
+        # 2nd-order effect; the main stage_time path covers it via the
+        # restored consumer fwd time. See §12.7 of mixed_quant_v2 doc.
+        if op.kind == "cast":
+            continue
         lk = model.layers[op.layer_id].value if op.layer_id < len(model.layers) else ""
         cats = policy.get(lk, set())
         if not cats:
@@ -493,6 +516,11 @@ def _ep_parallel_fraction(
     t_total = 0.0
     t_ep = 0.0
     for op in ops:
+        if op.kind == "cast":
+            # cast ops are neither EP-parallel nor representative of
+            # compute time — exclude from both numerator and denominator
+            # of the imbalance fraction.
+            continue
         cost = op_cost(op, model, system)
         if cost.fwd_cube_flops > 0 or cost.fwd_vector_flops > 0 or cost.fwd_bytes > 0:
             op_dtype = _resolve_compute_dtype(op, model)
@@ -536,15 +564,20 @@ def _wave_overlap_saved(comm_time: float, gemm_time: float, K: int = 4) -> float
 
 def _ep_comm_time(
     collectives: list[Collective], strategy: Strategy, system: SystemSpec,
+    domain: CommDomain | None = None,
 ) -> float:
-    """Total EP A2A communication time (seconds)."""
-    from zrt.training.models.comm import collective_time, tier_for_group
+    """Total EP A2A communication time (seconds).
+
+    Uses the shared :class:`CommDomain` when provided so the N-tier
+    explicit-ranks path applies (A2A picks the outermost spanned tier
+    for 3+ tier systems). Local fall-back domain otherwise.
+    """
+    if domain is None:
+        domain = CommDomain(system=system, strategy=strategy)
     total = 0.0
     for c in collectives:
         if c.group == "EP":
-            group_size = _group_size(c.group, strategy)
-            tier = tier_for_group(c.group, group_size, system)
-            total += collective_time(c, group_size, tier)
+            total += domain.time(c)
     return total
 
 

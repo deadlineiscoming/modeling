@@ -97,7 +97,7 @@ def test_mega_moe_quant_variant_w4a8_for_fp4_weights_and_fp8_moe_acts():
     assert mega_moe.meta["quant_variant"] == "w4a8"
     assert mega_moe.inputs[0].name == ln2.outputs[0].name == "x_ln2"
     assert mega_moe.inputs[0].dtype == ln2.outputs[0].dtype
-    assert mega_moe.outputs[0].dtype == model.act_dtype
+    assert mega_moe.outputs[0].dtype == model.effective_moe_act_dtype()
     assert mega_moe.meta["act_bytes"] == mega_moe.inputs[0].dtype.bytes
     assert mega_moe.meta["out_bytes"] == mega_moe.outputs[0].dtype.bytes
     assert mega_moe.meta["moe_act_dtype"] == Dtype.FP8_E4M3
@@ -118,12 +118,12 @@ def test_mega_moe_w4a8_shared_expert_agg_consumes_routed_output_dtype():
     expert_agg = [op for op in layer_ops if op.name == "L0.expert_agg"][0]
 
     assert mega_moe.outputs[0].name == "routed_ffn_out"
-    assert expert_agg.inputs[1].name == "routed_ffn_out"
+    assert expert_agg.inputs[1].name.startswith("routed_ffn_out__cast_bf16")
     assert mega_moe.outputs[0].shape_logical == (model.seq_len, model.hidden)
     assert expert_agg.inputs[1].shape_logical == (model.seq_len, model.hidden)
-    assert mega_moe.outputs[0].dtype == expert_agg.inputs[1].dtype
-    assert mega_moe.outputs[0].dtype == model.act_dtype
-    assert mega_moe.meta["out_bytes"] == expert_agg.inputs[1].dtype.bytes
+    assert mega_moe.outputs[0].dtype == model.effective_moe_act_dtype()
+    assert expert_agg.inputs[1].dtype == model.act_dtype
+    assert mega_moe.meta["out_bytes"] == mega_moe.outputs[0].dtype.bytes
 
 
 def test_mega_moe_w4a8_no_shared_expert_agg_consumes_routed_output_dtype():
@@ -141,11 +141,13 @@ def test_mega_moe_w4a8_no_shared_expert_agg_consumes_routed_output_dtype():
     residual2 = [op for op in layer_ops if op.name == "L0.residual2"][0]
 
     assert mega_moe.outputs[0].name == "routed_ffn_out"
-    assert expert_agg.inputs[0].name == "routed_ffn_out"
+    assert expert_agg.inputs[0].name.startswith("routed_ffn_out__cast_bf16")
     assert mega_moe.outputs[0].shape_logical == (model.seq_len, model.hidden)
     assert expert_agg.inputs[0].shape_logical == (model.seq_len, model.hidden)
-    assert mega_moe.outputs[0].dtype == expert_agg.inputs[0].dtype
-    assert expert_agg.outputs[0].name == residual2.inputs[0].name == "ffn_out"
-    assert expert_agg.outputs[0].dtype == residual2.inputs[0].dtype
-    assert mega_moe.outputs[0].dtype == model.act_dtype
-    assert mega_moe.meta["out_bytes"] == expert_agg.inputs[0].dtype.bytes
+    assert mega_moe.outputs[0].dtype == model.effective_moe_act_dtype()
+    assert expert_agg.inputs[0].dtype == model.act_dtype
+    assert expert_agg.outputs[0].name == "ffn_out"
+    assert residual2.inputs[0].name.startswith("ffn_out__cast_bf16")
+    assert expert_agg.outputs[0].dtype == model.effective_moe_act_dtype()
+    assert residual2.inputs[0].dtype == model.act_dtype
+    assert mega_moe.meta["out_bytes"] == mega_moe.outputs[0].dtype.bytes

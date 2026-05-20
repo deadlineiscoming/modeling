@@ -6,6 +6,7 @@ from zrt.training.ir.builders import build_graph
 from zrt.training.ir.training_graph import Op
 from zrt.training.models.flops import op_cost
 from zrt.training.models.mega_moe import (
+    _mega_moe_dispatch_bytes,
     infer_quant_variant,
     mega_moe_cost_terms,
     resolve_mega_moe_waves,
@@ -151,6 +152,25 @@ def test_mega_moe_bytes_include_visible_activations_and_stored_weight_traffic():
         + terms.activation_output_bytes
         + terms.weight_bytes
     )
+
+
+def test_mega_moe_dispatch_uses_internal_moe_activation_bytes_not_boundary_bytes():
+    op = _mega_moe_op(
+        m=16,
+        micro_batch=2,
+        n=32,
+        top_k=4,
+        act_bytes=2,
+        moe_act_bytes=1,
+        out_bytes=2,
+        ep=4,
+    )
+
+    terms = mega_moe_cost_terms(op)
+
+    assert terms.activation_input_bytes == 16 * 2 * 32 * 2
+    assert terms.moe_activation_input_bytes == 16 * 2 * 32 * 1
+    assert _mega_moe_dispatch_bytes(terms, ep=4) == 16 * 2 * 32 * 1
 
 
 def test_mega_moe_cost_uses_local_k_and_local_experts_when_sharded():

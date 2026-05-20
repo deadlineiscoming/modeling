@@ -32,6 +32,7 @@ class MegaMoECostTerms:
     quant_variant: str
     activation_input_bytes: float
     activation_output_bytes: float
+    moe_activation_input_bytes: float
     weight_bytes: float
     fwd_bytes: float
     fwd_flops: float
@@ -90,11 +91,13 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
     raw_fwd_multiplier = float(meta.get("fwd_multiplier", 3))
     fwd_multiplier = _mega_moe_fwd_multiplier(raw_fwd_multiplier, top_k)
     act_bytes = float(meta.get("act_bytes", 2))
+    moe_act_bytes = float(meta.get("moe_act_bytes", act_bytes))
     out_bytes = float(meta.get("out_bytes", act_bytes))
     weight_stored_bytes = float(meta.get("weight_stored_bytes", meta.get("weight_bytes", 2)))
 
     activation_input_bytes = float(tokens * n * act_bytes)
     activation_output_bytes = float(tokens * n * out_bytes)
+    moe_activation_input_bytes = float(tokens * n * moe_act_bytes)
     weight_bytes = float(local_experts * k_eff * n * fwd_multiplier * weight_stored_bytes)
     fwd_bytes = activation_input_bytes + activation_output_bytes + weight_bytes
     fwd_flops = float(2 * tokens * top_k * k_eff * n * fwd_multiplier)
@@ -109,6 +112,7 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
         quant_variant=str(meta.get("quant_variant", "standard")),
         activation_input_bytes=activation_input_bytes,
         activation_output_bytes=activation_output_bytes,
+        moe_activation_input_bytes=moe_activation_input_bytes,
         weight_bytes=weight_bytes,
         fwd_bytes=fwd_bytes,
         fwd_flops=fwd_flops,
@@ -175,7 +179,7 @@ def mega_moe_stage_time(
 
 
 def _mega_moe_dispatch_bytes(terms: MegaMoECostTerms, ep: int) -> float:
-    return terms.activation_input_bytes * terms.top_k / max(1, ep)
+    return terms.moe_activation_input_bytes * terms.top_k / max(1, ep)
 
 
 def _mega_moe_combine_bytes(terms: MegaMoECostTerms, ep: int) -> float:

@@ -97,6 +97,54 @@ def _weight_tensor(name: str, shape: tuple[int, ...], dtype: DType = DType.BF16)
     return TensorMeta.from_shape_dtype(name, shape, dtype)
 
 
+def _dtype_bytes(tensor: TensorMeta | None, default: float = 2.0) -> float:
+    return float(tensor.dtype.itemsize) if tensor is not None else default
+
+
+def _quant_variant(ctx: "TransformContext") -> str:
+    quant = getattr(ctx, "quant", None)
+    if quant is None:
+        return "standard"
+    weight = str(getattr(quant, "weight", "")).lower()
+    act = str(getattr(quant, "activation", "")).lower()
+    if weight in {"int4", "fp4"} and act.startswith("fp8"):
+        return "w4a8"
+    return "standard"
+
+
+def _make_mega_moe(node_id: str, scope: str,
+                   input_tensor: TensorMeta,
+                   output_tensor: TensorMeta,
+                   src_node: OpNode,
+                   meta: dict[str, object],
+                   ctx: "TransformContext",
+                   tokens_per_rank: int,
+                   tokens_per_expert: int) -> OpNode:
+    node = OpNode(
+        id=node_id,
+        op_type="mega_moe",
+        inputs=[input_tensor],
+        outputs=[output_tensor],
+        scope=scope,
+        layer=src_node.layer,
+        category="compute",
+    )
+    node.component = "moe.mega_moe"
+    phase = src_node.annotations.get("phase")
+    if phase:
+        node.annotations["phase"] = phase
+    if phase in ("fwd", "forward", "train_forward") and src_node.annotations.get("recompute"):
+        node.annotations["recompute"] = True
+    node.annotations["fused_by"] = "mega_moe_graph_capture"
+    node.annotations["fused_dispatch_compute_combine"] = True
+    node.annotations["mega_moe_waves"] = ctx.training.mega_moe_waves if ctx.training else 0
+    node.annotations["ep_tokens_per_rank"] = tokens_per_rank
+    node.annotations["ep_tokens_per_expert"] = tokens_per_expert
+    node.annotations["mega_moe_meta"] = dict(meta)
+    node.attrs["mega_moe_meta"] = dict(meta)
+    return node
+
+
 class ExpertGroupedMMPass(GraphPass):
     """Fuse routed expert gate/up/down ops into GroupedMatMul nodes.
 
@@ -182,6 +230,15 @@ class ExpertGroupedMMPass(GraphPass):
                 or any(n.outputs and n.outputs[0].shape[-1] != H_out for n in downs)
             ):
                 continue
+
+            if ctx.training and ctx.training.mega_moe:
+                self._fuse_mega_moe_forward_layer(
+                    g, layer_key, nodes, gates[0], downs[0],
+                    G, M, tokens_per_ep_rank, num_experts, ep, topk,
+                    H_in, H_out, ffn, ctx,
+                )
+                continue
+
             old_ids = {n.id for n in nodes}
 
             # Collect ALL external edges at once before any mutation
@@ -273,6 +330,75 @@ class ExpertGroupedMMPass(GraphPass):
                 g.edges.append(Edge(down_id, 0, e.dst, e.dst_idx, down.outputs[0]))
 
             g._rebuild_adjacency()
+
+    def _fuse_mega_moe_forward_layer(self, g: "OpGraph", layer_key: str,
+                                     nodes: list[OpNode],
+                                     gate: OpNode, down: OpNode,
+                                     experts_per_rank: int,
+                                     tokens_per_expert: int,
+                                     tokens_per_rank: int,
+                                     num_experts: int, ep: int, topk: int,
+                                     H_in: int, H_out: int, ffn: int,
+                                     ctx: "TransformContext") -> None:
+        old_ids = {n.id for n in nodes}
+        in_edges = [e for e in g.edges if e.dst in old_ids and e.src not in old_ids]
+        out_edges = [e for e in g.edges if e.src in old_ids and e.dst not in old_ids]
+        if not in_edges or not out_edges:
+            return
+
+        input_dtype = gate.inputs[0].dtype if gate.inputs else DType.BF16
+        output_dtype = down.outputs[0].dtype if down.outputs else input_dtype
+        input_tensor = TensorMeta.from_shape_dtype(
+            "mega_moe_in", (tokens_per_rank, H_in), input_dtype)
+        output_tensor = TensorMeta.from_shape_dtype(
+            "mega_moe_out", (tokens_per_rank, H_out), output_dtype)
+
+        weight_bytes = (
+            float(ctx.quant.weight_bytes)
+            if getattr(ctx, "quant", None) is not None
+            else _dtype_bytes(gate.inputs[0] if gate.inputs else None)
+        )
+        meta = {
+            "m": tokens_per_rank,
+            "micro_batch": ctx.training.micro_batch if ctx.training else 1,
+            "n": H_out,
+            "k": ffn,
+            "top_k": topk,
+            "num_experts": num_experts,
+            "experts_per_rank": experts_per_rank,
+            "ep": ep,
+            "requested_waves": ctx.training.mega_moe_waves if ctx.training else 0,
+            "act_bytes": _dtype_bytes(gate.inputs[0] if gate.inputs else None),
+            "moe_act_bytes": _dtype_bytes(gate.inputs[0] if gate.inputs else None),
+            "out_bytes": _dtype_bytes(down.outputs[0] if down.outputs else None),
+            "weight_bytes": weight_bytes,
+            "weight_stored_bytes": weight_bytes,
+            "fwd_multiplier": 3 * topk,
+            "quant_variant": _quant_variant(ctx),
+            "fused_dispatch_compute_combine": True,
+        }
+
+        mega_id = f"{layer_key.replace('.','_')}_mega_moe"
+        mega = _make_mega_moe(
+            mega_id, f"{layer_key}.moe", input_tensor, output_tensor,
+            gate, meta, ctx, tokens_per_rank, tokens_per_expert,
+        )
+
+        g.edges = [e for e in g.edges if e.src not in old_ids and e.dst not in old_ids]
+        for nid in old_ids:
+            g.nodes.pop(nid, None)
+        g.nodes[mega_id] = mega
+
+        seen_src = set()
+        for e in in_edges:
+            key = (e.src, e.src_idx)
+            if key not in seen_src:
+                seen_src.add(key)
+                g.edges.append(Edge(e.src, e.src_idx, mega_id, 0, mega.inputs[0]))
+        for e in out_edges:
+            g.edges.append(Edge(mega_id, 0, e.dst, e.dst_idx, mega.outputs[0]))
+
+        g._rebuild_adjacency()
 
     def _fuse_backward_layer(self, g: "OpGraph", layer_key: str, nodes: list[OpNode],
                              G: int, M: int, tokens_per_rank: int,

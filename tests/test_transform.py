@@ -9,6 +9,7 @@ from python.zrt.ir.types import TensorMeta, DType
 import python.zrt.hardware.registry as hw_registry
 from python.zrt.transform import (
     ParallelConfig, StreamConfig, QuantConfig, TransformContext,
+    TrainingConfig,
     TensorParallelPass, ExpertParallelPass, CommInserterPass,
     build_default_pipeline,
 )
@@ -45,6 +46,60 @@ def simple_linear_graph(tp=1):
     return OpGraph(name="test", phase="prefill",
                    nodes={"q": q, "o": o},
                    edges=[edge])
+
+
+def routed_moe_graph():
+    src = _linear_node("src", "transformer.layers.0.input", (8, 16), (8, 16))
+    gate = _linear_node(
+        "gate",
+        "transformer.layers.0.ffn.experts.0.w1",
+        (8, 16),
+        (8, 4),
+    )
+    up = _linear_node(
+        "up",
+        "transformer.layers.0.ffn.experts.0.w3",
+        (8, 16),
+        (8, 4),
+    )
+    act = OpNode(
+        id="act",
+        op_type="aten.silu.default",
+        inputs=[_t("gate_out", (8, 4)), _t("up_out", (8, 4))],
+        outputs=[_t("act_out", (8, 4))],
+        scope="transformer.layers.0.ffn.experts.0.activation",
+        category="compute",
+    )
+    down = _linear_node(
+        "down",
+        "transformer.layers.0.ffn.experts.0.w2",
+        (8, 4),
+        (8, 16),
+    )
+    sink = _linear_node("sink", "transformer.layers.0.output", (8, 16), (8, 16))
+    router = _linear_node("router", "transformer.layers.0.ffn.gate", (8, 16), (8, 4))
+    shared = _linear_node(
+        "shared",
+        "transformer.layers.0.ffn.shared_expert.w1",
+        (8, 16),
+        (8, 4),
+    )
+    for n in (gate, up, act, down):
+        n.annotations.update({"phase": "fwd", "recompute": True})
+    return OpGraph(
+        name="routed_moe",
+        phase="train_forward",
+        nodes={n.id: n for n in (src, gate, up, act, down, sink, router, shared)},
+        edges=[
+            Edge("src", 0, "gate", 0, src.outputs[0]),
+            Edge("src", 0, "up", 0, src.outputs[0]),
+            Edge("gate", 0, "act", 0, gate.outputs[0]),
+            Edge("up", 0, "act", 1, up.outputs[0]),
+            Edge("act", 0, "down", 0, act.outputs[0]),
+            Edge("down", 0, "sink", 0, down.outputs[0]),
+        ],
+        metadata={"seq_len": 8, "hidden": 16},
+    )
 
 
 def _ctx(tp=1, ep=1, hw_name="nvidia_h100_sxm",
@@ -356,6 +411,71 @@ def test_expert_grouped_mm_backward_preserves_reachable_external_inputs():
     assert "sink" in out.successors(gate_up_id)
     assert gate_up_id not in out.predecessors("bridge")
     assert "bridge" in out.predecessors("transformer_layers_0_ffn_grouped_down_bwd")
+
+
+def test_expert_grouped_mm_mega_moe_off_keeps_grouped_forward_path():
+    graph = routed_moe_graph()
+    ctx = _ctx(ep=2)
+    ctx.training = TrainingConfig(micro_batch=1, mega_moe=False)
+    ctx.profile = SimpleNamespace(num_experts=4, moe_active=2)
+
+    out = ExpertGroupedMMPass().run(graph, ctx)
+
+    assert [n for n in out.nodes.values() if n.op_type == "mega_moe"] == []
+    grouped = [n for n in out.nodes.values() if n.op_type == "GroupedMatMul"]
+    assert {n.annotations.get("grouped_mm_role") for n in grouped} == {"gate_up", "down"}
+
+
+def test_default_pipeline_mega_moe_forward_fuses_without_external_a2a():
+    graph = routed_moe_graph()
+    ctx = _ctx(ep=2)
+    ctx.training = TrainingConfig(micro_batch=1, mega_moe=True, mega_moe_waves=3)
+    ctx.profile = SimpleNamespace(num_experts=4, moe_active=2)
+
+    out = build_default_pipeline().run(graph, ctx)
+
+    mega_nodes = [n for n in out.nodes.values() if n.op_type == "mega_moe"]
+    assert len(mega_nodes) == 1
+    mega = mega_nodes[0]
+    assert mega.id == "transformer_layers_0_ffn_mega_moe"
+    assert mega.category == "compute"
+    assert mega.scope == "transformer.layers.0.ffn.moe"
+    assert mega.component == "moe.mega_moe"
+    assert mega.inputs[0].shape == (8, 16)
+    assert mega.outputs[0].shape == (8, 16)
+    assert mega.annotations["phase"] == "fwd"
+    assert mega.annotations["recompute"] is True
+    assert mega.annotations["fused_by"] == "mega_moe_graph_capture"
+    assert mega.annotations["fused_dispatch_compute_combine"] is True
+    assert mega.annotations["mega_moe_waves"] == 3
+    assert mega.annotations["ep_tokens_per_rank"] == 8
+    assert mega.annotations["ep_tokens_per_expert"] == 4
+    assert "ep_needs_a2a" not in mega.annotations
+    assert "ep_a2a_inserted" not in mega.annotations
+
+    assert not [n for n in out.nodes.values() if n.op_type == "GroupedMatMul"]
+    assert all(nid not in out.nodes for nid in ("gate", "up", "act", "down"))
+    assert "router" in out.nodes
+    assert "shared" in out.nodes
+    assert "src" in out.predecessors(mega.id)
+    assert "sink" in out.successors(mega.id)
+    assert not [
+        n for n in out.nodes.values()
+        if n.op_type == "comm.all_to_all" and mega.id in n.id
+    ]
+
+    meta = mega.annotations["mega_moe_meta"]
+    assert mega.attrs["mega_moe_meta"] == meta
+    assert meta["requested_waves"] == 3
+    assert meta["ep"] == 2
+    assert meta["num_experts"] == 4
+    assert meta["experts_per_rank"] == 2
+    assert meta["m"] == 8
+    assert meta["micro_batch"] == 1
+    assert meta["n"] == 16
+    assert meta["k"] == 4
+    assert meta["top_k"] == 2
+    assert meta["quant_variant"] == "standard"
 
 
 def test_expert_weight_name_matches_path_segments_only():

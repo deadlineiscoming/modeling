@@ -52,6 +52,13 @@ def estimate_training_from_graphs(
     moe_active_experts: int = 1,
     model_id: str = "",
     fusion_config: "FusionConfig | None" = None,
+    ffn_hidden: int | None = None,
+    moe_ffn_hidden: int | None = None,
+    layer_type_counts: dict[str, int] | None = None,
+    n_shared_experts: int | None = None,
+    num_heads: int | None = None,
+    kv_heads: int | None = None,
+    head_dim: int | None = None,
 ) -> "TrainingReport | tuple[TrainingReport, TransformContext, dict[str, OpGraph]]":
     """Estimate training performance from pre-built OpGraph instances.
 
@@ -89,13 +96,12 @@ def estimate_training_from_graphs(
     if model_type is not None:
         metadata["model_type"] = model_type
 
+    # Force set metadata (overwrite existing keys)
     for key, val in metadata.items():
-        if key not in forward_graph.metadata:
-            forward_graph.metadata[key] = val
+        forward_graph.metadata[key] = val
     if backward_graph is not None:
         for key, val in metadata.items():
-            if key not in backward_graph.metadata:
-                backward_graph.metadata[key] = val
+            backward_graph.metadata[key] = val
 
     quant_cfg = QuantConfig(weight=quant, activation=quant) if quant else None
     ctx = TransformContext(
@@ -200,6 +206,8 @@ def estimate_training_from_graphs(
     exposed_comm_ms = pipeline_metrics.exposed_comm_ms if pipeline_metrics else 0.0
     hidden_comm_ms = pipeline_metrics.hidden_comm_ms if pipeline_metrics else 0.0
     total_comm_ms = pipeline_metrics.total_comm_ms if pipeline_metrics else 0.0
+    optimizer_time_ms = pipeline_metrics.optimizer_time_ms if pipeline_metrics else 0.0
+    optimizer_comm_ms = pipeline_metrics.optimizer_comm_ms if pipeline_metrics else 0.0
 
     parallel = ctx.parallel
     training = ctx.training
@@ -244,6 +252,8 @@ def estimate_training_from_graphs(
         exposed_comm_ms=exposed_comm_ms,
         hidden_comm_ms=hidden_comm_ms,
         total_comm_volume_ms=total_comm_ms,
+        optimizer_time_ms=optimizer_time_ms,
+        optimizer_comm_ms=optimizer_comm_ms,
     )
 
     if return_transformed:

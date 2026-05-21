@@ -25,6 +25,7 @@ class WavePipelineResult:
 class MegaMoECostTerms:
     tokens: int
     n: int
+    activation_n: int
     k_eff: int
     top_k: int
     local_experts: int
@@ -84,8 +85,14 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
     m = int(meta["m"])
     micro_batch = int(meta.get("micro_batch", 1))
     tokens = micro_batch * m
-    n = int(meta.get("n_local", meta["n"]))
+    n_logical = int(meta["n"])
+    activation_n = int(meta.get("n_local", n_logical))
     k_eff = int(meta.get("k_local", meta["k"]))
+    # A fused routed FFN has both column-parallel and row-parallel pieces.
+    # Once k_local is present, using n_local for compute as well would apply
+    # TP twice. Keep n_local for boundary activations/A2A, but use the logical
+    # hidden dimension for expert GEMM and stored-weight traffic.
+    n = n_logical if "k_local" in meta else activation_n
     top_k = int(meta["top_k"])
     local_experts = int(meta.get("experts_per_rank", meta.get("num_experts", top_k)))
     raw_fwd_multiplier = float(meta.get("fwd_multiplier", 3))
@@ -95,9 +102,9 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
     out_bytes = float(meta.get("out_bytes", act_bytes))
     weight_stored_bytes = float(meta.get("weight_stored_bytes", meta.get("weight_bytes", 2)))
 
-    activation_input_bytes = float(tokens * n * act_bytes)
-    activation_output_bytes = float(tokens * n * out_bytes)
-    moe_activation_input_bytes = float(tokens * n * moe_act_bytes)
+    activation_input_bytes = float(tokens * activation_n * act_bytes)
+    activation_output_bytes = float(tokens * activation_n * out_bytes)
+    moe_activation_input_bytes = float(tokens * activation_n * moe_act_bytes)
     weight_bytes = float(local_experts * k_eff * n * fwd_multiplier * weight_stored_bytes)
     fwd_bytes = activation_input_bytes + activation_output_bytes + weight_bytes
     fwd_flops = float(2 * tokens * top_k * k_eff * n * fwd_multiplier)
@@ -105,6 +112,7 @@ def mega_moe_cost_terms(op: Op) -> MegaMoECostTerms:
     return MegaMoECostTerms(
         tokens=tokens,
         n=n,
+        activation_n=activation_n,
         k_eff=k_eff,
         top_k=top_k,
         local_experts=local_experts,

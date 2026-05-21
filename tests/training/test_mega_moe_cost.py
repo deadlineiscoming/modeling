@@ -184,7 +184,7 @@ def test_mega_moe_cost_uses_local_k_and_local_experts_when_sharded():
     assert terms.weight_bytes == 2 * 16 * 1024 * 3 * 2
 
 
-def test_mega_moe_cost_uses_local_hidden_when_tp_sharded():
+def test_mega_moe_cost_uses_local_hidden_for_activations_not_compute_when_tp_sharded():
     terms = mega_moe_cost_terms(
         _mega_moe_op(
             n=1024,
@@ -204,14 +204,43 @@ def test_mega_moe_cost_uses_local_hidden_when_tp_sharded():
         )
     )
 
-    assert terms.n == 256
+    assert terms.n == 1024
+    assert terms.activation_n == 256
     assert terms.k_eff == 512
-    assert terms.fwd_flops == 2 * 128 * 2 * 512 * 256 * 3
-    assert terms.weight_bytes == 2 * 512 * 256 * 3 * 2
+    assert terms.fwd_flops == 2 * 128 * 2 * 512 * 1024 * 3
+    assert terms.weight_bytes == 2 * 512 * 1024 * 3 * 2
     assert terms.activation_input_bytes == 128 * 256 * 2
     assert terms.activation_output_bytes == 128 * 256 * 2
     assert terms.moe_activation_input_bytes == 128 * 256 * 1
     assert _mega_moe_dispatch_bytes(terms, ep=4) == 128 * 256 * 1 * 2 / 4
+
+
+def test_mega_moe_tp_compute_matches_legacy_routed_expert_compute():
+    model = _moe_model()
+    strategy = Strategy(tp=4, ep=4, mega_moe=True)
+    mega_graph = build_graph(model, strategy)
+    routed_graph = build_graph(model, Strategy(tp=4, ep=4, mega_moe=False))
+
+    mega_moe = [op for op in mega_graph.ops if op.kind == "mega_moe"][0]
+    routed = [op for op in routed_graph.ops if op.name == "L0.routed_expert_ffn"][0]
+
+    mega_cost = op_cost(mega_moe, model)
+    routed_cost = op_cost(routed, model)
+    terms = mega_moe_cost_terms(mega_moe)
+
+    assert terms.n == model.hidden
+    assert terms.activation_n == model.hidden // strategy.tp
+    assert mega_cost.fwd_cube_flops == routed_cost.fwd_cube_flops
+    assert mega_cost.dx_cube_flops == routed_cost.dx_cube_flops
+    assert mega_cost.dw_cube_flops == routed_cost.dw_cube_flops
+    assert _mega_moe_dispatch_bytes(terms, strategy.ep) == (
+        strategy.micro_batch
+        * model.seq_len
+        * (model.hidden // strategy.tp)
+        * model.top_k
+        * model.effective_moe_act_dtype().bytes
+        / strategy.ep
+    )
 
 
 def test_mega_moe_w4a8_bytes_use_stored_fp4_weight_bytes():

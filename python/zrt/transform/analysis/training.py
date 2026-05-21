@@ -404,6 +404,8 @@ class PipelineStepMetrics:
     exposed_comm_ms: float = 0.0
     hidden_comm_ms: float = 0.0
     total_comm_ms: float = 0.0
+    dp_exposed_ms: float = 0.0
+    dp_hidden_ms: float = 0.0
     optimizer_time_ms: float = 0.0
     optimizer_comm_ms: float = 0.0
 
@@ -421,6 +423,8 @@ class PipelineStepMetrics:
             "exposed_comm_ms": self.exposed_comm_ms,
             "hidden_comm_ms": self.hidden_comm_ms,
             "total_comm_ms": self.total_comm_ms,
+            "dp_exposed_ms": self.dp_exposed_ms,
+            "dp_hidden_ms": self.dp_hidden_ms,
             "optimizer_time_ms": self.optimizer_time_ms,
             "optimizer_comm_ms": self.optimizer_comm_ms,
         }
@@ -446,7 +450,6 @@ class TrainingPipelinePass(GraphPass):
         g = graph.clone()
 
         pp = ctx.parallel.pp if ctx.parallel else 1
-        num_microbatches = ctx.training.num_microbatches if ctx.training else 1
         hw = ctx.hw_spec
         layer_scale = g.metadata.get("layer_scale", 1.0)
 
@@ -611,12 +614,15 @@ class TrainingPipelinePass(GraphPass):
             optimizer=OPT_MAP.get(opt_str, OptKind.ADAM),
             dp_overlap_in_bubble=ctx.training.dp_overlap_in_bubble if ctx.training else True,
         )
+        # Derive per-device microbatch count from the Strategy (includes DP)
+
+        M = strategy_proxy.num_microbatches()
 
         composer_cls = COMPOSER_BY_SCHED.get(strategy_proxy.pp_schedule)
         if composer_cls is None:
             composer_cls = COMPOSER_BY_SCHED[PP_SCHED_BY_NAME["1f1b"]]
         step_result = composer_cls().compose(
-            stage_times_list, num_microbatches, pp, dp_ar_time_s, strategy_proxy
+            stage_times_list, M, pp, dp_ar_time_s, strategy_proxy
         )
 
         step_time_us = step_result.step_time * 1e6
@@ -675,7 +681,7 @@ class TrainingPipelinePass(GraphPass):
 
         warmup_steps = step_result.warmup_steps
         cooldown_steps = step_result.cooldown_steps
-        steady_steps = num_microbatches
+        steady_steps = M
         training_flops = g.metadata.get("training_flops", 0.0)
         world_size = ctx.parallel.total_devices if ctx.parallel else 1
 
@@ -695,8 +701,8 @@ class TrainingPipelinePass(GraphPass):
         pp = ctx.parallel.pp if ctx.parallel else 1
         model_flops = (training_flops - recompute_flops) / pp
         total_flops_for_hfu = training_flops / pp
-        mfu = util_from_flops(model_flops * num_microbatches, peak_flops_per_gpu, step_time_sec)
-        hfu = util_from_flops(total_flops_for_hfu * num_microbatches, peak_flops_per_gpu, step_time_sec)
+        mfu = util_from_flops(model_flops * M, peak_flops_per_gpu, step_time_sec)
+        hfu = util_from_flops(total_flops_for_hfu * M, peak_flops_per_gpu, step_time_sec)
 
         metrics = PipelineStepMetrics(
             step_time_ms=step_time_ms,
@@ -711,6 +717,8 @@ class TrainingPipelinePass(GraphPass):
             exposed_comm_ms=exposed_comm_ms,
             hidden_comm_ms=hidden_comm_ms,
             total_comm_ms=total_comm_ms,
+            dp_exposed_ms=step_result.dp_exposed * 1000.0,
+            dp_hidden_ms=step_result.dp_hidden * 1000.0,
         )
 
         g.metadata["pipeline_metrics"] = metrics

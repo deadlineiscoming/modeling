@@ -244,6 +244,7 @@ class OneF1BComposer(PipelineComposer):
                 steady=step * M,
                 cooldown=0.0,
                 dp_exposed=dp_exposed,
+                dp_hidden=hidden,
                 schedule_name="1f1b",
                 warmup_steps=0,
                 cooldown_steps=0,
@@ -290,6 +291,7 @@ class OneF1BComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_exposed=dp_exposed,
+            dp_hidden=hidden,
             schedule_name="1f1b",
             warmup_steps=pp - 1,
             cooldown_steps=pp - 1,
@@ -360,6 +362,7 @@ class Interleaved1F1BComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_exposed=dp_exposed,
+            dp_hidden=hidden,
             schedule_name="i1f1b",
             warmup_steps=max(1, -(-(pp - 1) // V)),
             cooldown_steps=max(1, -(-(pp - 1) // V)),
@@ -434,6 +437,7 @@ class DualPipeComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_exposed=dp_exposed,
+            dp_hidden=hidden,
             schedule_name="dualpipe",
             warmup_steps=max(0, pp // 2 - 1),
             cooldown_steps=max(0, pp // 2 - 1),
@@ -504,6 +508,7 @@ class DualPipeVComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_exposed=dp_exposed,
+            dp_hidden=hidden,
             schedule_name="dualpipev",
             warmup_steps=max(0, (pp // 2 - 1 + V - 1) // V),
             cooldown_steps=max(0, (pp // 2 - 1 + V - 1) // V),
@@ -592,6 +597,7 @@ class ZeroBubbleComposer(PipelineComposer):
             steady=steady,
             cooldown=cooldown,
             dp_exposed=dp_exposed,
+            dp_hidden=hidden,
             schedule_name="zb",
             warmup_steps=pp - 1,
             cooldown_steps=pp - 1,
@@ -846,7 +852,8 @@ def pipeline_step_time(
         step.recompute_time = 0.0
 
     # ── Hidden comm ───────────────────────────────────────────────────────
-    # DP AR hidden in pipeline bubble — independent, exact.
+    # DP AR hidden in pipeline bubble — set by composer (and updated by
+    # dual-batch above). Verify the invariant: dp_hidden = dp_ar_time - dp_exposed.
     step.dp_hidden = max(0.0, dp_ar_time - step.dp_exposed)
 
     step.hidden_comm = step.dp_hidden + step.tp_hidden + step.ep_hidden

@@ -860,7 +860,7 @@ class TrainingPipelinePass(GraphPass):
         from python.zrt.ir.types import DType
         if optimizer == "muon":
             peak_flops = hw.peak_flops(DType.BF16)
-            compute_us = (step_flops / peak_flops) * 1e6 if peak_flops > 0 else 0.0
+            compute_time_us = (step_flops / peak_flops) * 1e6 if peak_flops > 0 else 0.0
         else:
             opt_state_bytes = float(opt_node.attrs.get("state_bytes", 0))
             hbm_bw = hw.memory.hbm_bandwidth_gbps * 1e9 / 8
@@ -870,9 +870,9 @@ class TrainingPipelinePass(GraphPass):
         rs_time_us = 0.0
         if optimizer == "muon":
             ag_bytes = float(opt_node.attrs.get("muon_ag_bytes", 0))
-            ag_us = 0.0
-            rs_us = 0.0
+            ns_rotation = opt_node.attrs.get("ns_rotation", True)
             if ag_bytes > 0:
+                dp = ctx.parallel.dp if ctx.parallel else 1
                 gpus_per_node = hw.interconnect.intra_node.num_devices
                 link = hw.interconnect.inter_node if dp > gpus_per_node else hw.interconnect.intra_node
                 dp_bw = link.bandwidth_gbps * 1e9 / 8

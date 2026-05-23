@@ -206,6 +206,13 @@ class TestMakeStrategyFromConfig:
         assert strategy.pp_schedule == PPSched.INTERLEAVED
         assert strategy.vpp_chunks == 4
 
+    def test_pp_schedule_dualpipev_with_vpp(self):
+        config = {"pp_schedule": "dualpipev", "vpp_chunks": 4}
+        strategy = _make_strategy_from_config(config)
+
+        assert strategy.pp_schedule == PPSched.DUALPIPE_V
+        assert strategy.vpp_chunks == 4
+
     def test_pp_schedule_non_interleaved_ignores_vpp(self):
         config = {"pp_schedule": "1f1b", "vpp_chunks": 4}
         strategy = _make_strategy_from_config(config)

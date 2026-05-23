@@ -403,7 +403,7 @@ class DualPipeComposer(PipelineComposer):
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
         # 一个阶段分成F、B，先F后B 时间依然是加法
-        t_stage_max = t_fwd_max + t_bwd_max
+        t_stage_max = max((st.fwd + st.bwd for st in stage_times), default=0.0)
         t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
         t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
@@ -493,7 +493,7 @@ class DualPipeVComposer(PipelineComposer):
 
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
-        t_stage_max = t_fwd_max + t_bwd_max
+        t_stage_max = max((st.fwd + st.bwd for st in stage_times), default=0.0)
         t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
         t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
@@ -716,6 +716,12 @@ def pipeline_step_time(
     #   (b) post-compose pp_exposed extraction uses the bottleneck stage's
     #       exposed sum, not a hardcoded ``2*pp_p2p``.
     pp_p2p = comm_times.get("pp_p2p", 0.0)
+    pp_p2p_factor = (
+        max(1, strategy.vpp_chunks)
+        if strategy.pp_schedule in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V)
+        else 1
+    )
+    pp_p2p_per_direction = pp_p2p * pp_p2p_factor
     # Dual-stream PP P2P hide only fires when (a) schedule is dual-stream
     # AND (b) user explicitly opted in via ``strategy.pp_overlap``. The
     # gate is needed because DualPipe(V)'s antiparallel structure only
@@ -736,8 +742,8 @@ def pipeline_step_time(
     recompute_exposed: list[float] = []
     for st in stage_times:
         if pp == 1 or not is_dual:
-            pp_p2p_fwd_exposed.append(pp_p2p)
-            pp_p2p_bwd_exposed.append(pp_p2p)
+            pp_p2p_fwd_exposed.append(pp_p2p_per_direction)
+            pp_p2p_bwd_exposed.append(pp_p2p_per_direction)
             pp_p2p_hidden.append(0.0)
             recompute_exposed.append(st.recompute)
             continue
@@ -746,7 +752,7 @@ def pipeline_step_time(
         # Attribute the bwd_dw hide window to PP first: PP is communication
         # scheduled on the opposite stream, while any remaining residual from
         # a large recompute belongs to recompute itself, not PP.
-        pp_p2p_total = 2.0 * pp_p2p
+        pp_p2p_total = 2.0 * pp_p2p_per_direction
         total_to_hide = pp_p2p_total + st.recompute
         if total_to_hide <= 0:
             pp_p2p_fwd_exposed.append(0.0)
@@ -843,8 +849,11 @@ def pipeline_step_time(
         step.cp_exposed = scale * s_bot.cp_exposed
         # PP exposed: bottleneck stage's exposed fwd+bwd boundary cost
         # (already schedule-adjusted in the augmentation block above).
-        # For 1F1B/VPP/ZB this is ``2*pp_p2p`` (bit-exact with legacy).
-        # For DualPipe(V) it is the residual share after bwd_dw hides.
+        # For 1F1B/ZB this is ``2*pp_p2p``; for VPP/DualPipeV the scalar
+        # one-boundary cost is multiplied by ``vpp_chunks`` because this
+        # formula path aggregates virtual chunks into one physical stage.
+        # For DualPipe(V) with pp_overlap it is the residual share after
+        # bwd_dw hides.
         step.pp_exposed = scale * (
             pp_p2p_fwd_exposed[bot_idx] + pp_p2p_bwd_exposed[bot_idx]
         )

@@ -247,7 +247,7 @@ def _make_strategy_from_config(config: Dict) -> Strategy:
 
     pp_schedule = PPSched(config.get("pp_schedule", "1f1b"))
     vpp_chunks = config.get("vpp_chunks", 1)
-    if pp_schedule != PPSched.INTERLEAVED:
+    if pp_schedule not in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V):
         vpp_chunks = 1
 
     return Strategy(
@@ -318,7 +318,7 @@ class TrainingConfigManager:
     ) -> Strategy:
         pp_schedule = PPSched(other_config.get("pp_schedule", "1f1b"))
         vpp_chunks = other_config.get("vpp_chunks", 1)
-        if pp_schedule != PPSched.INTERLEAVED:
+        if pp_schedule not in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V):
             vpp_chunks = 1
 
         recompute = RecomputePolicy()

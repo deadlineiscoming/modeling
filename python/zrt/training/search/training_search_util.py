@@ -450,6 +450,8 @@ class TrainingConfigManager:
             if model is not None:
                 if model.num_heads % tp != 0:
                     continue
+                if model.hidden % tp != 0:
+                    continue
                 if model.num_kv_heads % tp != 0 and model.num_kv_heads >= tp:
                     continue
                 if model.ffn % tp != 0:
@@ -462,10 +464,6 @@ class TrainingConfigManager:
 
                 for pp in pp_vals:
                     if model is not None and pp > len(model.layers):
-                        continue
-                    # Pipeline schedules other than 1F1B require pp > 1; at
-                    # pp=1 they degenerate to OneF1B and just pollute the grid.
-                    if pp == 1 and pp_schedule_str != "1f1b":
                         continue
 
                     remaining = target_ws // (tp * cp * pp)
@@ -507,9 +505,6 @@ class TrainingConfigManager:
                                     continue
 
                             yield (tp, cp, pp, ep, dp)
-
-    def get_valid_parallel_combos(self, grid: Dict[str, List[Any]], target_ws: int) -> List[Tuple[int, ...]]:
-        return list(self._enumerate_valid_parallel_configs(grid, target_ws))
 
     def count_total_configs(self) -> int:
         grid = {k: (v if isinstance(v, list) else [v]) for k, v in self.param_grid.items()}
@@ -998,8 +993,8 @@ if __name__ == "__main__":
         "model": ["deepseek_v4_pro"],
         "hw": ["nvidia_b300"],
         "world_size": [8192],
-        "tp": [1, 2, 4, 8, 16],
-        "cp": [1, 2, 4, 8, 16],
+        "tp": [1, 2, 4, 8, 16, 32, 64, 128],
+        "cp": [1, 2, 4, 8, 16, 32, 64, 128],
         "pp": [1, 2, 4, 8, 16],
         # EP must divide DP under the current expert-DP sharding model.
         "ep": [128],

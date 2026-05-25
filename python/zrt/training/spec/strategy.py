@@ -222,6 +222,11 @@ class Strategy:
                 f"{total} != world_size({system.world_size})"
             )
 
+        if model.hidden % self.tp != 0:
+            errors.append(
+                f"hidden({model.hidden}) not divisible by TP({self.tp})"
+            )
+
         if model.num_heads % self.tp != 0:
             errors.append(
                 f"num_heads({model.num_heads}) not divisible by TP({self.tp})"

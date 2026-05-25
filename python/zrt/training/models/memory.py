@@ -119,18 +119,20 @@ def memory_breakdown(
     # ── Parameters on this rank ──────────────────────────────────────────
     P = _params_on_rank(model, strategy)
 
-    # Per-component weight bytes: routed-expert weights use
-    # routed_expert_weight_dtype (FP4 stored-size includes per-block BF16 scale);
-    # everything else uses param_dtype.
+    # Per-component expert bytes: routed and shared experts can use different
+    # storage/grad dtypes. FP4 stored-size includes per-block BF16 scale.
     P_expert = _routed_expert_params_on_rank(model, strategy)
-    P_other = P - P_expert
+    P_shared = _shared_expert_params_on_rank(model, strategy)
+    P_other = max(0, P - P_expert - P_shared)
     weights = int(
         P_expert * model.routed_expert_weight_dtype.stored_bytes
+        + P_shared * model.shared_expert_weight_dtype.stored_bytes
         + P_other * model.param_dtype.stored_bytes
     )
 
     grads = int(
         P_expert * model.routed_expert_grad_dtype.bytes
+        + P_shared * model.shared_expert_grad_dtype.bytes
         + P_other * model.grad_dtype.bytes
     )
     opt_state = _optimizer_state_bytes(P, model, strategy)
@@ -310,6 +312,23 @@ def _routed_expert_params_on_rank(model: ModelSpec, strategy: Strategy) -> int:
         num_experts=model.num_experts, tp=strategy.tp, ep=strategy.ep,
         pp=strategy.pp, n_layers=len(model.layers),
     )
+
+
+def _shared_expert_params_on_rank(model: ModelSpec, strategy: Strategy) -> int:
+    """Shared expert parameters on one rank after TP + PP sharding.
+
+    Shared experts are not EP-sharded, matching _params_on_rank().
+    """
+    if model.num_experts <= 0:
+        return 0
+    n_moe = sum(1 for lk in model.layers if lk.value == "moe")
+    n_shared = getattr(model, "n_shared_experts", 1) or 1
+    total = n_moe * n_shared * 2 * model.hidden * model.moe_ffn
+    if strategy.tp > 1:
+        total //= strategy.tp
+    if strategy.pp > 1 and len(model.layers) > 0:
+        total = int(total * (len(model.layers) / strategy.pp) / len(model.layers))
+    return total
 
 
 # Also need to store n_shared_experts on ModelSpec for the config loader

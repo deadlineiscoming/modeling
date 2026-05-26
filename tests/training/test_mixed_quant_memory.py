@@ -151,6 +151,31 @@ def test_shared_expert_grad_dtype_affects_shared_grad_bytes():
     assert mb_bf16.grads < mb_fp32.grads
 
 
+def test_shared_expert_dtype_bytes_respect_tp_and_pp_sharding():
+    g = Graph()
+    sys_ = _make_system()
+    st = Strategy(tp=2, pp=2, optimizer=OptKind.ADAM)
+
+    m_weight_bf16 = _moe_model(shared_expert_weight_dtype=Dtype.BF16)
+    m_weight_fp8 = _moe_model(shared_expert_weight_dtype=Dtype.FP8_E4M3)
+    mb_weight_bf16 = memory_breakdown(g, m_weight_bf16, sys_, st)
+    mb_weight_fp8 = memory_breakdown(g, m_weight_fp8, sys_, st)
+
+    n_moe = sum(1 for lk in m_weight_bf16.layers if lk is LayerKind.MOE)
+    shared_params_on_rank = (
+        n_moe * m_weight_bf16.n_shared_experts
+        * 2 * m_weight_bf16.hidden * m_weight_bf16.moe_ffn
+        // st.tp // st.pp
+    )
+    assert mb_weight_bf16.weights - mb_weight_fp8.weights == shared_params_on_rank
+
+    m_grad_fp32 = _moe_model(shared_expert_grad_dtype=Dtype.FP32)
+    m_grad_bf16 = _moe_model(shared_expert_grad_dtype=Dtype.BF16)
+    mb_grad_fp32 = memory_breakdown(g, m_grad_fp32, sys_, st)
+    mb_grad_bf16 = memory_breakdown(g, m_grad_bf16, sys_, st)
+    assert mb_grad_fp32.grads - mb_grad_bf16.grads == 2 * shared_params_on_rank
+
+
 def test_dense_model_grad_unaffected_by_routed_expert_grad_dtype():
     g, sys_, st = Graph(), _make_system(), Strategy(optimizer=OptKind.ADAM)
     base = dict(hidden=512, ffn=2048, num_heads=8, num_kv_heads=8, head_dim=64,

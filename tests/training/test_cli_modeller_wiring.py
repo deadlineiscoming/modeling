@@ -55,6 +55,8 @@ def test_train_hw_cli_delegates_to_graph_native_modeller(monkeypatch, capsys):
         muon_ns_steps=None,
         micro_batch=1,
         global_batch=16,
+        recompute_policy=None,
+        gradient_checkpointing=False,
         total_params=123e9,
         hidden=4096,
         num_layers_full=32,

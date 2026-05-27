@@ -11,6 +11,7 @@ Usage::
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
 
 # Import shared TrainingReport type (canonical import path)
 from zrt.training.spec.report import TrainingReport
+
+logger = logging.getLogger(__name__)
 
 
 def estimate_training_from_graphs(
@@ -42,10 +45,13 @@ def estimate_training_from_graphs(
     muon_rotation: bool = True,
     muon_ns_steps: int | None = None,
     model_type: str | None = None,
+    vocab_size: int | None = None,
     micro_batch: int = 1,
     global_batch: int = 32,
+    recompute_policy: str = "none",
     pp_schedule: str = "1f1b",
     vpp_chunks: int = 1,
+    pp_mode: str = "trace",
     return_transformed: bool = False,
     quant: str | None = None,
     moe_total_experts: int = 0,
@@ -89,6 +95,12 @@ def estimate_training_from_graphs(
     }
     if moe_total_experts > 0:
         metadata["moe_total_experts"] = moe_total_experts
+    if moe_ffn_hidden is not None:
+        metadata["moe_ffn_hidden"] = moe_ffn_hidden
+    if layer_type_counts is not None:
+        metadata["layer_type_counts"] = layer_type_counts
+    if vocab_size is not None:
+        metadata["vocab_size"] = vocab_size
     if moe_active_experts > 1:
         metadata["moe_active_experts"] = moe_active_experts
     if total_params is not None:
@@ -115,8 +127,10 @@ def estimate_training_from_graphs(
             muon_ns_steps=muon_ns_steps,
             micro_batch=micro_batch,
             global_batch=global_batch,
+            recompute_policy=recompute_policy,
             pp_schedule=pp_schedule,
             vpp_chunks=vpp_chunks,
+            pp_mode=pp_mode,
             seq_len=seq_len,
             hidden=hidden,
             cp_kind=cp_kind,
@@ -176,6 +190,37 @@ def estimate_training_from_graphs(
             dot_path = export_dot(g, out / f"{model_name}_{tag}.dot")
             _maybe_render(g, dot_path)
 
+        # ── PP Chrome Trace export ──────────────────────────────────────────
+        for tag, g in results.items():
+            pp_timeline = g.metadata.get("pp_stitched_timeline")
+            stage_timelines = g.metadata.get("pp_per_stage_timelines")
+            if pp_timeline is not None and stage_timelines is not None:
+                from python.zrt.executor.chrome_trace import ChromeTraceExporter
+                trace_dir = out / "pp_trace"
+                trace_dir.mkdir(parents=True, exist_ok=True)
+                exporter = ChromeTraceExporter()
+                M = pp_timeline.M
+
+                exporter.export_stitched(pp_timeline, str(trace_dir / "pp_stitched.json"))
+
+                tl_list = [
+                    stage_timelines[s] for s in range(pp_timeline.pp)
+                    if s in stage_timelines and stage_timelines[s] is not None
+                ]
+                if tl_list:
+                    exporter.export_per_stage(
+                        tl_list,
+                        str(trace_dir / "pp_per_stage.json"),
+                        M=M,
+                        pp_stitched=pp_timeline,
+                        replicate=False,
+                    )
+                    exporter.export_combined(
+                        pp_timeline, tl_list,
+                        str(trace_dir / "pp_combined.json"),
+                    )
+                logger.info("PP Chrome Trace exported to %s", trace_dir)
+
     if "unified" in results:
         g = results["unified"]
         pipeline_metrics = g.metadata.get("pipeline_metrics")
@@ -184,6 +229,7 @@ def estimate_training_from_graphs(
         forward_flops = g.metadata.get("forward_flops", 0.0)
         backward_flops = g.metadata.get("backward_flops", 0.0)
         total_params = g.metadata.get("total_params", 0)
+        per_strat_meta = g.metadata.get("per_strategy_overlap", {})
     else:
         fwd = results["train_forward"]
         pipeline_metrics = fwd.metadata.get("pipeline_metrics")
@@ -193,6 +239,7 @@ def estimate_training_from_graphs(
         forward_flops = fwd.metadata.get("forward_flops", 0.0)
         backward_flops = fwd.metadata.get("backward_flops", 0.0)
         total_params = fwd.metadata.get("total_params", 0)
+        per_strat_meta = fwd.metadata.get("per_strategy_overlap", {})
 
     step_time_ms = pipeline_metrics.step_time_ms if pipeline_metrics else 0.0
     per_stage_ms = pipeline_metrics.per_stage_ms if pipeline_metrics else 0.0
@@ -203,6 +250,10 @@ def estimate_training_from_graphs(
     steady_steps = pipeline_metrics.steady_steps if pipeline_metrics else 0
     bubble_fraction = pipeline_metrics.bubble_fraction if pipeline_metrics else 0.0
     bubble_time_ms = pipeline_metrics.bubble_time_ms if pipeline_metrics else 0.0
+    compute_time_ms = pipeline_metrics.compute_time_ms if pipeline_metrics else 0.0
+    fwd_compute_ms = pipeline_metrics.fwd_compute_ms if pipeline_metrics else 0.0
+    bwd_compute_ms = pipeline_metrics.bwd_compute_ms if pipeline_metrics else 0.0
+    recompute_compute_ms = pipeline_metrics.recompute_compute_ms if pipeline_metrics else 0.0
     exposed_comm_ms = pipeline_metrics.exposed_comm_ms if pipeline_metrics else 0.0
     hidden_comm_ms = pipeline_metrics.hidden_comm_ms if pipeline_metrics else 0.0
     total_comm_ms = pipeline_metrics.total_comm_ms if pipeline_metrics else 0.0
@@ -210,6 +261,10 @@ def estimate_training_from_graphs(
     dp_hidden_ms = pipeline_metrics.dp_hidden_ms if pipeline_metrics else 0.0
     optimizer_time_ms = pipeline_metrics.optimizer_time_ms if pipeline_metrics else 0.0
     optimizer_comm_ms = pipeline_metrics.optimizer_comm_ms if pipeline_metrics else 0.0
+    pipeline_time_ms = pipeline_metrics.pipeline_time_ms if pipeline_metrics else 0.0
+    warmup_ms = pipeline_metrics.warmup_ms if pipeline_metrics else 0.0
+    steady_ms = pipeline_metrics.steady_ms if pipeline_metrics else 0.0
+    cooldown_ms = pipeline_metrics.cooldown_ms if pipeline_metrics else 0.0
 
     parallel = ctx.parallel
     training = ctx.training
@@ -253,11 +308,32 @@ def estimate_training_from_graphs(
         bubble_time_ms=bubble_time_ms,
         total_params=total_params,
         fused_ops_summary=fused_ops_summary,
+        compute_time_ms=compute_time_ms,
+        fwd_compute_ms=fwd_compute_ms,
+        bwd_compute_ms=bwd_compute_ms,
+        recompute_compute_ms=recompute_compute_ms,
         exposed_comm_ms=exposed_comm_ms,
         hidden_comm_ms=hidden_comm_ms,
         total_comm_volume_ms=total_comm_ms,
         optimizer_time_ms=optimizer_time_ms,
         optimizer_comm_ms=optimizer_comm_ms,
+        pipeline_time_ms=pipeline_time_ms,
+        warmup_ms=warmup_ms,
+        steady_ms=steady_ms,
+        cooldown_ms=cooldown_ms,
+        tp_exposed_ms=per_strat_meta.get("tp_exposed_us", 0.0) / 1000.0,
+        tp_hidden_ms=per_strat_meta.get("tp_hidden_us", 0.0) / 1000.0,
+        tp_total_ms=per_strat_meta.get("tp_total_us", 0.0) / 1000.0,
+        cp_exposed_ms=per_strat_meta.get("cp_exposed_us", 0.0) / 1000.0,
+        cp_hidden_ms=per_strat_meta.get("cp_hidden_us", 0.0) / 1000.0,
+        cp_total_ms=per_strat_meta.get("cp_total_us", 0.0) / 1000.0,
+        ep_exposed_ms=per_strat_meta.get("ep_exposed_us", 0.0) / 1000.0,
+        ep_hidden_ms=per_strat_meta.get("ep_hidden_us", 0.0) / 1000.0,
+        ep_total_ms=per_strat_meta.get("ep_total_us", 0.0) / 1000.0,
+        pp_exposed_ms=per_strat_meta.get("pp_exposed_us", 0.0) / 1000.0,
+        pp_hidden_ms=per_strat_meta.get("pp_hidden_us", 0.0) / 1000.0,
+        pp_total_ms=per_strat_meta.get("pp_total_us", 0.0) / 1000.0,
+        optimizer_comm_hidden_ms=pipeline_metrics.optimizer_comm_hidden_ms if pipeline_metrics else 0.0,
     )
 
     if return_transformed:

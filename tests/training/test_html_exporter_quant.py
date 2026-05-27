@@ -68,3 +68,48 @@ def test_html_export_serializes_quant_cast_meta(tmp_path):
     assert "const DATA = JSON.parse(" in html
     assert "fp8_e4m3" in html
     assert "Dtype.FP8_E4M3" not in html
+
+
+def test_html_export_includes_operator_time_share(tmp_path):
+    model = ModelSpec(
+        hidden=128,
+        ffn=256,
+        num_heads=4,
+        num_kv_heads=4,
+        head_dim=32,
+        vocab=1000,
+        seq_len=64,
+        layers=[LayerKind.MOE],
+        q_lora_rank=16,
+        kv_lora_rank=8,
+        qk_nope_head_dim=16,
+        qk_rope_head_dim=8,
+        v_head_dim=16,
+        index_topk=16,
+        num_experts=8,
+        moe_ffn=256,
+        top_k=2,
+    )
+    system = _system()
+    strategy = Strategy()
+    graph = build_graph(model, strategy)
+    op_costs = {op.name: op_cost(op, model, system) for op in graph.ops}
+    out = tmp_path / "operator_time_share.html"
+
+    export_estimate_html(
+        report=TrainingReport(step_time_ms=100.0, compute_time_ms=50.0),
+        graph=graph,
+        model=model,
+        system=system,
+        strategy=strategy,
+        op_costs=op_costs,
+        output_path=out,
+    )
+
+    html = out.read_text(encoding="utf-8")
+    assert "Operator Time Share" in html
+    assert "Matmul family total" in html
+    assert "FlashAttention" in html
+    assert "MLA attention block" in html
+    assert "useful compute" in html
+    assert "pct_of_useful_compute" in html

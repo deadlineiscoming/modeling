@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zrt.training.io.operator_time_stats import build_operator_time_stats
+
 if TYPE_CHECKING:
     from zrt.training.ir.training_graph import Graph, Op
     from zrt.training.models.flops import OpCost
@@ -654,6 +656,11 @@ def _build_summary(
             "memory_pct": memory_bound_ms / bound_total,
             "communication_pct": comm_ms / bound_total,
         },
+        "operator_time_share": build_operator_time_stats(
+            model=model,
+            report=report,
+            op_dicts=op_dicts,
+        ),
         "comm_breakdown": {
             "tp_exposed_ms": getattr(report, "tp_exposed_ms", 0.0),
             "cp_exposed_ms": getattr(report, "cp_exposed_ms", 0.0),
@@ -1567,6 +1574,7 @@ function renderSummary() {
   const p = s.performance;
   const b = s.bound;
   const m = s.memory || {};
+  const operatorStats = s.operator_time_share || [];
 
   document.getElementById("summary").innerHTML = `
     <h2>1. 报告 Summary</h2>
@@ -1639,6 +1647,9 @@ function renderSummary() {
       <div>Pipeline Bubble</div><div>${fmt.ms(p.bubble_time_ms)}</div>
       <div>Optimizer (compute)</div><div>${fmt.ms(p.optimizer_time_ms)}</div>
       <div>Optimizer (comm)</div><div>${fmt.ms(p.optimizer_comm_ms)}</div>
+      ${operatorStats.length ? `
+        <div>Operator Time Share</div><div>${operatorStats.map(row => esc(row.label) + " " + fmt.ms(row.time_ms) + " / step " + fmt.pct(row.pct_of_step) + " / useful compute " + fmt.pct(row.pct_of_useful_compute) + " (" + esc(row.op_count) + " ops)").join("<br/>")}</div>
+      ` : ""}
     </div>
 
     <h3>内存消耗结果</h3>

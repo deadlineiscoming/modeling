@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from openpyxl import load_workbook
 
 from zrt.training.io.excel_exporter import export_estimate_excel
+from zrt.training.ir.builders import build_graph
+from zrt.training.models.flops import op_cost
 from zrt.training.search.training_search_util import _make_system_from_config
 from zrt.training.spec.model import LayerKind, ModelSpec
 from zrt.training.spec.report import TrainingReport
@@ -73,3 +75,71 @@ def test_estimate_excel_includes_comm_domain_sheet():
     finally:
         if output_dir.exists():
             shutil.rmtree(output_dir)
+
+
+def test_estimate_excel_summary_includes_operator_time_share(tmp_path):
+    model = ModelSpec(
+        hidden=128,
+        ffn=256,
+        num_heads=4,
+        num_kv_heads=1,
+        head_dim=32,
+        vocab=1000,
+        seq_len=64,
+        layers=[LayerKind.MOE, LayerKind.MOE, LayerKind.MOE],
+        model_type="deepseek_v4",
+        q_lora_rank=16,
+        qk_rope_head_dim=8,
+        o_lora_rank=16,
+        o_groups=2,
+        compress_ratios=[4, 128, 0],
+        swa_window=16,
+        index_topk=16,
+        num_experts=8,
+        moe_ffn=256,
+        top_k=2,
+    )
+    system = _make_system_from_config({
+        "hw": "nvidia_h100_sxm",
+        "world_size": 1,
+    })
+    strategy = Strategy()
+    graph = build_graph(model, strategy)
+    op_costs = {op.name: op_cost(op, model, system) for op in graph.ops}
+
+    output_path = export_estimate_excel(
+        report=TrainingReport(step_time_ms=100.0, compute_time_ms=50.0),
+        graph=graph,
+        model=model,
+        system=system,
+        strategy=strategy,
+        op_costs=op_costs,
+        output_path=tmp_path / "estimate.xlsx",
+    )
+
+    wb = load_workbook(output_path, data_only=True)
+    ws = wb["Summary"]
+    summary_values = [
+        ws.cell(row=i, column=1).value
+        for i in range(1, ws.max_row + 1)
+    ]
+
+    assert "Operator Time Share" in summary_values
+    assert "  Matmul family total" in summary_values
+    assert "  CSA attention block" in summary_values
+    assert "  HCA attention block" in summary_values
+    assert "  SWA operator" in summary_values
+
+    header_row = summary_values.index("Operator Time Share") + 1
+    assert ws.cell(row=header_row, column=3).value == "% of Step"
+    assert ws.cell(row=header_row, column=4).value == "% of Useful Compute"
+
+    matmul_row = summary_values.index("  Matmul family total") + 1
+    step_share = ws.cell(row=matmul_row, column=3).value
+    useful_compute_share = ws.cell(row=matmul_row, column=4).value
+    assert "ops" in step_share
+    assert "ops" in useful_compute_share
+
+    step_pct = float(step_share.split("%", 1)[0])
+    useful_compute_pct = float(useful_compute_share.split("%", 1)[0])
+    assert abs(useful_compute_pct - step_pct * 2) <= 0.1

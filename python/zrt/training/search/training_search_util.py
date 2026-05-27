@@ -908,6 +908,7 @@ def export_best_configs_excel(
             "seq_len": r["config"].get("seq_len", 4096),
             "world_size": r["config"].get("world_size", 1),
             "mfu": r["report"].mfu,
+            "step_time_ms": r["report"].step_time_ms,
             "config": r["config"],
             "report": r["report"],
         }
@@ -917,7 +918,7 @@ def export_best_configs_excel(
     grouped = df.groupby(["model", "hw", "seq_len", "world_size"])
 
     for (model_name, hw_name, seq_len, world_size), group in grouped:
-        best_row = group.loc[group["mfu"].idxmax()]
+        best_row = group.loc[group["step_time_ms"].idxmin()]
         best_config = best_row["config"]
         best_report = best_row["report"]
 
@@ -943,7 +944,7 @@ def export_best_configs_excel(
         for op in graph.ops:
             op_costs[op.name] = _op_cost(op, model, system)
 
-        excel_name = f"{model_name}_{hw_name}_{seq_len}_best.xlsx"
+        excel_name = f"{model_name}_{hw_name}_seq{seq_len}_ws{world_size}_best.xlsx"
         excel_path = os.path.join(output_path, excel_name)
 
         export_estimate_excel(
@@ -956,7 +957,10 @@ def export_best_configs_excel(
             output_path=excel_path,
         )
         logger.info(f"Best config Excel exported: {excel_path}")
-        print(f"Best config Excel: {excel_path} (MFU={best_report.mfu:.4%})")
+        print(
+            f"Best config Excel: {excel_path} "
+            f"(step_time={best_report.step_time_ms:.3f}ms, MFU={best_report.mfu:.4%})"
+        )
 
 
 def run_training_search_parallel(
@@ -1078,7 +1082,9 @@ def run_training_search_parallel(
     save_results(filtered_df, manager.output_path)
 
     if export_best_excel:
-        export_best_configs_excel(feasible_results, manager.output_path)
+        filtered_indices = [int(i) for i in filtered_df.index]
+        filtered_results = [feasible_results[i] for i in filtered_indices]
+        export_best_configs_excel(filtered_results, manager.output_path)
 
     if not filtered_df.empty:
         best = filtered_df.iloc[0]

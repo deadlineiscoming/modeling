@@ -325,11 +325,13 @@ def estimate_training_from_graphs(
         tp_hidden_ms=per_strat_meta.get("tp_hidden_us", 0.0) / 1000.0,
         tp_total_ms=per_strat_meta.get("tp_total_us", 0.0) / 1000.0,
         cp_exposed_ms=per_strat_meta.get("cp_exposed_us", 0.0) / 1000.0,
+        cp_hidden_ms=per_strat_meta.get("cp_hidden_us", 0.0) / 1000.0,
         cp_total_ms=per_strat_meta.get("cp_total_us", 0.0) / 1000.0,
         ep_exposed_ms=per_strat_meta.get("ep_exposed_us", 0.0) / 1000.0,
         ep_hidden_ms=per_strat_meta.get("ep_hidden_us", 0.0) / 1000.0,
         ep_total_ms=per_strat_meta.get("ep_total_us", 0.0) / 1000.0,
         pp_exposed_ms=per_strat_meta.get("pp_exposed_us", 0.0) / 1000.0,
+        pp_hidden_ms=per_strat_meta.get("pp_hidden_us", 0.0) / 1000.0,
         pp_total_ms=per_strat_meta.get("pp_total_us", 0.0) / 1000.0,
         optimizer_comm_hidden_ms=pipeline_metrics.optimizer_comm_hidden_ms if pipeline_metrics else 0.0,
     )

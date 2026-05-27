@@ -806,7 +806,10 @@ class TrainingPipelinePass(GraphPass):
         step_time_ms = step_result.step_time * 1000
 
         # per-stage average (for report display)
-        per_stage_us = step_result.pipeline_time * 1e6 / max(pp, 1)
+        per_stage_us = max(
+            stage_fwd.get(s, 0.0) + stage_bwd.get(s, 0.0)
+            for s in range(pp)
+        )
         per_stage_ms = per_stage_us / 1000.0
 
         # Overlap-aware comm time: dual-path analysis.
@@ -817,6 +820,8 @@ class TrainingPipelinePass(GraphPass):
         from python.zrt.executor.overlap import per_strategy_overlap, PerStrategyOverlapReport
 
         per_strat = PerStrategyOverlapReport()
+        # Merge per-stage overlap: for each strategy tag, take the stage
+        # with the largest total comm as the bottleneck stage's values.
         for s_id, tl in stage_timelines.items():
             if tl and tl.scheduled_ops:
                 stage_report = per_strategy_overlap(tl)
@@ -1293,7 +1298,7 @@ def _extract_p2p_latency_us(g) -> float:
     """
     max_lat = 0.0
     for node in g.nodes.values():
-        if node.op_type == "comm.send_recv" or node.category == "communication":
+        if node.op_type == "comm.send_recv":
             lat = node.annotations.get("latency_us", 0.0)
             if lat > max_lat:
                 max_lat = lat

@@ -94,7 +94,7 @@ class TrainingReport:
     #   compute_time_ms  = fwd_compute_ms + bwd_compute_ms + recompute_time_ms
     #   bubble_ms        = warmup_ms + cooldown_ms   (absolute pipeline idle)
     #   exposed_comm_ms  = Σ *_exposed_ms fields
-    #   hidden_comm_ms   = dp_hidden_ms + tp_hidden_ms + ep_hidden_ms + pp_hidden_ms
+    #   hidden_comm_ms   = dp_hidden_ms + tp_hidden_ms + ep_hidden_ms + pp_hidden_ms + cp_hidden_ms
     #   total_comm_volume_ms = exposed_comm_ms + hidden_comm_ms
     pipeline_time_ms: float = 0.0
     warmup_ms: float = 0.0
@@ -145,6 +145,7 @@ class TrainingReport:
     tp_hidden_ms: float = 0.0           # TP hidden by CoC/MC2
     ep_hidden_ms: float = 0.0           # EP hidden by wave-overlap
     pp_hidden_ms: float = 0.0           # PP P2P hidden by DualPipe/DualPipeV
+    cp_hidden_ms: float = 0.0           # CP A2A hidden by compute overlap
 
     # Total comm volume = exposed + hidden
     total_comm_volume_ms: float = 0.0
@@ -231,6 +232,7 @@ class TrainingReport:
             "tp_hidden_ms": self.tp_hidden_ms,
             "ep_hidden_ms": self.ep_hidden_ms,
             "pp_hidden_ms": self.pp_hidden_ms,
+            "cp_hidden_ms": self.cp_hidden_ms,
             "total_comm_volume_ms": self.total_comm_volume_ms,
             "tp_total_ms": self.tp_total_ms,
             "cp_total_ms": self.cp_total_ms,

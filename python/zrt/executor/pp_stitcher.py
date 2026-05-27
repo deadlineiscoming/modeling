@@ -157,6 +157,10 @@ def _add_cross_stage_p2p(
 
     Forward:  G[s][m].fwd → G[s+1][m].fwd
     Backward: G[s+1][m].bwd → G[s][m].bwd
+
+    P2P transfer time is modelled by adding ``p2p_latency_us`` to the
+    receiving task's latency — the destination GPU cannot begin real
+    compute until the activation/gradient arrives over the wire.
     """
     for m in range(M):
         for s in range(pp - 1):
@@ -164,11 +168,13 @@ def _add_cross_stage_p2p(
             fwd_dst = _task_id(s + 1, m, "fwd")
             if fwd_src in tasks and fwd_dst in tasks:
                 tasks[fwd_dst].dependencies.append(fwd_src)
+                tasks[fwd_dst].latency_us += p2p_latency_us
 
             bwd_src = _task_id(s + 1, m, "bwd")
             bwd_dst = _task_id(s, m, "bwd")
             if bwd_src in tasks and bwd_dst in tasks:
                 tasks[bwd_dst].dependencies.append(bwd_src)
+                tasks[bwd_dst].latency_us += p2p_latency_us
 
 
 def _add_device_serial_1f1b(
@@ -345,6 +351,13 @@ def _list_schedule(tasks: dict[str, GridTask]) -> list[GridTask]:
                 in_degree[tid] -= 1
                 if in_degree[tid] == 0:
                     ready.append(t)
+
+    if len(scheduled) < len(tasks):
+        unscheduled = [tid for tid in tasks if tid not in finish]
+        raise ValueError(
+            f"Cycle detected in grid task dependencies: "
+            f"{len(unscheduled)} task(s) with unresolved edges: {unscheduled[:10]}"
+        )
 
     return scheduled
 
@@ -541,7 +554,7 @@ class PPStitcher:
             if self._vpp <= 1:
                 _add_device_serial_1f1b(task_map, eff_pp, self._M)
         elif kind == PPScheduleKind.DUALPIPE:
-            _add_device_serial_1f1b(task_map, eff_pp, self._M)
+            _add_device_serial_dualpipe(task_map, eff_pp, self._M)
         elif kind == PPScheduleKind.ZERO_BUBBLE:
             _add_device_serial_zb(task_map, eff_pp, self._M)
 
@@ -615,7 +628,7 @@ class PPStitcher:
             cooldown_us=cooldown_us,
             bubble_us=bubble_us,
             bubble_fraction=bubble_us / (max_end - min_start) if max_end > min_start else 0.0,
-            p2p_overhead_us=self._p2p_us * (self._pp - 1) * self._M * 2,
+            p2p_overhead_us=0.0,
         )
 
     # ── helpers ───────────────────────────────────────────────────────────

@@ -282,7 +282,10 @@ class PipelineParallelPass(GraphPass):
                 attrs={
                     "src_stage": ss,
                     "dst_stage": ds,
+                    "collective": "send_recv",
+                    "group_size": 2,
                     "message_size_bytes": act_bytes,
+                    "msg_bytes": act_bytes,
                     "src_virtual_stage": sv if is_vpp and sv >= 0 else None,
                     "dst_virtual_stage": dv if is_vpp and dv >= 0 else None,
                 },
@@ -294,6 +297,7 @@ class PipelineParallelPass(GraphPass):
             )
             p2p_node.annotations["stage_id"] = ds
             p2p_node.annotations["phase"] = direction
+            p2p_node.annotations["inserted_by"] = "pp_pass"
             if is_vpp and dv >= 0:
                 p2p_node.annotations["virtual_stage_id"] = dv
 

@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from python.zrt.ir.param_count import count_params
+from python.zrt.ir.param_count import count_params, count_params_by_component
 from python.zrt.transform.base import GraphPass
 from python.zrt.transform.training.recompute import is_external_recompute_node
 
@@ -171,6 +171,7 @@ class TrainingMemoryPass(GraphPass):
         # Use actual model dtype from metadata (set by FlopsPass/graph capture),
         # fallback to BF16=2 bytes when unavailable.
         param_dtype = g.metadata.get("param_dtype_bytes", 2)
+        quant_profile = getattr(ctx, 'quant_profile', None)
 
         # ── Layer scaling for partial-trace graphs ─────────────────────────────
         # When only a subset of layers is traced, count_params(g) returns the
@@ -213,6 +214,30 @@ class TrainingMemoryPass(GraphPass):
 
         weights_bytes = (total_params * param_dtype) / weight_shard
         grads_bytes = (total_params * param_dtype) / grad_shard
+
+        # ── Per-component dtype sizing when quant_profile available ──────────
+        if quant_profile is not None:
+            from zrt.training.spec.dtype import Dtype
+            comp_params = count_params_by_component(g)
+            if layer_scale != 1.0:
+                comp_params.routed_expert = int(comp_params.routed_expert * layer_scale)
+                comp_params.shared_expert = int(comp_params.shared_expert * layer_scale)
+                comp_params.other = int(comp_params.other * layer_scale)
+                # non_layer (embedding, lm_head, final_norm) captured at full size
+
+            weights_bytes = (
+                comp_params.routed_expert * quant_profile.routed_expert_weight_dtype.stored_bytes
+                + comp_params.shared_expert * quant_profile.shared_expert_weight_dtype.stored_bytes
+                + comp_params.other * quant_profile.param_dtype.stored_bytes
+                + comp_params.non_layer * quant_profile.param_dtype.stored_bytes
+            ) / weight_shard
+
+            grads_bytes = (
+                comp_params.routed_expert * quant_profile.routed_expert_grad_dtype.bytes
+                + comp_params.shared_expert * quant_profile.shared_expert_grad_dtype.bytes
+                + comp_params.other * quant_profile.grad_dtype.bytes
+                + comp_params.non_layer * quant_profile.grad_dtype.bytes
+            ) / grad_shard
 
         # ── Optimizer state memory ───────────────────────────────────────────────
         # Try to use OptimizerPass annotation first (graph-based modeling)

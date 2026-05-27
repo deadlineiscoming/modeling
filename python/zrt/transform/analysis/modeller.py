@@ -50,6 +50,8 @@ def estimate_training_from_graphs(
     vpp_chunks: int = 1,
     return_transformed: bool = False,
     quant: str | None = None,
+    quant_preset: str | None = None,
+    quant_config: dict[str, str] | None = None,
     moe_total_experts: int = 0,
     moe_active_experts: int = 1,
     model_id: str = "",
@@ -112,6 +114,17 @@ def estimate_training_from_graphs(
             backward_graph.metadata[key] = val
 
     quant_cfg = QuantConfig(weight=quant, activation=quant) if quant else None
+
+    # Build structured quant profile from preset, config dict, or scalar quant.
+    from python.zrt.transform.context import GraphQuantProfile
+    quant_profile = None
+    if quant_preset is not None:
+        quant_profile = GraphQuantProfile.from_preset(quant_preset)
+    elif quant_config is not None:
+        quant_profile = GraphQuantProfile.from_dict(quant_config)
+    elif quant is not None:
+        quant_profile = GraphQuantProfile.from_scalar(quant)
+
     ctx = TransformContext(
         hw_spec=hw_spec,
         model_id=model_id,
@@ -132,6 +145,7 @@ def estimate_training_from_graphs(
         ),
         fusion=fusion_config or FusionConfig(),
         quant=quant_cfg,
+        quant_profile=quant_profile,
     )
 
     # Attach MoE profile to ctx so ExpertParallelPass and other MoE-aware

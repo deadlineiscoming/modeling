@@ -116,6 +116,17 @@ class CommLatencyPass(GraphPass):
             if data_bytes == 0:
                 data_bytes = 1  # Conservative: at least 1 byte
 
+            # Quant-aware payload scaling: mirrors QuantizationPass._annotate_comm_payloads
+            # which scales bucket_bytes for the training modeller's comm time path.
+            # Both sites use the same payload_dtype annotation — keep in sync.
+            payload_dtype = node.annotations.get("payload_dtype")
+            if payload_dtype is not None:
+                from zrt.training.spec.dtype import Dtype as SpecDtype
+                if isinstance(payload_dtype, SpecDtype):
+                    ratio = payload_dtype.bytes / SpecDtype.BF16.bytes
+                    if ratio != 1.0:
+                        data_bytes = int(data_bytes * ratio)
+
             # Determine if cross-node
             intra_node_devices = hw_spec.interconnect.intra_node.num_devices
             cross_node = group_size > intra_node_devices

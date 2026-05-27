@@ -269,6 +269,12 @@ def main() -> None:
         "--vpp-chunks", type=int, default=1,
         help="Virtual pipeline chunks for interleaved/dualpipev schedules.",
     )
+    parser.add_argument(
+        "--pp-mode", default="trace",
+        choices=["trace", "formula"],
+        help="PP modelling mode: trace = grid-based PPStitcher (default), "
+             "formula = classic PipelineComposer.",
+    )
 
     args = parser.parse_args()
 
@@ -670,6 +676,7 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         ),
         pp_schedule=args.pp_schedule,
         vpp_chunks=args.vpp_chunks,
+        pp_mode=args.pp_mode,
         return_transformed=True,
         quant=args.quant,
         moe_total_experts=_moe_total,

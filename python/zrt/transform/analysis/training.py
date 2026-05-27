@@ -511,6 +511,114 @@ class TrainingPipelinePass(GraphPass):
                 orphan_bwd[:5],
             )
 
+    @staticmethod
+    def _build_trace_step_result(
+        g, pp, M, pp_schedule, vpp_chunks,
+        stage_fwd, stage_bwd, stage_bwd_dw,
+        strategy_proxy, dp_ar_time_s,
+    ):
+        """Build StepResult using grid-based PPStitcher (trace mode)."""
+        from python.zrt.executor.pp_stitcher import PPStitcher
+        from python.zrt.training.compose.schedules import _dp_hidden, StepResult
+
+        stitcher = PPStitcher(
+            stage_fwd_us=stage_fwd,
+            stage_bwd_us=stage_bwd,
+            stage_bwd_dw_us=stage_bwd_dw,
+            pp=pp,
+            M=M,
+            p2p_latency_us=_extract_p2p_latency_us(g),
+            schedule=pp_schedule,
+            vpp_chunks=vpp_chunks,
+        )
+        pp_timeline = stitcher.stitch()
+        g.metadata["pp_stitched_timeline"] = pp_timeline
+
+        t_fwd_max = max(stage_fwd.values()) / 1e6 if stage_fwd else 0.0
+        t_bwd_max = max(stage_bwd.values()) / 1e6 if stage_bwd else 0.0
+
+        hidden_s = _dp_hidden(
+            dp_ar_time_s, pp_timeline.cooldown_us / 1e6,
+            M * t_bwd_max, strategy_proxy,
+        )
+        dp_exposed_s = dp_ar_time_s - hidden_s
+
+        step_time_s = (pp_timeline.step_time_us + dp_exposed_s * 1e6) / 1e6
+
+        if pp_schedule in ("interleaved", "i1f1b") and vpp_chunks > 1:
+            ws = max(1, -(-(pp - 1) // vpp_chunks))
+        elif pp_schedule == "dualpipe":
+            ws = max(0, pp // 2 - 1)
+        elif pp_schedule == "dualpipev" and vpp_chunks > 1:
+            ws = max(0, (pp // 2 - 1 + vpp_chunks - 1) // vpp_chunks)
+        else:
+            ws = pp - 1
+
+        return StepResult(
+            step_time=step_time_s,
+            pipeline_time=pp_timeline.step_time_us / 1e6,
+            bubble_fraction=pp_timeline.bubble_fraction,
+            warmup=pp_timeline.warmup_us / 1e6,
+            steady=pp_timeline.steady_us / 1e6,
+            cooldown=pp_timeline.cooldown_us / 1e6,
+            dp_exposed=dp_exposed_s,
+            dp_hidden=hidden_s,
+            schedule_name=pp_timeline.schedule_name,
+            warmup_steps=ws,
+            cooldown_steps=ws,
+            warmup_fwd=pp_timeline.warmup_us / 1e6,
+            warmup_bwd=0.0,
+            steady_fwd=M * t_fwd_max,
+            steady_bwd=M * t_bwd_max,
+            cooldown_fwd=0.0,
+            cooldown_bwd=pp_timeline.cooldown_us / 1e6,
+            steady_fwd_per_mb=t_fwd_max,
+            steady_bwd_per_mb=t_bwd_max,
+            steady_per_mb=t_fwd_max + t_bwd_max,
+        )
+
+    @staticmethod
+    def _build_formula_step_result(
+        pp, M, pp_schedule, vpp_chunks,
+        stage_fwd, stage_bwd,
+        strategy_proxy, dp_ar_time_s,
+    ):
+        """Build StepResult using formula-based PipelineComposer."""
+        from python.zrt.training.compose.stage import StageTime
+        from python.zrt.training.compose.schedules import (
+            OneF1BComposer, Interleaved1F1BComposer,
+            DualPipeComposer, DualPipeVComposer,
+            ZeroBubbleComposer,
+        )
+
+        _SCHED_COMPOSER = {
+            "1f1b": OneF1BComposer,
+            "interleaved": Interleaved1F1BComposer,
+            "i1f1b": Interleaved1F1BComposer,
+            "dualpipe": DualPipeComposer,
+            "dualpipev": DualPipeVComposer,
+            "zb": ZeroBubbleComposer,
+        }
+
+        stage_times: list[StageTime] = []
+        for s in range(pp):
+            st = StageTime(
+                fwd=stage_fwd.get(s, 0.0) / 1e6,
+                bwd=stage_bwd.get(s, 0.0) / 1e6,
+            )
+            stage_times.append(st)
+
+        composer_cls = _SCHED_COMPOSER.get(pp_schedule, OneF1BComposer)
+        composer = composer_cls()
+
+        return composer.compose(
+            stage_times=stage_times,
+            M=M,
+            pp=pp,
+            dp_ar_time=dp_ar_time_s,
+            strategy=strategy_proxy,
+        )
+
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
         g = graph.clone()
 
@@ -647,8 +755,7 @@ class TrainingPipelinePass(GraphPass):
                 stage_bwd_dw[s] = 0.0
             g.metadata["pp_per_stage_timelines"] = stage_timelines
 
-        # ── PP grid scheduling via PPStitcher ───────────────────────────────
-        from python.zrt.executor.pp_stitcher import PPStitcher
+        # ── PP scheduling ──────────────────────────────────────────────────
         from python.zrt.training.compose.schedules import (
             PP_SCHED_BY_NAME, _dp_hidden, StepResult,
         )
@@ -676,68 +783,29 @@ class TrainingPipelinePass(GraphPass):
             dp_overlap_in_bubble=ctx.training.dp_overlap_in_bubble if ctx.training else True,
         )
         M = strategy_proxy.num_microbatches()
-
-        stitcher = PPStitcher(
-            stage_fwd_us=stage_fwd,
-            stage_bwd_us=stage_bwd,
-            stage_bwd_dw_us=stage_bwd_dw,
-            pp=pp,
-            M=M,
-            p2p_latency_us=_extract_p2p_latency_us(g),
-            schedule=pp_schedule,
-            vpp_chunks=vpp_chunks,
-        )
-        pp_timeline = stitcher.stitch()
-        g.metadata["pp_stitched_timeline"] = pp_timeline
-
-        # ── DP overlap (grid-derived cooldown) ──────────────────────────────
         dp_ar_time_s = self._compute_dp_ar_time(g, hw, ctx) / 1e6
-        t_fwd_max = max(stage_fwd.values()) / 1e6 if stage_fwd else 0.0
-        t_bwd_max = max(stage_bwd.values()) / 1e6 if stage_bwd else 0.0
-        steady_bwd_total = M * t_bwd_max
 
-        hidden_s = _dp_hidden(
-            dp_ar_time_s, pp_timeline.cooldown_us / 1e6, steady_bwd_total, strategy_proxy,
-        )
-        dp_exposed_s = dp_ar_time_s - hidden_s
+        pp_mode = ctx.training.pp_mode if ctx.training else "trace"
 
-        step_time_us = pp_timeline.step_time_us + dp_exposed_s * 1e6
-        step_time_ms = step_time_us / 1000.0
-        per_stage_us = pp_timeline.per_stage_us()
-        per_stage_ms = per_stage_us / 1000.0
-
-        # Build StepResult for downstream compatibility
-        if pp_schedule in ("interleaved", "i1f1b") and vpp_chunks > 1:
-            ws = max(1, -(-(pp - 1) // vpp_chunks))
-        elif pp_schedule == "dualpipe":
-            ws = max(0, pp // 2 - 1)
-        elif pp_schedule == "dualpipev" and vpp_chunks > 1:
-            ws = max(0, (pp // 2 - 1 + vpp_chunks - 1) // vpp_chunks)
+        if pp_mode == "trace":
+            step_result = self._build_trace_step_result(
+                g, pp, M, pp_schedule, vpp_chunks,
+                stage_fwd, stage_bwd, stage_bwd_dw,
+                strategy_proxy, dp_ar_time_s,
+            )
         else:
-            ws = pp - 1
+            step_result = self._build_formula_step_result(
+                pp, M, pp_schedule, vpp_chunks,
+                stage_fwd, stage_bwd,
+                strategy_proxy, dp_ar_time_s,
+            )
 
-        step_result = StepResult(
-            step_time=step_time_us / 1e6,
-            pipeline_time=pp_timeline.step_time_us / 1e6,
-            bubble_fraction=pp_timeline.bubble_fraction,
-            warmup=pp_timeline.warmup_us / 1e6,
-            steady=pp_timeline.steady_us / 1e6,
-            cooldown=pp_timeline.cooldown_us / 1e6,
-            dp_exposed=dp_exposed_s,
-            dp_hidden=hidden_s,
-            schedule_name=pp_timeline.schedule_name,
-            warmup_steps=ws,
-            cooldown_steps=ws,
-            warmup_fwd=pp_timeline.warmup_us / 1e6,
-            warmup_bwd=0.0,
-            steady_fwd=M * t_fwd_max,
-            steady_bwd=M * t_bwd_max,
-            cooldown_fwd=0.0,
-            cooldown_bwd=pp_timeline.cooldown_us / 1e6,
-            steady_fwd_per_mb=t_fwd_max,
-            steady_bwd_per_mb=t_bwd_max,
-            steady_per_mb=t_fwd_max + t_bwd_max,
-        )
+        step_time_us = step_result.step_time * 1e6
+        step_time_ms = step_result.step_time * 1000
+
+        # per-stage average (for report display)
+        per_stage_us = step_result.pipeline_time * 1e6 / max(pp, 1)
+        per_stage_ms = per_stage_us / 1000.0
 
         # Overlap-aware comm time: dual-path analysis.
         # 1. Trace-based: sweep-line intersection of DAGScheduler intervals per stage.

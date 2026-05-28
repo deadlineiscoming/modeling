@@ -89,6 +89,7 @@ def export_estimate_excel(
         model=model,
         report=report,
         op_dicts=operator_op_dicts,
+        strategy=strategy,
     )
 
     # ── Sheet 1: Summary ─────────────────────────────────────────────────

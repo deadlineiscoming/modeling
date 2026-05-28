@@ -660,6 +660,7 @@ def _build_summary(
             model=model,
             report=report,
             op_dicts=op_dicts,
+            strategy=strategy,
         ),
         "comm_breakdown": {
             "tp_exposed_ms": getattr(report, "tp_exposed_ms", 0.0),

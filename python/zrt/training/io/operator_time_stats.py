@@ -25,6 +25,36 @@ def _pct(time_ms: float, step_time_ms: float) -> float:
     return time_ms / step_time_ms
 
 
+def _training_step_scale(strategy: Any | None) -> float:
+    if strategy is None:
+        return 1.0
+
+    num_microbatches = getattr(strategy, "num_microbatches", None)
+    try:
+        microbatches = float(
+            num_microbatches() if callable(num_microbatches) else num_microbatches
+        )
+    except Exception:
+        microbatches = 1.0
+
+    pp = _to_float(getattr(strategy, "pp", 1.0))
+    if microbatches <= 0 or pp <= 0:
+        return 1.0
+    return microbatches / pp
+
+
+def _operator_time_scale(report: Any, op_dicts: list[dict], strategy: Any | None) -> float:
+    if strategy is None:
+        return 1.0
+
+    useful_compute_ms = _to_float(getattr(report, "compute_time_ms", 0.0))
+    total_op_ms = sum(_to_float(op.get("total_ms", 0.0)) for op in op_dicts)
+    if useful_compute_ms > 0 and total_op_ms > 0:
+        return useful_compute_ms / total_op_ms
+
+    return _training_step_scale(strategy)
+
+
 def _is_attention_op(op: dict) -> bool:
     component = str(op.get("component", "") or "").lower()
     component_group = str(op.get("component_group", "") or "").lower()
@@ -79,13 +109,14 @@ def _append_if_present(
     ops: list[dict],
     step_time_ms: float,
     useful_compute_ms: float,
+    time_scale: float,
 ) -> None:
     if not ops:
         return
     rows.append(
         _row(
             label,
-            sum(_to_float(op.get("total_ms", 0.0)) for op in ops),
+            sum(_to_float(op.get("total_ms", 0.0)) for op in ops) * time_scale,
             len(ops),
             step_time_ms,
             useful_compute_ms,
@@ -93,7 +124,13 @@ def _append_if_present(
     )
 
 
-def build_operator_time_stats(*, model: Any, report: Any, op_dicts: list[dict]) -> list[dict]:
+def build_operator_time_stats(
+    *,
+    model: Any,
+    report: Any,
+    op_dicts: list[dict],
+    strategy: Any | None = None,
+) -> list[dict]:
     """Build estimate-report operator time-share rows.
 
     Percentages are relative to ``report.step_time_ms`` and
@@ -102,6 +139,7 @@ def build_operator_time_stats(*, model: Any, report: Any, op_dicts: list[dict]) 
     """
     step_time_ms = _to_float(getattr(report, "step_time_ms", 0.0))
     useful_compute_ms = _to_float(getattr(report, "compute_time_ms", 0.0))
+    time_scale = _operator_time_scale(report, op_dicts, strategy)
     rows: list[dict] = []
 
     matmul_ops = [
@@ -114,6 +152,7 @@ def build_operator_time_stats(*, model: Any, report: Any, op_dicts: list[dict]) 
         matmul_ops,
         step_time_ms,
         useful_compute_ms,
+        time_scale,
     )
 
     if _is_dsv4(model):
@@ -136,9 +175,15 @@ def build_operator_time_stats(*, model: Any, report: Any, op_dicts: list[dict]) 
             if str(op.get("kind", "") or "").lower() == "swa_attn"
         ]
 
-        _append_if_present(rows, "CSA attention block", csa_ops, step_time_ms, useful_compute_ms)
-        _append_if_present(rows, "HCA attention block", hca_ops, step_time_ms, useful_compute_ms)
-        _append_if_present(rows, "SWA operator", swa_ops, step_time_ms, useful_compute_ms)
+        _append_if_present(
+            rows, "CSA attention block", csa_ops, step_time_ms, useful_compute_ms, time_scale
+        )
+        _append_if_present(
+            rows, "HCA attention block", hca_ops, step_time_ms, useful_compute_ms, time_scale
+        )
+        _append_if_present(
+            rows, "SWA operator", swa_ops, step_time_ms, useful_compute_ms, time_scale
+        )
 
     if _is_dsv32(model):
         flash_ops = [
@@ -147,7 +192,11 @@ def build_operator_time_stats(*, model: Any, report: Any, op_dicts: list[dict]) 
         ]
         mla_ops = [op for op in op_dicts if _is_attention_op(op)]
 
-        _append_if_present(rows, "FlashAttention", flash_ops, step_time_ms, useful_compute_ms)
-        _append_if_present(rows, "MLA attention block", mla_ops, step_time_ms, useful_compute_ms)
+        _append_if_present(
+            rows, "FlashAttention", flash_ops, step_time_ms, useful_compute_ms, time_scale
+        )
+        _append_if_present(
+            rows, "MLA attention block", mla_ops, step_time_ms, useful_compute_ms, time_scale
+        )
 
     return rows

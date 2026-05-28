@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from zrt.training.io.operator_time_stats import build_operator_time_stats
 from zrt.training.spec.model import LayerKind, ModelSpec
 from zrt.training.spec.report import TrainingReport
@@ -40,6 +42,41 @@ def test_operator_time_stats_counts_matmul_family_including_lm_head():
     assert matmul["pct_of_step"] == 0.2
     assert matmul["pct_of_useful_compute"] == 0.5
     assert matmul["op_count"] == 2
+
+
+def test_operator_time_stats_uses_compute_time_for_schedule_aware_step_scale():
+    rows = build_operator_time_stats(
+        model=_base_model(),
+        report=TrainingReport(step_time_ms=200.0, compute_time_ms=100.0),
+        strategy=SimpleNamespace(pp=2, num_microbatches=lambda: 8),
+        op_dicts=[
+            {"name": "layer.q_proj", "kind": "matmul", "total_ms": 10.0},
+            {"name": "layer.norm", "kind": "rmsnorm", "total_ms": 10.0},
+        ],
+    )
+
+    matmul = _by_label(rows)["Matmul family total"]
+    assert matmul["time_ms"] == 50.0
+    assert matmul["pct_of_step"] == 0.25
+    assert matmul["pct_of_useful_compute"] == 0.5
+    assert matmul["op_count"] == 1
+
+
+def test_operator_time_stats_falls_back_to_microbatch_pp_scale_without_compute_time():
+    rows = build_operator_time_stats(
+        model=_base_model(),
+        report=TrainingReport(step_time_ms=100.0, compute_time_ms=0.0),
+        strategy=SimpleNamespace(pp=2, num_microbatches=lambda: 8),
+        op_dicts=[
+            {"name": "layer.q_proj", "kind": "matmul", "total_ms": 10.0},
+        ],
+    )
+
+    matmul = _by_label(rows)["Matmul family total"]
+    assert matmul["time_ms"] == 40.0
+    assert matmul["pct_of_step"] == 0.4
+    assert matmul["pct_of_useful_compute"] == 0.0
+    assert matmul["op_count"] == 1
 
 
 def test_operator_time_stats_emits_dsv4_csa_hca_and_swa_rows():

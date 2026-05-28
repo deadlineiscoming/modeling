@@ -106,6 +106,12 @@ class PipelineParallelPass(GraphPass):
         stages = self._partition(sorted_layers, layer_nodes, layer_load,
                                  pp, pp_layer_assignment, vpp_chunks, is_vpp)
 
+        # 2.5 Distribute non-layer (layer_idx=-1) nodes to appropriate stages.
+        #     These include embedding, final norm, lm_head, and all backward
+        #     ops — they would otherwise all default to stage 0 and create
+        #     severe imbalance (the bug being fixed here).
+        nonlayer_stage_map = self._distribute_nonlayer_nodes(g, stages, pp)
+
         # 3. Build lookup: layer_id → stage_id, layer_id → virtual_stage_id (VPP)
         layer_to_stage: Dict[int, int] = {
             lid: s.stage_id
@@ -121,13 +127,16 @@ class PipelineParallelPass(GraphPass):
 
         # 4. Annotate stage_id and virtual_stage_id on every node
         for node in g.nodes.values():
-            try:
-                layer_idx = int(node.layer) if node.layer else -1
-            except (ValueError, TypeError):
-                layer_idx = -1
-            node.annotations["stage_id"] = layer_to_stage.get(layer_idx, 0)
-            if is_vpp and layer_idx >= 0:
-                node.annotations["virtual_stage_id"] = layer_to_virtual_stage.get(layer_idx, 0)
+            if node.id in nonlayer_stage_map:
+                node.annotations["stage_id"] = nonlayer_stage_map[node.id]
+            else:
+                try:
+                    layer_idx = int(node.layer) if node.layer else -1
+                except (ValueError, TypeError):
+                    layer_idx = -1
+                node.annotations["stage_id"] = layer_to_stage.get(layer_idx, 0)
+                if is_vpp and layer_idx >= 0:
+                    node.annotations["virtual_stage_id"] = layer_to_virtual_stage.get(layer_idx, 0)
 
         # 5. Insert P2P send_recv at each stage boundary
         self._insert_p2p_nodes(g, stages, is_vpp)
@@ -189,6 +198,107 @@ class PipelineParallelPass(GraphPass):
                 stage_load[min_s] += load
 
         return stages
+
+    # ── non-layer node distribution ────────────────────────────────────────────
+
+    def _distribute_nonlayer_nodes(
+        self,
+        g: "OpGraph",
+        stages: List[LayerGroup],
+        pp: int,
+    ) -> Dict[str, int]:
+        """Distribute ``layer_idx == -1`` nodes to appropriate stages.
+
+        Without this step every node whose ``layer`` attribute is empty
+        (embedding, final norm, lm_head, and **all** backward ops) would
+        default to stage ``layer_to_stage.get(-1, 0) = 0``, creating a
+        severe imbalance — stage 0 several times slower than every other.
+
+        Assignment rules
+        ----------------
+        - ``component == "embedding"`` → stage 0.
+        - ``component in ("final_norm", "lm_head")`` → stage ``pp - 1``.
+        - forward non-layer with other component → greedy least-loaded.
+        - ``phase == "bwd"`` → proportional to each stage's forward load.
+        """
+        node_stage: Dict[str, int] = {}
+
+        fwd_embed:   List[tuple[str, float]] = []
+        fwd_output:  List[tuple[str, float]] = []
+        fwd_other:   List[tuple[str, float]] = []
+        bwd_nodes:   List[tuple[str, float]] = []
+
+        for node in g.nodes.values():
+            try:
+                layer_idx = int(node.layer) if node.layer else -1
+            except (ValueError, TypeError):
+                layer_idx = -1
+            if layer_idx >= 0:
+                continue
+
+            load = (
+                node.annotations.get("compute_us")
+                or node.annotations.get("latency_us")
+                or node.annotations.get("flops", 0) / 1e12
+                or 1.0
+            )
+
+            phase = node.annotations.get("phase", "fwd")
+            if phase == "bwd":
+                bwd_nodes.append((node.id, load))
+                continue
+
+            comp = node.component
+            if comp == "embedding":
+                fwd_embed.append((node.id, load))
+            elif comp in ("final_norm", "lm_head"):
+                fwd_output.append((node.id, load))
+            else:
+                fwd_other.append((node.id, load))
+
+        # 1. Embedding → stage 0 (always the first stage)
+        for nid, load in fwd_embed:
+            node_stage[nid] = 0
+            stages[0].node_ids.add(nid)
+            stages[0].total_compute_us += load
+
+        # 2. Final norm / lm_head → stage pp-1 (always the last stage)
+        for nid, load in fwd_output:
+            sid = max(0, pp - 1)
+            node_stage[nid] = sid
+            stages[sid].node_ids.add(nid)
+            stages[sid].total_compute_us += load
+
+        # 3. Other forward non-layer → greedy least-loaded stage
+        for nid, load in fwd_other:
+            min_s = int(min(range(pp), key=lambda i: stages[i].total_compute_us))
+            node_stage[nid] = min_s
+            stages[min_s].node_ids.add(nid)
+            stages[min_s].total_compute_us += load
+
+        # 4. Backward nodes → proportional to per-stage forward load
+        if bwd_nodes:
+            total_fwd_load = sum(s.total_compute_us for s in stages)
+            if total_fwd_load > 0:
+                total_bwd_load = sum(load for _, load in bwd_nodes)
+                target_add = [total_bwd_load * s.total_compute_us / total_fwd_load
+                              for s in stages]
+                current_add = [0.0] * pp
+                for nid, load in sorted(bwd_nodes, key=lambda x: -x[1]):
+                    deficit = [target_add[i] - current_add[i] for i in range(pp)]
+                    s = int(max(range(pp), key=lambda i: deficit[i]))
+                    node_stage[nid] = s
+                    stages[s].node_ids.add(nid)
+                    stages[s].total_compute_us += load
+                    current_add[s] += load
+            else:
+                for i, (nid, load) in enumerate(bwd_nodes):
+                    s = i % pp
+                    node_stage[nid] = s
+                    stages[s].node_ids.add(nid)
+                    stages[s].total_compute_us += load
+
+        return node_stage
 
     # ── P2P insertion ─────────────────────────────────────────────────────────
 
@@ -282,7 +392,10 @@ class PipelineParallelPass(GraphPass):
                 attrs={
                     "src_stage": ss,
                     "dst_stage": ds,
+                    "collective": "send_recv",
+                    "group_size": 2,
                     "message_size_bytes": act_bytes,
+                    "msg_bytes": act_bytes,
                     "src_virtual_stage": sv if is_vpp and sv >= 0 else None,
                     "dst_virtual_stage": dv if is_vpp and dv >= 0 else None,
                 },
@@ -294,6 +407,7 @@ class PipelineParallelPass(GraphPass):
             )
             p2p_node.annotations["stage_id"] = ds
             p2p_node.annotations["phase"] = direction
+            p2p_node.annotations["inserted_by"] = "pp_pass"
             if is_vpp and dv >= 0:
                 p2p_node.annotations["virtual_stage_id"] = dv
 

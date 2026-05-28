@@ -37,6 +37,7 @@ class ScheduledOp:
     op_type:     str
     category:    str    # "compute" | "communication" | "memory"
     phase:       str = ""  # "fwd" | "bwd" | ""
+    parallelism_tag: str = ""  # "tp" | "ep" | "pp" | "cp" | ""
 
     def __repr__(self) -> str:
         return (
@@ -131,6 +132,17 @@ class DAGScheduler:
         self._hw = hw_spec
         self._roofline = None   # lazy-initialised if needed
 
+    _PARALLELISM_TAG_MAP: dict[str, str] = {
+        "tp": "tp", "ep": "ep", "pp": "pp", "cp": "cp",
+    }
+
+    @staticmethod
+    def _parallelism_tag(node: "OpNode") -> str:
+        raw = node.annotations.get("inserted_by", "")
+        if raw.endswith("_pass"):
+            raw = raw[:-5]
+        return DAGScheduler._PARALLELISM_TAG_MAP.get(raw, "")
+
     def schedule(self, graph: "OpGraph") -> Timeline:
         """Schedule all nodes and return a Timeline.
 
@@ -170,6 +182,7 @@ class DAGScheduler:
                 op_type     = node.op_type,
                 category    = node.category,
                 phase       = node.annotations.get("phase", ""),
+                parallelism_tag = self._parallelism_tag(node),
             ))
 
         return Timeline(

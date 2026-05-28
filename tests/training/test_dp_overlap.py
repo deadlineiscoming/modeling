@@ -353,6 +353,31 @@ class TestPPHiddenAccounting:
         assert result.pp_hidden == pytest.approx(0.0)
         assert result.pp_exposed > 0.0
 
+    def test_dualpipev_pp_p2p_scales_by_vpp_chunks_before_hide(self, monkeypatch):
+        from zrt.training.compose import schedules
+
+        model = ModelSpec(hidden=2048, ffn=8192, num_heads=16, num_kv_heads=16,
+                          head_dim=128, vocab=32000, seq_len=1024,
+                          layers=[LayerKind.DENSE] * 4)
+        s = Strategy(tp=1, pp=2, dp=1, micro_batch=1, global_batch=4,
+                     pp_schedule=PPSched.DUALPIPE_V, vpp_chunks=2,
+                     pp_overlap=True)
+        graph = build_graph(model, s)
+
+        def fake_stage_time(*args, **kwargs):
+            return StageTime(fwd=1.0, bwd=1.0, bwd_dx=0.0, bwd_dw=0.3)
+
+        monkeypatch.setattr(schedules, "stage_time", fake_stage_time)
+        monkeypatch.setattr(
+            schedules, "total_comm_time",
+            lambda *args, **kwargs: {"pp_p2p": 0.1},
+        )
+
+        result = pipeline_step_time(graph, model, _make_system(), s)
+
+        assert result.pp_hidden == pytest.approx(1.2)
+        assert result.pp_exposed == pytest.approx(0.4)
+
 
 class TestZeroBubbleFloor:
     """ZB-1P / ZB-V still has a minimal per-transition bubble equal to 2*pp_p2p.

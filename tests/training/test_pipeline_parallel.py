@@ -93,6 +93,225 @@ def _make_ctx(
     )
 
 
+# ── 0. Non-Layer Node Distribution ─────────────────────────────────────────────
+
+def _make_graph_with_nonlayer(phase: str = "train_forward") -> OpGraph:
+    """Build a graph with layer nodes + non-layer nodes (embed, norm, lm_head).
+
+    Layer nodes (2 layers, each 100µs load):
+      - ``mm_layer0``  (layer="0", scope="model.layers.0.mlp")
+      - ``mm_layer1``  (layer="1", scope="model.layers.1.mlp")
+
+    Non-layer forward nodes:
+      - ``embed``      (layer="", component="embedding",   load=50µs)
+      - ``final_norm`` (layer="", component="final_norm",  load=30µs)
+      - ``lm_head``    (layer="", component="lm_head",     load=80µs)
+      - ``other_fwd``  (layer="", component="attention",   load=20µs)
+
+    Backward nodes (when phase="train"):
+      - ``bwd_op0``, ``bwd_op1``  (layer="", phase="bwd", each 60µs)
+    """
+    nodes: dict[str, OpNode] = {}
+    edges: list[Edge] = []
+
+    def _make_nid(prefix: str, layer: str, component: str,
+                  load: float = 100.0, phase: str = "fwd") -> str:
+        nid = f"{prefix}"
+        shape = (1, 128, 4096)
+        node = OpNode(
+            id=nid,
+            op_type="aten.mm.default",
+            inputs=[_t(f"{nid}_in", shape)],
+            outputs=[_t(f"{nid}_out", shape)],
+            scope=f"model.{prefix}",
+            layer=layer,
+            component=component,
+            category="compute",
+        )
+        node.annotations["latency_us"] = load
+        if phase == "bwd":
+            node.annotations["phase"] = "bwd"
+        nodes[nid] = node
+        return nid
+
+    # Layer 0
+    l0 = _make_nid("mm_layer0", "0", "attention")
+    # Layer 1
+    l1 = _make_nid("mm_layer1", "1", "ffn")
+    edges.append(Edge(src=l0, src_idx=0, dst=l1, dst_idx=0, tensor=_t("e0_l1")))
+
+    # Non-layer forward: embedding
+    emb = _make_nid("embed", "", "embedding", load=50.0)
+    edges.append(Edge(src=emb, src_idx=0, dst=l0, dst_idx=0, tensor=_t("emb_l0")))
+
+    # Non-layer forward: final norm
+    fn = _make_nid("final_norm", "", "final_norm", load=30.0)
+    edges.append(Edge(src=l1, src_idx=0, dst=fn, dst_idx=0, tensor=_t("l1_fn")))
+
+    # Non-layer forward: lm_head
+    lmh = _make_nid("lm_head", "", "lm_head", load=80.0)
+    edges.append(Edge(src=fn, src_idx=0, dst=lmh, dst_idx=0, tensor=_t("fn_lmh")))
+
+    # Non-layer forward: other (e.g. shared attention ops)
+    other = _make_nid("other_fwd", "", "attention", load=20.0)
+
+    bwd_will_be_added = phase == "train"
+    if bwd_will_be_added:
+        bwd0 = _make_nid("bwd_op0", "", "mm", load=60.0, phase="bwd")
+        bwd1 = _make_nid("bwd_op1", "", "mm", load=60.0, phase="bwd")
+        edges.append(Edge(src=lmh, src_idx=0, dst=bwd0, dst_idx=0, tensor=_t("lmh_b0")))
+        edges.append(Edge(src=bwd0, src_idx=0, dst=bwd1, dst_idx=0, tensor=_t("b0_b1")))
+
+    return OpGraph(
+        name="test_nonlayer",
+        phase=phase,
+        nodes=nodes,
+        edges=edges,
+        metadata={"seq_len": 128, "hidden": 4096, "num_layers": 2},
+    )
+
+
+class TestNonLayerNodeDistribution:
+    """layer="" nodes must be distributed to correct stages, not all dumped on 0."""
+
+    def test_embedding_goes_to_stage0(self):
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=2)
+        result = PipelineParallelPass().run(graph, ctx)
+        assert result.nodes["embed"].annotations["stage_id"] == 0
+
+    def test_lm_head_goes_to_last_stage(self):
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+        assert result.nodes["lm_head"].annotations["stage_id"] == 3
+
+    def test_final_norm_goes_to_last_stage(self):
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=3)
+        result = PipelineParallelPass().run(graph, ctx)
+        assert result.nodes["final_norm"].annotations["stage_id"] == 2
+
+    def test_other_fwd_nonlayer_greedy_distributed(self):
+        """Other forward non-layer nodes should NOT all be on stage 0."""
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+        sid = result.nodes["other_fwd"].annotations["stage_id"]
+        assert 0 <= sid < 4
+
+    def test_backward_nodes_distributed_proportionally(self):
+        """Backward nodes should be spread across stages, not all on 0."""
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=2)
+        result = PipelineParallelPass().run(graph, ctx)
+        bwd_stages = {result.nodes[nid].annotations["stage_id"]
+                      for nid in ("bwd_op0", "bwd_op1")}
+        # With 2 stages and proportional distribution, at least 1 bwd
+        # node should be on a non-zero stage
+        assert len(bwd_stages) > 1
+
+    def test_no_nonlayer_node_has_default_stage0_when_stages_available(self):
+        """After fix, no non-layer forward node should default to stage 0 just
+        because it lacks a layer number — unless it genuinely belongs there."""
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+
+        for node in result.nodes.values():
+            if node.layer or node.annotations.get("phase") == "bwd":
+                continue
+            sid = node.annotations["stage_id"]
+            comp = node.component
+            if comp == "embedding":
+                assert sid == 0, f"{node.id} (embedding) should be stage 0, got {sid}"
+            elif comp in ("final_norm", "lm_head"):
+                assert sid == 3, f"{node.id} ({comp}) should be stage 3, got {sid}"
+            else:
+                assert 0 <= sid < 4
+
+    def test_all_nodes_have_stage_id(self):
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=2)
+        result = PipelineParallelPass().run(graph, ctx)
+        for node in result.nodes.values():
+            assert "stage_id" in node.annotations
+
+    def test_existing_layer_nodes_unchanged(self):
+        """Layer nodes should still be assigned via greedy bin-packing."""
+        graph = _make_graph_with_nonlayer("train_forward")
+        ctx = _make_ctx(pp=2)
+        result = PipelineParallelPass().run(graph, ctx)
+        # Layers 0 and 1 should go to different stages with pp=2
+        stage0 = result.nodes["mm_layer0"].annotations["stage_id"]
+        stage1 = result.nodes["mm_layer1"].annotations["stage_id"]
+        assert stage0 != stage1
+
+    def test_pp1_nonlayer_all_stage0(self):
+        """pp=1 should keep all nodes on stage 0."""
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=1)
+        result = PipelineParallelPass().run(graph, ctx)
+        for node in result.nodes.values():
+            assert node.annotations["stage_id"] == 0
+
+    def test_stage0_no_longer_absorbs_all_nonlayer_fwd(self):
+        """Old behavior: all non-layer forward nodes defaulted to stage 0.
+        New behavior: stage 0 should NOT contain ALL non-layer forward nodes."""
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+
+        nonlayer_stages: set[int] = set()
+        for node in result.nodes.values():
+            if node.layer or node.op_type == "comm.send_recv":
+                continue
+            if node.annotations.get("phase") == "bwd":
+                continue
+            nonlayer_stages.add(node.annotations["stage_id"])
+
+        # Non-layer forward nodes (embed, final_norm, lm_head, other_fwd)
+        # should be spread across at least 2 different stages
+        assert len(nonlayer_stages) >= 2, (
+            f"Non-layer fwd nodes all on stages {nonlayer_stages}"
+        )
+
+    def test_backward_nodes_spread_across_mutiple_stages(self):
+        """Backward nodes should not all be on a single stage."""
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+
+        bwd_stages: set[int] = set()
+        for node in result.nodes.values():
+            if node.annotations.get("phase") != "bwd":
+                continue
+            bwd_stages.add(node.annotations["stage_id"])
+
+        assert len(bwd_stages) >= 2, (
+            f"Backward nodes all on stage(s) {bwd_stages}"
+        )
+
+    def test_stage0_embedding_only_nonlayer(self):
+        """Stage 0 should only contain embedding as non-layer forward nodes,
+        not lm_head, final_norm, or other unrelated forward nodes."""
+        graph = _make_graph_with_nonlayer("train")
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+
+        for node in result.nodes.values():
+            if node.layer or node.op_type == "comm.send_recv":
+                continue
+            if node.annotations.get("phase") == "bwd":
+                continue
+            sid = node.annotations["stage_id"]
+            if sid == 0:
+                assert node.component == "embedding", (
+                    f"Stage 0 has non-layer fwd node {node.id} "
+                    f"with component '{node.component}', expected 'embedding'"
+                )
+
+
 # ── 1. Basic PP Functionality ──────────────────────────────────────────────────
 
 class TestPipelineParallelPassBasic:

@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import html as html_lib
 import json
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from zrt.training.io.operator_time_stats import build_operator_time_stats
 
 if TYPE_CHECKING:
     from zrt.training.ir.training_graph import Graph, Op
@@ -695,6 +698,12 @@ def _build_summary(
             "memory_pct": memory_bound_ms / bound_total,
             "communication_pct": comm_ms / bound_total,
         },
+        "operator_time_share": build_operator_time_stats(
+            model=model,
+            report=report,
+            op_dicts=op_dicts,
+            strategy=strategy,
+        ),
         "comm_breakdown": {
             "tp_exposed_ms": getattr(report, "tp_exposed_ms", 0.0),
             "cp_exposed_ms": getattr(report, "cp_exposed_ms", 0.0),
@@ -1216,7 +1225,7 @@ def _json_parse_literal_for_script(data) -> str:
     JS string literal argument to JSON.parse, so substrings such as ${...} or
     backticks inside model/op names are data, not executable template syntax.
     """
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    payload = json.dumps(_json_safe(data), ensure_ascii=False, separators=(",", ":"))
 
     # Prevent data from closing the script element.
     payload = payload.replace("</", "<\\/")
@@ -1227,6 +1236,17 @@ def _json_parse_literal_for_script(data) -> str:
     # Return a quoted JS string literal. ensure_ascii=True makes the outer JS
     # literal ASCII-safe even when the report contains Chinese text.
     return json.dumps(payload, ensure_ascii=True)
+
+
+def _json_safe(value):
+    """Convert exporter data to plain JSON-compatible containers."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 _HTML_TEMPLATE = r"""<!doctype html>
@@ -1597,6 +1617,7 @@ function renderSummary() {
   const p = s.performance;
   const b = s.bound;
   const m = s.memory || {};
+  const operatorStats = s.operator_time_share || [];
 
   document.getElementById("summary").innerHTML = `
     <h2>1. 报告 Summary</h2>
@@ -1669,6 +1690,9 @@ function renderSummary() {
       <div>Pipeline Bubble</div><div>${fmt.ms(p.bubble_time_ms)}</div>
       <div>Optimizer (compute)</div><div>${fmt.ms(p.optimizer_time_ms)}</div>
       <div>Optimizer (comm)</div><div>${fmt.ms(p.optimizer_comm_ms)}</div>
+      ${operatorStats.length ? `
+        <div>Operator Time Share</div><div>${operatorStats.map(row => esc(row.label) + " " + fmt.ms(row.time_ms) + " / step " + fmt.pct(row.pct_of_step) + " / useful compute " + fmt.pct(row.pct_of_useful_compute) + " (" + esc(row.op_count) + " ops)").join("<br/>")}</div>
+      ` : ""}
     </div>
 
     <h3>内存消耗结果</h3>

@@ -206,6 +206,13 @@ class TestMakeStrategyFromConfig:
         assert strategy.pp_schedule == PPSched.INTERLEAVED
         assert strategy.vpp_chunks == 4
 
+    def test_pp_schedule_dualpipev_with_vpp(self):
+        config = {"pp_schedule": "dualpipev", "vpp_chunks": 4}
+        strategy = _make_strategy_from_config(config)
+
+        assert strategy.pp_schedule == PPSched.DUALPIPE_V
+        assert strategy.vpp_chunks == 4
+
     def test_pp_schedule_non_interleaved_ignores_vpp(self):
         config = {"pp_schedule": "1f1b", "vpp_chunks": 4}
         strategy = _make_strategy_from_config(config)
@@ -446,6 +453,60 @@ class TestTrainingConfigManager:
         configs = manager.generate_static_configs()
         assert manager.count_total_configs() == len(configs)
 
+    def test_total_token_derives_exact_global_batch_from_each_seq_len(self):
+        manager = TrainingConfigManager(
+            param_grid={
+                "model": ["deepseek_v3_2"],
+                "hw": ["nvidia_h100_sxm"],
+                "world_size": [1],
+                "seq_len": [512, 256],
+                "total_token": [1024],
+                "tp": [1],
+                "cp": [1],
+                "pp": [1],
+                "ep": [1],
+                "dp": [1],
+                "micro_batch": [1],
+                "global_batch": [128, 256],
+                "zero_stage": [0],
+                "pp_schedule": ["1f1b"],
+                "recompute": ["none"],
+                "optimizer": ["adam"],
+            }
+        )
+
+        configs = manager.generate_static_configs()
+
+        assert [(c["seq_len"], c["global_batch"]) for c in configs] == [
+            (512, 2),
+            (256, 4),
+        ]
+        assert manager.count_total_configs() == len(configs)
+
+    def test_total_token_rejects_seq_len_with_remainder(self):
+        manager = TrainingConfigManager(
+            param_grid={
+                "model": ["deepseek_v3_2"],
+                "hw": ["nvidia_h100_sxm"],
+                "world_size": [1],
+                "seq_len": [512],
+                "total_token": [1025],
+                "tp": [1],
+                "cp": [1],
+                "pp": [1],
+                "ep": [1],
+                "dp": [1],
+                "micro_batch": [1],
+                "zero_stage": [0],
+                "pp_schedule": ["1f1b"],
+                "recompute": ["none"],
+                "optimizer": ["adam"],
+            }
+        )
+
+        with pytest.raises(ValueError, match="total_token.*divisible.*seq_len"):
+            manager.generate_static_configs()
+
     def test_search_filters_non_divisible_ep_dp_combos(self):
         manager = TrainingConfigManager(
             param_grid={
@@ -531,6 +592,7 @@ class TestTrainingConfigManager:
             "pp_schedule": "1f1b",
             "recompute": "none",
             "optimizer": "adam",
+            "max_memory_gb": 1024,
         })
 
         assert result["status"] == "success"
@@ -556,6 +618,7 @@ class TestTrainingConfigManager:
             "recompute": "none",
             "optimizer": "muon",
             "muon_rotation": True,
+            "max_memory_gb": 1024,
         }
 
         result = run_training_task_wrapper(cfg)
@@ -572,6 +635,117 @@ class TestTrainingConfigManager:
         assert row["optimizer_comm_ms"] == pytest.approx(
             round(report.optimizer_comm_hidden_ms, 2)
         )
+
+    def test_worker_skips_memory_infeasible_config_before_graph_build(self, monkeypatch):
+        import zrt.training.ir.builders as builders
+        import zrt.training.search.training_search_util as search_util
+
+        class FakeStrategy:
+            def validate(self, model, system):
+                return None
+
+        search_util._WORKER_MODEL_CACHE.clear()
+        search_util._WORKER_HW_CACHE.clear()
+        search_util._WORKER_GRAPH_CACHE.clear()
+
+        monkeypatch.setattr(
+            search_util,
+            "_load_model_spec",
+            lambda *a, **k: SimpleNamespace(seq_len=4096),
+        )
+        monkeypatch.setattr(search_util, "_make_strategy_from_config", lambda cfg: FakeStrategy())
+        monkeypatch.setattr(
+            search_util,
+            "_make_system_from_config",
+            lambda cfg: SimpleNamespace(gpu=SimpleNamespace(hbm_gb=10), world_size=1),
+        )
+        monkeypatch.setattr(
+            search_util,
+            "memory_breakdown",
+            lambda graph, model, system, strategy: MemBreakdown(weights=9e9),
+        )
+
+        def fail_build_graph(*args, **kwargs):
+            raise AssertionError("build_graph should not run for memory-skipped configs")
+
+        monkeypatch.setattr(builders, "build_graph", fail_build_graph)
+
+        result = run_training_task_wrapper({"model": "fake", "hw": "fake", "world_size": 1})
+
+        assert result["status"] == "skipped"
+        assert result["type"] == "memory"
+
+    def test_worker_reuses_graph_cache_for_equivalent_graph_configs(self, monkeypatch):
+        import zrt.training.ir.builders as builders
+        import zrt.training.search.training_search_util as search_util
+
+        class FakeStrategy:
+            def __init__(self, dp, global_batch):
+                self.dp = dp
+                self.global_batch = global_batch
+
+            def validate(self, model, system):
+                return None
+
+        search_util._WORKER_MODEL_CACHE.clear()
+        search_util._WORKER_HW_CACHE.clear()
+        search_util._WORKER_GRAPH_CACHE.clear()
+
+        build_calls = []
+        monkeypatch.setattr(
+            search_util,
+            "_load_model_spec",
+            lambda *a, **k: SimpleNamespace(seq_len=4096),
+        )
+        monkeypatch.setattr(
+            search_util,
+            "_make_system_from_config",
+            lambda cfg: SimpleNamespace(
+                gpu=SimpleNamespace(hbm_gb=80),
+                world_size=cfg.get("world_size", 1),
+            ),
+        )
+        monkeypatch.setattr(
+            search_util,
+            "_make_strategy_from_config",
+            lambda cfg: FakeStrategy(dp=cfg.get("dp", 1), global_batch=cfg.get("global_batch", 0)),
+        )
+        monkeypatch.setattr(
+            search_util,
+            "memory_breakdown",
+            lambda graph, model, system, strategy: MemBreakdown(weights=1e9),
+        )
+
+        def fake_build_graph(model, strategy):
+            build_calls.append((strategy.dp, strategy.global_batch))
+            return SimpleNamespace(ops=[], collectives=[])
+
+        monkeypatch.setattr(builders, "build_graph", fake_build_graph)
+        monkeypatch.setattr(
+            search_util,
+            "estimate",
+            lambda model, system, strategy, graph=None: TrainingReport(mfu=0.1),
+        )
+
+        base = {
+            "model": "fake",
+            "hw": "fake",
+            "world_size": 8,
+            "seq_len": 4096,
+            "micro_batch": 1,
+            "tp": 1,
+            "cp": 1,
+            "pp": 1,
+            "ep": 1,
+            "cp_kind": "none",
+        }
+
+        first = run_training_task_wrapper({**base, "dp": 8, "global_batch": 8})
+        second = run_training_task_wrapper({**base, "dp": 4, "global_batch": 16})
+
+        assert first["status"] == "success"
+        assert second["status"] == "success"
+        assert len(build_calls) == 1
 
     def test_output_path_generation(self):
         manager = TrainingConfigManager(
@@ -794,7 +968,7 @@ class TestSearchOutputs:
 
         assert not output_dir.exists()
 
-    def test_export_best_configs_excel_exports_best_row_per_group(self, monkeypatch):
+    def test_export_best_configs_excel_exports_lowest_step_time_per_group(self, monkeypatch):
         import zrt.training.io.excel_exporter as excel_exporter
         import zrt.training.ir.builders as builders
         import zrt.training.models.flops as flops
@@ -833,7 +1007,7 @@ class TestSearchOutputs:
                             "ep": 1,
                             "dp": 8,
                         },
-                        "report": TrainingReport(mfu=0.2),
+                        "report": TrainingReport(mfu=0.2, step_time_ms=10.0),
                     },
                     {
                         "model_name": "deepseek_v3_2",
@@ -847,17 +1021,117 @@ class TestSearchOutputs:
                             "ep": 1,
                             "dp": 4,
                         },
-                        "report": TrainingReport(mfu=0.6),
+                        "report": TrainingReport(mfu=0.6, step_time_ms=20.0),
+                    },
+                    {
+                        "model_name": "deepseek_v3_2",
+                        "hw_name": "nvidia_h100_sxm",
+                        "config": {
+                            "seq_len": 8192,
+                            "world_size": 8,
+                            "tp": 4,
+                            "cp": 1,
+                            "pp": 1,
+                            "ep": 1,
+                            "dp": 2,
+                        },
+                        "report": TrainingReport(mfu=0.4, step_time_ms=5.0),
                     },
                 ],
                 str(output_dir),
             )
 
-            assert len(exported) == 1
-            assert exported[0]["strategy"].tp == 2
+            assert len(exported) == 2
+            assert exported[0]["strategy"].tp == 1
             assert exported[0]["system"].world_size == 8
             assert exported[0]["op_costs"] == {"fake_op": 1.0}
-            assert (output_dir / "deepseek_v3_2_nvidia_h100_sxm_4096_best.xlsx").exists()
+            assert (output_dir / "deepseek_v3_2_nvidia_h100_sxm_seq4096_ws8_best.xlsx").exists()
+            assert (output_dir / "deepseek_v3_2_nvidia_h100_sxm_seq8192_ws8_best.xlsx").exists()
+        finally:
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
+
+    def test_run_training_search_parallel_exports_best_after_mfu_threshold(self, monkeypatch):
+        import concurrent.futures
+        import zrt.training.search.training_search_util as search_util
+
+        class FakeExecutor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def submit(self, fn, *args, **kwargs):
+                fut = concurrent.futures.Future()
+                fut.set_result(fn(*args, **kwargs))
+                return fut
+
+        configs = [
+            {
+                "id": "below_threshold_fast",
+                "model": "threshold_model",
+                "hw": "nvidia_h100_sxm",
+                "world_size": 1,
+            },
+            {
+                "id": "above_threshold_slow",
+                "model": "threshold_model",
+                "hw": "nvidia_h100_sxm",
+                "world_size": 1,
+            },
+        ]
+
+        def fake_task(config):
+            if config["id"] == "below_threshold_fast":
+                report = TrainingReport(mfu=0.1, step_time_ms=1.0)
+            else:
+                report = TrainingReport(mfu=0.5, step_time_ms=10.0)
+            return {
+                "status": "success",
+                "config": config,
+                "report": report,
+                "model_name": config["model"],
+                "hw_name": config["hw"],
+            }
+
+        exported = []
+
+        monkeypatch.setattr(search_util, "ProcessPoolExecutor", FakeExecutor)
+        monkeypatch.setattr(search_util, "_worker_initializer", lambda model_name: None)
+        monkeypatch.setattr(search_util, "run_training_task_wrapper", fake_task)
+        monkeypatch.setattr(TrainingConfigManager, "count_total_configs", lambda self: len(configs))
+        monkeypatch.setattr(
+            TrainingConfigManager,
+            "generate_static_configs_stream",
+            lambda self: iter(configs),
+        )
+        monkeypatch.setattr(
+            search_util,
+            "export_best_configs_excel",
+            lambda results, output_path: exported.append((results, output_path)),
+        )
+
+        output_dir = Path("output") / "training_search" / "threshold_model_ws_1"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+
+        try:
+            df = run_training_search_parallel(
+                {"model": ["threshold_model"], "world_size": [1]},
+                workers=1,
+                mfu_threshold=0.2,
+                batch_size=1,
+                export_best_excel=True,
+            )
+
+            assert list(df["id"]) == ["above_threshold_slow"]
+            assert len(exported) == 1
+            exported_results, _ = exported[0]
+            assert [r["config"]["id"] for r in exported_results] == ["above_threshold_slow"]
         finally:
             if output_dir.exists():
                 shutil.rmtree(output_dir)

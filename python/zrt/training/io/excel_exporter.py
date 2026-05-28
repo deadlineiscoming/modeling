@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from zrt.training.io.operator_time_stats import build_operator_time_stats
 from zrt.training.spec.dtype import Dtype
 
 if TYPE_CHECKING:
@@ -74,6 +75,22 @@ def export_estimate_excel(
         if col_widths:
             for i, w in enumerate(col_widths, 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    from python.zrt.training.io.html_exporter import _op_to_dict
+    from zrt.training.models.flops import op_cost as _op_cost
+
+    operator_op_dicts = []
+    for op in graph.ops:
+        cost = op_costs.get(op.name)
+        if cost is None:
+            cost = _op_cost(op, model, system)
+        operator_op_dicts.append(_op_to_dict(op, cost, system))
+    operator_time_rows = build_operator_time_stats(
+        model=model,
+        report=report,
+        op_dicts=operator_op_dicts,
+        strategy=strategy,
+    )
 
     # ── Sheet 1: Summary ─────────────────────────────────────────────────
     ws = wb.active
@@ -145,6 +162,17 @@ def export_estimate_excel(
         ["", "", ""],
         ["  TOTAL STEP TIME", f"{report.step_time_ms:.2f}", "100.0%"],
         ["", "", ""],
+        ["Operator Time Share", "Time (ms)", "% of Step", "% of Useful Compute"],
+        *[
+            [
+                f"  {row['label']}",
+                f"{row['time_ms']:.2f}",
+                f"{row['pct_of_step']:.1%} ({row['op_count']} ops)",
+                f"{row['pct_of_useful_compute']:.1%} ({row['op_count']} ops)",
+            ]
+            for row in operator_time_rows
+        ],
+        ["", "", ""],
         # Hidden communication (not on critical path)
         ["Communication Hidden (overlapped)", "", ""],
         ["  DP hidden", f"{report.dp_hidden_ms:.2f}" if report.dp_hidden_ms > 0 else "-", "ms"],
@@ -195,14 +223,18 @@ def export_estimate_excel(
             ["", "", ""],
             ["Warnings", "; ".join(report.warnings), ""],
         ])
-    _write_sheet(ws, summary_rows, col_widths=[30, 30, 15])
+    _write_sheet(ws, summary_rows, col_widths=[30, 30, 20, 24])
 
     # ── Sheet 2: Ops ─────────────────────────────────────────────────────
     ws2 = wb.create_sheet("Ops")
     _LAYER_KIND_MAP = {
         "dense": "Dense", "moe": "MoE", "mtp": "MTP",
     }
-    from zrt.training.compose.stage import has_heterogeneous_compute, _cost_phase_time
+    from zrt.training.compose.stage import (
+        has_heterogeneous_compute,
+        _cost_phase_time,
+        _resolve_compute_dtype,
+    )
     _act_dtype = model.act_dtype if hasattr(model, "act_dtype") else Dtype.BF16
 
     def _fmt_num(x: float | None) -> str:
@@ -237,9 +269,10 @@ def export_estimate_excel(
         # Compute latency from FLOPs/bytes using roofline model (hetero-aware)
         gpu_name = system.gpu.name
         overlap = system.gpu.overlap_ratio.get(op.kind, 0.0) if has_heterogeneous_compute(system) else 0.0
-        fwd_time = _cost_phase_time(cost, "fwd", system, gpu_name, overlap)
-        bwd_time = (_cost_phase_time(cost, "dx", system, gpu_name, overlap)
-                    + _cost_phase_time(cost, "dw", system, gpu_name, overlap))
+        op_dtype = _resolve_compute_dtype(op, model)
+        fwd_time = _cost_phase_time(cost, "fwd", system, gpu_name, overlap, op_dtype)
+        bwd_time = (_cost_phase_time(cost, "dx", system, gpu_name, overlap, op_dtype)
+                    + _cost_phase_time(cost, "dw", system, gpu_name, overlap, op_dtype))
         latency_us = (fwd_time + bwd_time) * 1e6
 
         op_rows.append([

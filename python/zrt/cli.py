@@ -272,6 +272,23 @@ def main() -> None:
         help="Total layers in full model (defaults to --layers if not set).",
     )
 
+    # ── Pipeline-parallel scheduling ─────────────────────────────────────────
+    parser.add_argument(
+        "--pp-schedule", default="1f1b",
+        choices=["1f1b", "interleaved", "dualpipe", "dualpipev", "zb"],
+        help="Pipeline parallel schedule (default: 1f1b).",
+    )
+    parser.add_argument(
+        "--vpp-chunks", type=int, default=1,
+        help="Virtual pipeline chunks for interleaved/dualpipev schedules.",
+    )
+    parser.add_argument(
+        "--pp-mode", default="trace",
+        choices=["trace", "formula"],
+        help="PP modelling mode: trace = grid-based PPStitcher (default), "
+             "formula = classic PipelineComposer.",
+    )
+
     args = parser.parse_args()
 
     # ── --list-fusion-rules: print and exit ──────────────────────────────────
@@ -672,6 +689,9 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         ),
         mega_moe=getattr(args, "mega_moe", False),
         mega_moe_waves=getattr(args, "mega_moe_waves", 0),
+        pp_schedule=args.pp_schedule,
+        vpp_chunks=args.vpp_chunks,
+        pp_mode=args.pp_mode,
         return_transformed=True,
         quant=args.quant,
         moe_total_experts=_moe_total,

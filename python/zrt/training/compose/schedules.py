@@ -402,7 +402,8 @@ class DualPipeComposer(PipelineComposer):
 
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
-        t_stage_max = t_fwd_max + t_bwd_max
+        # 一个阶段分成F、B，先F后B 时间依然是加法
+        t_stage_max = max((st.fwd + st.bwd for st in stage_times), default=0.0)
         t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
         t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
@@ -426,6 +427,20 @@ class DualPipeComposer(PipelineComposer):
         steady_bwd_total = M * t_bwd_max
         hidden = _dp_hidden(dp_ar_time, cooldown, steady_bwd_total, strategy)
         dp_exposed = dp_ar_time - hidden
+
+        # =========================================================================
+        # 视角 A：真实物理演进视角 (Physical Timeline Perspective)
+        # =========================================================================
+        #    StepTime = [Steady计算+纯空泡时间] + [Warmup 计算+纯空泡时间] + [cooldown 计算+纯空泡时间] + [暴露通信时间]
+        #             =      steadyTime      +     warmupTime      +     cooldownTime      +   dp_exposed
+
+        # =========================================================================
+        # 视角 B：代码数学重构视角 (Mathematical Reconstruct Perspective)
+        # 相当对计算、空泡时间做了汇总
+        #    StepTime = [全流程纯计算时间] + [Warmup空泡时间] + [cooldown空泡时间] + [暴露通信时间]
+        #             =      M * t_stage_max      +     warmup      +     cooldown      +   dp_exposed
+        # =========================================================================
+
 
         step = warmup + steady + cooldown + dp_exposed
         bubble_frac = bubble / step if step > 0 else 0.0
@@ -478,7 +493,7 @@ class DualPipeVComposer(PipelineComposer):
 
         t_fwd_max = max((st.fwd for st in stage_times), default=0.0)
         t_bwd_max = max((st.bwd for st in stage_times), default=0.0)
-        t_stage_max = t_fwd_max + t_bwd_max
+        t_stage_max = max((st.fwd + st.bwd for st in stage_times), default=0.0)
         t_fb = max(t_fwd_max, t_bwd_max)  # F&B = max(F,B)
         t_w = max((st.bwd_dw for st in stage_times), default=0.0)  # W = bwd_dw
 
@@ -701,6 +716,12 @@ def pipeline_step_time(
     #   (b) post-compose pp_exposed extraction uses the bottleneck stage's
     #       exposed sum, not a hardcoded ``2*pp_p2p``.
     pp_p2p = comm_times.get("pp_p2p", 0.0)
+    pp_p2p_factor = (
+        max(1, strategy.vpp_chunks)
+        if strategy.pp_schedule in (PPSched.INTERLEAVED, PPSched.DUALPIPE_V)
+        else 1
+    )
+    pp_p2p_per_direction = pp_p2p * pp_p2p_factor
     # Dual-stream PP P2P hide only fires when (a) schedule is dual-stream
     # AND (b) user explicitly opted in via ``strategy.pp_overlap``. The
     # gate is needed because DualPipe(V)'s antiparallel structure only
@@ -721,8 +742,8 @@ def pipeline_step_time(
     recompute_exposed: list[float] = []
     for st in stage_times:
         if pp == 1 or not is_dual:
-            pp_p2p_fwd_exposed.append(pp_p2p)
-            pp_p2p_bwd_exposed.append(pp_p2p)
+            pp_p2p_fwd_exposed.append(pp_p2p_per_direction)
+            pp_p2p_bwd_exposed.append(pp_p2p_per_direction)
             pp_p2p_hidden.append(0.0)
             recompute_exposed.append(st.recompute)
             continue
@@ -731,7 +752,7 @@ def pipeline_step_time(
         # Attribute the bwd_dw hide window to PP first: PP is communication
         # scheduled on the opposite stream, while any remaining residual from
         # a large recompute belongs to recompute itself, not PP.
-        pp_p2p_total = 2.0 * pp_p2p
+        pp_p2p_total = 2.0 * pp_p2p_per_direction
         total_to_hide = pp_p2p_total + st.recompute
         if total_to_hide <= 0:
             pp_p2p_fwd_exposed.append(0.0)
@@ -828,8 +849,11 @@ def pipeline_step_time(
         step.cp_exposed = scale * s_bot.cp_exposed
         # PP exposed: bottleneck stage's exposed fwd+bwd boundary cost
         # (already schedule-adjusted in the augmentation block above).
-        # For 1F1B/VPP/ZB this is ``2*pp_p2p`` (bit-exact with legacy).
-        # For DualPipe(V) it is the residual share after bwd_dw hides.
+        # For 1F1B/ZB this is ``2*pp_p2p``; for VPP/DualPipeV the scalar
+        # one-boundary cost is multiplied by ``vpp_chunks`` because this
+        # formula path aggregates virtual chunks into one physical stage.
+        # For DualPipe(V) with pp_overlap it is the residual share after
+        # bwd_dw hides.
         step.pp_exposed = scale * (
             pp_p2p_fwd_exposed[bot_idx] + pp_p2p_bwd_exposed[bot_idx]
         )
@@ -1056,14 +1080,14 @@ def _assign_stages(model: ModelSpec, strategy: Strategy) -> list[list[int]]:
     return stages
 
 
-_ADAM_UPDATE_BYTES_PER_PARAM = 28
-
-
 def _adam_optimizer_step_time(params: int, system: SystemSpec) -> float:
-    """Memory-bound Adam update time for FP32 master/grad/m/v state."""
-    bytes_ = max(0, int(params)) * _ADAM_UPDATE_BYTES_PER_PARAM
-    bw = effective_hbm_bw_bps(system.gpu, bytes_)
-    return bytes_ / bw if bw > 0 else 0.0
+    """Memory-bound Adam update time. Thin wrapper around shared helper."""
+    from zrt.training.models.optimizer import adam_step_time_s
+    return adam_step_time_s(
+        params, system.gpu.hbm_bw_gbps * 1e9,
+        gpu_name=system.gpu.name,
+        efficiency_override=system.gpu.mem_bw_efficiency,
+    )
 
 
 def _compute_optimizer_time(model: ModelSpec, system: SystemSpec, strategy: Strategy) -> float:
@@ -1071,46 +1095,23 @@ def _compute_optimizer_time(model: ModelSpec, system: SystemSpec, strategy: Stra
 
     Uses roofline model with achieved efficiency from perf_tables.
     """
-    from zrt.training.spec.model import LayerKind
+    from zrt.training.models.memory import adam_params_on_rank
 
-    P = model.total_params()
-    if strategy.ep > 1:
-        if strategy.dp < strategy.ep:
-            raise ValueError(
-                f"dp must be >= ep for expert-DP sharding "
-                f"(dp={strategy.dp}, ep={strategy.ep})"
-            )
-        if strategy.dp % strategy.ep != 0:
-            raise ValueError(
-                f"dp must be divisible by ep for expert-DP sharding "
-                f"(dp={strategy.dp}, ep={strategy.ep})"
-            )
-    if strategy.tp > 1:
-        P //= strategy.tp
-    if strategy.pp > 1:
-        n_layers = len(model.layers)
-        embed = model.vocab * model.hidden * 2
-        non_embed = P - embed
-        non_embed = int(non_embed * (n_layers / strategy.pp) / n_layers)
-        P = non_embed + embed // strategy.pp
-    # EP shards expert params across ep ranks: each GPU holds num_experts/ep experts.
-    if strategy.ep > 1:
-        n_moe = sum(1 for lk in model.layers if lk == LayerKind.MOE)
-        if n_moe > 0 and model.moe_ffn > 0:
-            expert_p_all = n_moe * 3 * model.hidden * model.moe_ffn * model.num_experts
-            # Match the TP+PP sharding already applied to P, otherwise the
-            # subtraction below clamps non_expert_p to 0 and we lose all
-            # non-routed params from the Muon NS budget.
-            expert_p_stage = expert_p_all
-            if strategy.tp > 1:
-                expert_p_stage //= strategy.tp
-            if strategy.pp > 1:
-                expert_p_stage //= strategy.pp
-            non_expert_p = max(0, P - expert_p_stage)
-            P = non_expert_p + expert_p_stage // strategy.ep
-    # ZeRO-1/2/3 all shard optimizer states across DP: each GPU updates P/dp params.
-    if strategy.zero_stage >= 1:
-        P //= strategy.dp
+    if strategy.ep > 1 and (strategy.dp < strategy.ep or strategy.dp % strategy.ep != 0):
+        raise ValueError(f"dp must be >= ep and divisible by ep (dp={strategy.dp}, ep={strategy.ep})")
+
+    P = adam_params_on_rank(
+        total_params=model.total_params(),
+        n_layers=len(model.layers),
+        embed_params=model.vocab * model.hidden * 2,
+        expert_params_full=(
+            sum(1 for lk in model.layers if lk.value == "moe")
+            * 3 * model.hidden * model.moe_ffn * model.num_experts
+        ) if model.num_experts > 0 and model.moe_ffn > 0 else 0,
+        tp=strategy.tp, pp=strategy.pp, ep=strategy.ep, dp=strategy.dp,
+        zero_stage=strategy.zero_stage,
+        apply_dp_for_zero=1,
+    )
 
     gpu = system.gpu
     peak_flops = gpu.flops_bf16 * 1e12
@@ -1124,9 +1125,6 @@ def _compute_optimizer_time(model: ModelSpec, system: SystemSpec, strategy: Stra
             if strategy.muon_config and strategy.muon_config.muon_param_fraction is not None
             else 0.85
         )
-        # Architecture-driven NS FLOPs: walk the actual weight-matrix
-        # inventory. The legacy P/hidden² path clamps num_matrices to 1
-        # under ZeRO-3 + EP and yields a constant ~8 ms across the grid.
         muon_flops = muon_step_flops_from_arch(model, strategy, K, f_muon)
         eff_flops = effective_flops(gpu, Dtype.BF16, muon_flops)
         muon_time = muon_flops / eff_flops if eff_flops > 0 else 0.0

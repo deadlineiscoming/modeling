@@ -97,9 +97,10 @@ def insert_collectives(graph: Graph, model: ModelSpec, strategy: Strategy) -> No
 
     graph.collectives.extend(collectives)
 
-    # Apply TP/CP sharding to global ops (layer_id < 0: lm_head, final_ln, etc.)
+    # Apply sharding to global ops outside per-layer ranges.
     # These are outside the per-layer ranges and would otherwise be skipped.
     _apply_global_hc_sharding(graph, strategy, model.seq_len)
+    _apply_global_lm_head_sharding(graph, strategy)
 
 
 def _shard_hc_sequence(op, factor: int, seq: int) -> None:
@@ -123,6 +124,24 @@ def _apply_global_hc_sharding(graph: Graph, strategy: Strategy, seq: int) -> Non
     for op in graph.ops:
         if op.layer_id < 0 and op.kind in ("mhc_pre", "mhc_post", "mhc_head", "hc_expand"):
             _shard_hc_sequence(op, factor, seq)
+
+
+def _apply_global_lm_head_sharding(graph: Graph, strategy: Strategy) -> None:
+    """Apply TP vocab sharding to global lm_head outside layer_index."""
+    tp = max(1, strategy.tp)
+    if tp <= 1:
+        return
+    for op in graph.ops:
+        if op.layer_id >= 0 or op.kind != "lm_head":
+            continue
+        n = op.meta.get("n", 0)
+        if n <= 0:
+            continue
+        n_local = max(1, n // tp)
+        op.meta["n_local"] = n_local
+        for t in op.outputs:
+            if t.shape_logical and t.shape_logical[-1] == n:
+                t.shape_local = (t.shape_logical[0], n_local)
 
 
 def _insert_tp_collectives(

@@ -639,7 +639,8 @@ def _promote_aware_elementwise_cost(
         return base
 
     n_in = op.inputs[0].num_elements()
-    extra_reads = 2 if op.kind == "softmax" else 1
+    from zrt.training.models.promotion import ln_softmax_input_byte_multiplier
+    extra_reads = int(ln_softmax_input_byte_multiplier(op.kind))
     extra_bytes = extra_reads * n_in * in_dtype.bytes
     return OpCost(
         fwd_bytes=base.fwd_bytes + extra_bytes,

@@ -100,6 +100,7 @@ def insert_collectives(graph: Graph, model: ModelSpec, strategy: Strategy) -> No
     # Apply sharding to global ops outside per-layer ranges.
     # These are outside the per-layer ranges and would otherwise be skipped.
     _apply_global_hc_sharding(graph, strategy, model.seq_len)
+    _apply_global_token_op_sharding(graph, strategy)
     _apply_global_lm_head_sharding(graph, strategy)
 
 
@@ -124,6 +125,31 @@ def _apply_global_hc_sharding(graph: Graph, strategy: Strategy, seq: int) -> Non
     for op in graph.ops:
         if op.layer_id < 0 and op.kind in ("mhc_pre", "mhc_post", "mhc_head", "hc_expand"):
             _shard_hc_sequence(op, factor, seq)
+
+
+def _shard_global_token_sequence(op, factor: int) -> None:
+    """Shard the leading token dimension for global sequence-local ops."""
+    if factor <= 1:
+        return
+    if "m" in op.meta and op.meta["m"] > 0:
+        op.meta["m"] = max(1, op.meta["m"] // factor)
+    if "s" in op.meta and op.meta["s"] > 0:
+        op.meta["s"] = max(1, op.meta["s"] // factor)
+    if "bytes_fwd" in op.meta:
+        op.meta["bytes_fwd"] = max(1, int(op.meta["bytes_fwd"]) // factor)
+    for t in op.inputs + op.outputs:
+        if t.shape_local:
+            t.shape_local = (max(1, t.shape_local[0] // factor),) + t.shape_local[1:]
+
+
+def _apply_global_token_op_sharding(graph: Graph, strategy: Strategy) -> None:
+    """Apply CP token sharding to non-lm_head global token ops."""
+    factor = max(1, strategy.cp)
+    if factor <= 1:
+        return
+    for op in graph.ops:
+        if op.layer_id < 0 and op.kind in ("embed", "ln", "rmsnorm"):
+            _shard_global_token_sequence(op, factor)
 
 
 def _apply_global_lm_head_sharding(graph: Graph, strategy: Strategy) -> None:

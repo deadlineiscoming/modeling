@@ -1333,8 +1333,13 @@ def _extract_p2p_latency_per_edge(g) -> tuple[dict[tuple[int, int], float], dict
         key = (src, dst)
         if phase == "fwd":
             fwd_us[key] = max(fwd_us.get(key, 0.0), lat)
-        else:
+        elif "bwd" in phase:
             bwd_us[key] = max(bwd_us.get(key, 0.0), lat)
+        else:
+            logger.warning(
+                "comm.send_recv node %s has unexpected phase=%r, skipping P2P extraction",
+                node.id, phase,
+            )
     return fwd_us, bwd_us
 
 

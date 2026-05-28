@@ -95,7 +95,10 @@ class PPStitchedTimeline:
     cooldown_us: float = 0.0
     bubble_us: float = 0.0
     bubble_fraction: float = 0.0
-    p2p_overhead_us: float = 0.0
+    p2p_total_gap_us: float = 0.0
+    """Sum of all P2P delayed_deps across all grid tasks (absolute total
+    transfer time, not per-step overhead — individual P2P gaps on different
+    microbatch / stage edges may overlap in time)."""
 
     def to_scheduled_ops(self, per_stage_timeline: Timeline | None = None) -> list[ScheduledOp]:
         """Convert grid tasks to ScheduledOp list for Chrome Trace export."""
@@ -190,6 +193,20 @@ def _add_cross_stage_p2p(
     def _phys_dev(vstage: int) -> int:
         return vstage % phys_pp
 
+    def _lookup_p2p(lookup: dict[tuple[int, int], float], src: int, dst: int) -> float:
+        """Look up P2P latency for physical device pair (src, dst).
+
+        Falls back to reverse-direction value (same link, symmetric BW)
+        for VPP wrap-around pairs, then to default_p2p_us.
+        """
+        key = (src, dst)
+        if key in lookup:
+            return lookup[key]
+        rev_key = (dst, src)
+        if rev_key in lookup:
+            return lookup[rev_key]
+        return default_p2p_us
+
     for m in range(M):
         for s in range(pp - 1):
             fwd_src = _task_id(s, m, "fwd")
@@ -197,7 +214,7 @@ def _add_cross_stage_p2p(
             if fwd_src in tasks and fwd_dst in tasks:
                 phys_s = _phys_dev(s)
                 phys_d = _phys_dev(s + 1)
-                p2p = _fwd.get((phys_s, phys_d), default_p2p_us) if phys_s != phys_d else 0.0
+                p2p = _lookup_p2p(_fwd, phys_s, phys_d) if phys_s != phys_d else 0.0
                 tasks[fwd_dst].dependencies.append(fwd_src)
                 tasks[fwd_dst].delayed_deps[fwd_src] = p2p
 
@@ -206,7 +223,7 @@ def _add_cross_stage_p2p(
             if bwd_src in tasks and bwd_dst in tasks:
                 phys_s = _phys_dev(s + 1)
                 phys_d = _phys_dev(s)
-                p2p = _bwd.get((phys_s, phys_d), default_p2p_us) if phys_s != phys_d else 0.0
+                p2p = _lookup_p2p(_bwd, phys_s, phys_d) if phys_s != phys_d else 0.0
                 tasks[bwd_dst].dependencies.append(bwd_src)
                 tasks[bwd_dst].delayed_deps[bwd_src] = p2p
 
@@ -778,7 +795,7 @@ class PPStitcher:
             cooldown_us=cooldown_us,
             bubble_us=bubble_us,
             bubble_fraction=bubble_us / (max_end - min_start) if max_end > min_start else 0.0,
-            p2p_overhead_us=p2p_gap_us,
+            p2p_total_gap_us=p2p_gap_us,
         )
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -843,6 +860,8 @@ def stitch_pp_pipeline(
     pp: int,
     M: int,
     p2p_latency_us: float = 0.0,
+    p2p_fwd_us: dict[tuple[int, int], float] | None = None,
+    p2p_bwd_us: dict[tuple[int, int], float] | None = None,
     schedule: str = "1f1b",
     vpp_chunks: int = 1,
     stage_bwd_dw_us: dict[int, float] | None = None,
@@ -863,6 +882,8 @@ def stitch_pp_pipeline(
         stage_bwd_us=stage_bwd_us,
         pp=pp, M=M,
         p2p_latency_us=p2p_latency_us,
+        p2p_fwd_us=p2p_fwd_us,
+        p2p_bwd_us=p2p_bwd_us,
         schedule=schedule,
         vpp_chunks=vpp_chunks,
         stage_bwd_dw_us=stage_bwd_dw_us,

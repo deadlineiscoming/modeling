@@ -298,3 +298,42 @@ class TestUnifiedClassification:
         n = mk_node("ffn.gate_proj", scope="model.layers.1.block_sparse_moe.experts.0.gate_proj")
         assert _classify_node_component(n) == "routed_expert"
         assert _classify_graph_component(n) == "routed_expert"
+
+
+class TestClassifyDispatchParity:
+    """Verify classify() outputs cover all dispatch() buckets — drift guard."""
+
+    def test_all_classify_outputs_routed_by_dispatch(self):
+        """Every bucket returned by classify() must be handled by dispatch()."""
+        from zrt.training.models.quant_dispatch import dispatch
+        from python.zrt.transform.context import GraphQuantProfile
+
+        profile = GraphQuantProfile()
+        # Nodes exercising every classification branch
+        cases = [
+            ("attn.q_proj", "", "attention"),
+            ("moe.experts.gate_proj", "", "routed_expert"),
+            ("moe.shared.gate_proj", "", "shared_expert"),
+            ("embedding", "", "embedding"),
+            ("attn_norm", "", "norm"),
+            ("ffn.gate_proj", "", "default"),
+            ("moe.gate.topk", "", "default"),
+        ]
+        for comp, scope, expected_class in cases:
+            node = mk_node(comp, scope=scope)
+            classified = _classify_graph_component(node)
+            assert classified == expected_class, f"{comp}: classify={classified}, expected={expected_class}"
+            # dispatch must accept this without error
+            bundle = dispatch(classified, profile)
+            assert bundle.compute == Dtype.BF16
+
+    def test_dispatch_accepts_all_known_buckets(self):
+        """dispatch() must handle every bucket name that classify() can return."""
+        from zrt.training.models.quant_dispatch import dispatch
+        from python.zrt.transform.context import GraphQuantProfile
+
+        profile = GraphQuantProfile()
+        known_buckets = {"attention", "routed_expert", "shared_expert", "embedding", "norm", "default"}
+        for bucket in sorted(known_buckets):
+            bundle = dispatch(bucket, profile)
+            assert bundle is not None, f"dispatch({bucket!r}) returned None"

@@ -43,7 +43,7 @@ def classify(node: "OpNode") -> str:
 
     # Routed expert
     if comp.startswith("moe.experts.") or (
-        "experts" in scope and "shared" not in scope
+        "experts" in scope and "shared_expert" not in scope
     ):
         return "routed_expert"
     # Fused grouped MM that replaced expert ops

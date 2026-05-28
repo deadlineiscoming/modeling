@@ -5,6 +5,7 @@ communication formulas that account for intra-node vs inter-node bandwidth.
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from python.zrt.transform.base import GraphPass
@@ -116,16 +117,18 @@ class CommLatencyPass(GraphPass):
             if data_bytes == 0:
                 data_bytes = 1  # Conservative: at least 1 byte
 
-            # Quant-aware payload scaling: mirrors QuantizationPass._annotate_comm_payloads
-            # which scales bucket_bytes for the training modeller's comm time path.
-            # Both sites use the same payload_dtype annotation — keep in sync.
+            # Quant-aware payload scaling: applies the dtype ratio to raw captured
+            # tensor sizes (msg_bytes or mem_bytes — always BF16-based). This is
+            # independent of QuantizationPass._annotate_comm_payloads which scales
+            # the separate bucket_bytes attr for the training modeller's DP comm
+            # time path. No double-scaling: data_bytes here never reads bucket_bytes.
             payload_dtype = node.annotations.get("payload_dtype")
             if payload_dtype is not None:
                 from zrt.training.spec.dtype import Dtype as SpecDtype
                 if isinstance(payload_dtype, SpecDtype):
                     ratio = payload_dtype.bytes / SpecDtype.BF16.bytes
                     if ratio != 1.0:
-                        data_bytes = int(data_bytes * ratio)
+                        data_bytes = math.ceil(data_bytes * ratio)
 
             # Determine if cross-node
             intra_node_devices = hw_spec.interconnect.intra_node.num_devices

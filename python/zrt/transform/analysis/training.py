@@ -225,6 +225,9 @@ class TrainingMemoryPass(GraphPass):
                 comp_params.other = int(comp_params.other * layer_scale)
                 # non_layer (embedding, lm_head, final_norm) captured at full size
 
+            # Weights use stored_bytes (includes FP4 MXFP block overhead for
+            # on-device storage).  Grads use raw .bytes (grads are always
+            # full-precision in memory — no block compression overhead).
             weights_bytes = (
                 comp_params.routed_expert * quant_profile.routed_expert_weight_dtype.stored_bytes
                 + comp_params.shared_expert * quant_profile.shared_expert_weight_dtype.stored_bytes

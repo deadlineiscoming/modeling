@@ -96,8 +96,9 @@ class QuantizationPass(GraphPass):
             # Adjust bucket_bytes to modeled dtype if current bytes are BF16-based
             bucket = node.attrs.get("bucket_bytes")
             if bucket and payload != Dtype.BF16:
+                import math
                 ratio = payload.bytes / Dtype.BF16.bytes
-                node.attrs["bucket_bytes"] = int(bucket * ratio)
+                node.attrs["bucket_bytes"] = math.ceil(bucket * ratio)
             node.attrs["payload_dtype_resolved"] = True
 
     def _run_legacy(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":

@@ -232,8 +232,8 @@ def _component_split_from_meta(graph: "OpGraph", total: int) -> ComponentParams:
     # Scale raw counts to authoritative total
     scale = total / struct_total
     return ComponentParams(
-        routed_expert=int(raw.routed_expert * scale),
-        shared_expert=int(raw.shared_expert * scale),
-        other=int(raw.other * scale),
-        non_layer=int(raw.non_layer * scale),
+        routed_expert=round(raw.routed_expert * scale),
+        shared_expert=round(raw.shared_expert * scale),
+        other=round(raw.other * scale),
+        non_layer=round(raw.non_layer * scale),
     )

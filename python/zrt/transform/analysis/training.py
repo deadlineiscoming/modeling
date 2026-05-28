@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from python.zrt.ir.param_count import count_params
 from python.zrt.transform.base import GraphPass
@@ -48,7 +48,29 @@ class TrainingFlopsPass(GraphPass):
 
         num_layers = g.metadata.get("num_layers", 0)
         num_layers_traced = g.metadata.get("num_layers_traced", num_layers)
-        layer_scale = num_layers / num_layers_traced if num_layers_traced > 0 and num_layers != num_layers_traced else 1.0
+        
+        # Check for LayerProfile-based scaling
+        layer_profile = g.metadata.get("layer_profile", None)
+        typical_indices = g.metadata.get("typical_indices", None)
+        
+        if layer_profile is not None and typical_indices is not None:
+            # LayerProfile-based scaling: use precise layer type counts
+            # This is more accurate than simple num_layers / num_layers_traced
+            # when different layer types have different computational costs
+            num_typical = len(typical_indices)
+            layer_scale = num_layers / num_typical if num_typical > 0 else 1.0
+            logger.info(
+                "Using LayerProfile scaling: typical_indices=%s, "
+                "num_layers=%d, scale=%.2f",
+                typical_indices, num_layers, layer_scale,
+            )
+        else:
+            # Legacy scaling: simple layer count ratio
+            layer_scale = (
+                num_layers / num_layers_traced 
+                if num_layers_traced > 0 and num_layers != num_layers_traced 
+                else 1.0
+            )
 
         if not has_param_override and layer_scale != 1.0:
             total_params = int(total_params * layer_scale)
@@ -473,7 +495,46 @@ class TrainingPipelinePass(GraphPass):
         stage_bwd: dict[int, float] = {}
         stage_bwd_dw: dict[int, float] = {}
 
-        if pp > 1 and any("stage_id" in n.annotations for n in g.nodes.values()):
+        # Strategy 3: global capture + stage composition
+        layer_profile = g.metadata.get("layer_profile", None)
+        typical_indices = g.metadata.get("typical_indices", None)
+        use_strategy3 = (
+            layer_profile is not None
+            and typical_indices is not None
+            and pp > 1
+            and layer_scale != 1.0
+        )
+        use_layer_type_scaling = (
+            layer_profile is not None
+            and typical_indices is not None
+            and layer_scale != 1.0
+        )
+
+        if use_strategy3:
+            typical_costs_fwd, typical_costs_bwd = self._extract_typical_costs_by_phase(
+                g, typical_indices, layer_profile
+            )
+            if typical_costs_fwd and typical_costs_bwd:
+                layer_assignment = self._get_layer_assignment(ctx, layer_profile.total_layers, pp)
+                stage_fwd = layer_profile.compose_stage_times(typical_costs_fwd, pp, layer_assignment)
+                stage_bwd = layer_profile.compose_stage_times(typical_costs_bwd, pp, layer_assignment)
+                for s in range(pp):
+                    stage_bwd_dw[s] = stage_fwd.get(s, 0.0)  # dw ≈ fwd (approximation)
+                logger.info(
+                    "Strategy 3 compose_stage_times: typical_costs_fwd=%s us, "
+                    "typical_costs_bwd=%s us, pp=%d, stage_fwd=[%.1f, ...] us, stage_bwd=[%.1f, ...] us",
+                    {k.value: f"{v:.1f}" for k, v in typical_costs_fwd.items()},
+                    {k.value: f"{v:.1f}" for k, v in typical_costs_bwd.items()},
+                    pp,
+                    stage_fwd.get(0, 0.0),
+                    stage_bwd.get(0, 0.0),
+                )
+                g.metadata["stage_timelines_fwd"] = dict(stage_fwd)
+                g.metadata["stage_timelines_bwd"] = dict(stage_bwd)
+                g.metadata["stage_timelines_bwd_dw"] = dict(stage_bwd_dw)
+                g.metadata["strategy3_used"] = True
+
+        if not use_strategy3 and pp > 1 and any("stage_id" in n.annotations for n in g.nodes.values()):
             # Per-stage scheduling: schedule each stage's subgraph independently
             stage_node_sets: dict[int, set[str]] = {}
             for node in g.nodes.values():
@@ -561,31 +622,52 @@ class TrainingPipelinePass(GraphPass):
             # pp=1 or no stage_id: schedule whole graph as single unit.
             # When pp > 1 without stage annotations, divide total by pp for
             # per-stage estimate (homogeneous fallback).
-            if pp > 1:
-                logger.warning(
-                    "PipelineParallelPass has not assigned stage_id annotations; "
-                    "dividing whole-graph latency by pp=%d as homogeneous fallback. "
-                    "Results will ignore real stage heterogeneity and warmup/cooldown "
-                    "structure. Run PipelineParallelPass before this pass for accurate "
-                    "per-stage scheduling.",
-                    pp,
-                )
-            tl = sched.schedule(g)
-            _fwd = tl.phase_latency("fwd")
-            _bwd = tl.phase_latency("bwd")
-            fwd = _fwd if isinstance(_fwd, (int, float)) else 0.0
-            bwd = _bwd if isinstance(_bwd, (int, float)) else 0.0
-            if fwd == 0.0 and bwd == 0.0:
-                fwd = tl.total_latency_us
-            if layer_scale != 1.0:
-                fwd *= layer_scale
-                bwd *= layer_scale
-            per_stage_fwd = fwd / pp
-            per_stage_bwd = bwd / pp
-            for s in range(pp):
-                stage_fwd[s] = per_stage_fwd
-                stage_bwd[s] = per_stage_bwd
-                stage_bwd_dw[s] = 0.0
+            # Skip this branch if Strategy 3 already computed stage times.
+            if not use_strategy3:
+                if pp > 1:
+                    logger.warning(
+                        "PipelineParallelPass has not assigned stage_id annotations; "
+                        "dividing whole-graph latency by pp=%d as homogeneous fallback. "
+                        "Results will ignore real stage heterogeneity and warmup/cooldown "
+                        "structure. Run PipelineParallelPass before this pass for accurate "
+                        "per-stage scheduling.",
+                        pp,
+                    )
+
+                if use_layer_type_scaling:
+                    fwd_scaled_ms, bwd_scaled_ms, _ = (
+                        self._scale_compute_by_layer_type(g, layer_profile, typical_indices)
+                    )
+                    fwd = fwd_scaled_ms * 1000.0  # convert to us
+                    bwd = bwd_scaled_ms * 1000.0  # convert to us
+                    logger.info(
+                        "TrainingPipelinePass: using layer-type scaling for stage_fwd/bwd: "
+                        "fwd=%.1f us, bwd=%.1f us",
+                        fwd, bwd,
+                    )
+                else:
+                    tl = sched.schedule(g)
+                    _fwd = tl.phase_latency("fwd")
+                    _bwd = tl.phase_latency("bwd")
+                    fwd = _fwd if isinstance(_fwd, (int, float)) else 0.0
+                    bwd = _bwd if isinstance(_bwd, (int, float)) else 0.0
+                    if fwd == 0.0 and bwd == 0.0:
+                        fwd = tl.total_latency_us / 2.0
+                        bwd = tl.total_latency_us / 2.0
+                    elif fwd == 0.0:
+                        fwd = tl.total_latency_us - bwd
+                    elif bwd == 0.0:
+                        bwd = tl.total_latency_us - fwd
+                    if layer_scale != 1.0:
+                        fwd *= layer_scale
+                        bwd *= layer_scale
+
+                per_stage_fwd = fwd / pp
+                per_stage_bwd = bwd / pp
+                for s in range(pp):
+                    stage_fwd[s] = per_stage_fwd
+                    stage_bwd[s] = per_stage_bwd
+                    stage_bwd_dw[s] = 0.0
 
         # ── Delegate to PipelineComposer ──────────────────────────────────
         from python.zrt.training.compose.stage import StageTime
@@ -719,34 +801,56 @@ class TrainingPipelinePass(GraphPass):
         def _is_bwd_node(node):
             return node.annotations.get("phase", "") in _BWD_PHASES
 
-        # Forward latency includes activation-save overhead added by RooflinePass.
-        # External checkpoint nodes are reported in recompute_compute_ms below,
-        # so exclude their base latency here to keep compute_time_ms from
-        # charging the same replay-eligible work twice.
-        fwd_compute_ms = sum(
-            n.annotations.get("latency_us", 0.0)
-            for n in g.nodes.values()
-            if not _is_bwd_node(n)
-            and n.category != "communication"
-            and not is_external_recompute_node(n)
-        ) / 1000.0
-        bwd_compute_ms = sum(
-            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
-            for n in g.nodes.values()
-            if _is_bwd_node(n)
-            and n.category != "communication"
-            and not is_external_recompute_node(n)
-        ) / 1000.0
-        recompute_compute_ms = sum(
-            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
-            for n in g.nodes.values()
-            if n.category != "communication"
-            and is_external_recompute_node(n)
-        ) / 1000.0
-        if layer_scale != 1.0:
-            fwd_compute_ms *= layer_scale
-            bwd_compute_ms *= layer_scale
-            recompute_compute_ms *= layer_scale
+        # Check if we can use layer-type-based scaling
+        use_layer_type_scaling = (
+            layer_profile is not None
+            and typical_indices is not None
+            and layer_scale != 1.0
+        )
+
+        if use_layer_type_scaling:
+            fwd_compute_ms, bwd_compute_ms, recompute_compute_ms = (
+                self._scale_compute_by_layer_type(g, layer_profile, typical_indices)
+            )
+        else:
+            fwd_compute_ms = sum(
+                n.annotations.get("latency_us", 0.0)
+                for n in g.nodes.values()
+                if not _is_bwd_node(n)
+                and n.category != "communication"
+                and not is_external_recompute_node(n)
+                and not n.annotations.get("optimizer_step")
+            ) / 1000.0
+            bwd_compute_ms = sum(
+                n.annotations.get("latency_us", 0.0)
+                for n in g.nodes.values()
+                if _is_bwd_node(n)
+                and n.category != "communication"
+                and not is_external_recompute_node(n)
+                and not n.annotations.get("optimizer_step")
+            ) / 1000.0
+            logger.info(
+                "TrainingPipelinePass: bwd_compute_ms (before scaling) = %.1f ms "
+                "(summed from %d backward nodes, excluding optimizer)",
+                bwd_compute_ms,
+                sum(1 for n in g.nodes.values() if _is_bwd_node(n) 
+                    and n.category != "communication" 
+                    and not n.annotations.get("optimizer_step")),
+            )
+            recompute_compute_ms = sum(
+                n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+                for n in g.nodes.values()
+                if n.category != "communication"
+                and is_external_recompute_node(n)
+            ) / 1000.0
+            if layer_scale != 1.0:
+                logger.info(
+                    "TrainingPipelinePass: applying layer_scale=%.2f to fwd_compute_ms=%.1f ms",
+                    layer_scale, fwd_compute_ms,
+                )
+                fwd_compute_ms *= layer_scale
+                bwd_compute_ms *= layer_scale
+                recompute_compute_ms *= layer_scale
         # These buckets are mutually exclusive:
         # - fwd_compute_ms excludes external checkpoint replay nodes
         # - bwd_compute_ms uses backward base latency and also excludes any
@@ -948,6 +1052,258 @@ class TrainingPipelinePass(GraphPass):
                 )
             return 0.0
         return bwd_us * dw_flops / total_bwd_flops
+
+    def _extract_typical_layer_costs(
+        self,
+        g: "OpGraph",
+        typical_indices: list[int],
+        layer_profile: Any,
+    ) -> dict[Any, float]:
+        """Extract per-layer latency for typical indices, grouped by LayerType.
+        
+        Strategy 3: extract captured typical layer latency, then compose stage times.
+        
+        Args:
+            g: OpGraph with node annotations (compute_us, latency_us)
+            typical_indices: List of typical layer indices (e.g., [0, 2])
+            layer_profile: LayerProfile with layer_types mapping
+        
+        Returns:
+            {LayerType: cost_per_layer_in_us}
+        """
+        from python.zrt.graph.layer_strategy import LayerType
+        
+        # Aggregate latency per layer index
+        layer_latency: dict[int, float] = {}
+        layer_node_count: dict[int, int] = {}
+        
+        for node in g.nodes.values():
+            if node.layer:
+                try:
+                    layer_idx = int(node.layer)
+                except (ValueError, TypeError):
+                    continue
+                
+                if layer_idx not in typical_indices:
+                    continue
+                
+                latency = node.annotations.get("compute_us") or node.annotations.get("latency_us") or 0.0
+                layer_latency[layer_idx] = layer_latency.get(layer_idx, 0.0) + latency
+                layer_node_count[layer_idx] = layer_node_count.get(layer_idx, 0) + 1
+        
+        # Map layer index → LayerType, then compute per-type cost
+        typical_costs: dict[LayerType, float] = {}
+        for idx in typical_indices:
+            if idx not in layer_latency:
+                continue
+            
+            if idx >= len(layer_profile.layer_types):
+                continue
+            
+            layer_type = layer_profile.layer_types[idx]
+            latency_sum = layer_latency[idx]
+            # cost_per_layer is total latency for this typical layer (all ops combined)
+            cost_per_layer = latency_sum
+            
+            # Only set if not already set (first typical layer of this type)
+            if layer_type not in typical_costs:
+                typical_costs[layer_type] = cost_per_layer
+        
+        logger.debug(
+            "_extract_typical_layer_costs: indices=%s, costs=%s",
+            typical_indices,
+            {k.value: f"{v:.1f}us" for k, v in typical_costs.items()},
+        )
+        
+        return typical_costs
+
+    def _extract_typical_costs_by_phase(
+        self,
+        g: "OpGraph",
+        typical_indices: list[int],
+        layer_profile: Any,
+    ) -> tuple[dict[Any, float], dict[Any, float]]:
+        """Extract fwd and bwd costs separately for typical layers.
+
+        Args:
+            g: OpGraph with node annotations (latency_us, phase)
+            typical_indices: List of typical layer indices
+            layer_profile: LayerProfile with layer_types mapping
+
+        Returns:
+            (typical_costs_fwd, typical_costs_bwd) in us, keyed by LayerType
+        """
+        from python.zrt.graph.layer_strategy import LayerType
+
+        def _is_bwd_node(node):
+            return node.annotations.get("phase", "") in _BWD_PHASES
+
+        typical_fwd: dict[LayerType, float] = {}
+        typical_bwd: dict[LayerType, float] = {}
+
+        for node in g.nodes.values():
+            layer = node.annotations.get("layer") or getattr(node, "layer", "")
+            if not layer:
+                continue
+
+            try:
+                layer_idx = int(layer)
+            except (ValueError, TypeError):
+                continue
+
+            if layer_idx not in typical_indices:
+                continue
+
+            if layer_idx >= len(layer_profile.layer_types):
+                continue
+
+            layer_type = layer_profile.layer_types[layer_idx]
+            latency = node.annotations.get("latency_us", 0.0)
+
+            if node.category == "communication":
+                continue
+            if node.annotations.get("optimizer_step"):
+                continue
+
+            if _is_bwd_node(node):
+                typical_bwd[layer_type] = typical_bwd.get(layer_type, 0.0) + latency
+            else:
+                typical_fwd[layer_type] = typical_fwd.get(layer_type, 0.0) + latency
+
+        return typical_fwd, typical_bwd
+
+    @staticmethod
+    def _scale_compute_by_layer_type(
+        g: "OpGraph",
+        layer_profile: Any,
+        typical_indices: list[int],
+    ) -> tuple[float, float, float]:
+        """Scale compute time by layer type counts.
+
+        Extracts fwd/bwd/recompute latency per typical layer (grouped by LayerType),
+        then scales by the count of each layer type to get total model compute time.
+
+        Args:
+            g: OpGraph with node annotations (latency_us, phase)
+            layer_profile: LayerProfile with layer_types and counts
+            typical_indices: List of typical layer indices
+
+        Returns:
+            (fwd_compute_ms, bwd_compute_ms, recompute_compute_ms) scaled to full model
+        """
+        from python.zrt.graph.layer_strategy import LayerType
+
+        def _is_bwd_node(node):
+            return node.annotations.get("phase", "") in _BWD_PHASES
+
+        def _is_recompute_node(node):
+            return is_external_recompute_node(node)
+
+        typical_fwd: dict[LayerType, float] = {}
+        typical_bwd: dict[LayerType, float] = {}
+        typical_recompute: dict[LayerType, float] = {}
+
+        for node in g.nodes.values():
+            layer = node.annotations.get("layer") or getattr(node, "layer", "")
+            if not layer:
+                continue
+
+            try:
+                layer_idx = int(layer)
+            except (ValueError, TypeError):
+                continue
+
+            if layer_idx not in typical_indices:
+                continue
+
+            if layer_idx >= len(layer_profile.layer_types):
+                continue
+
+            layer_type = layer_profile.layer_types[layer_idx]
+            latency = node.annotations.get("latency_us", 0.0)
+
+            if node.category == "communication":
+                continue
+            if node.annotations.get("optimizer_step"):
+                continue
+
+            if _is_recompute_node(node):
+                base_lat = node.annotations.get("base_latency_us", latency)
+                typical_recompute[layer_type] = typical_recompute.get(layer_type, 0.0) + base_lat
+            elif _is_bwd_node(node):
+                typical_bwd[layer_type] = typical_bwd.get(layer_type, 0.0) + latency
+            else:
+                typical_fwd[layer_type] = typical_fwd.get(layer_type, 0.0) + latency
+
+        layer_counts = {
+            LayerType.DENSE: layer_profile.num_dense,
+            LayerType.MOE: layer_profile.num_moe,
+            LayerType.HCA_HASH: layer_profile.num_hca_hash,
+            LayerType.HCA_TOPK: layer_profile.num_hca_topk,
+            LayerType.CSA_HASH: layer_profile.num_csa_hash,
+            LayerType.CSA_TOPK: layer_profile.num_csa_topk,
+            LayerType.SWA_HASH: layer_profile.num_swa_hash,
+            LayerType.SWA_TOPK: layer_profile.num_swa_topk,
+        }
+
+        total_fwd_us = 0.0
+        total_bwd_us = 0.0
+        total_recompute_us = 0.0
+
+        for layer_type, count in layer_counts.items():
+            if count == 0:
+                continue
+
+            fwd_cost = typical_fwd.get(layer_type, 0.0)
+            bwd_cost = typical_bwd.get(layer_type, 0.0)
+            recompute_cost = typical_recompute.get(layer_type, 0.0)
+
+            total_fwd_us += fwd_cost * count
+            total_bwd_us += bwd_cost * count
+            total_recompute_us += recompute_cost * count
+
+        logger.info(
+            "_scale_compute_by_layer_type: typical_fwd=%s us, typical_bwd=%s us, "
+            "counts=%s, total_fwd=%.1f ms, total_bwd=%.1f ms",
+            {k.value: f"{v:.1f}" for k, v in typical_fwd.items()},
+            {k.value: f"{v:.1f}" for k, v in typical_bwd.items()},
+            {k.value: v for k, v in layer_counts.items()},
+            total_fwd_us / 1000.0,
+            total_bwd_us / 1000.0,
+        )
+
+        return (
+            total_fwd_us / 1000.0,
+            total_bwd_us / 1000.0,
+            total_recompute_us / 1000.0,
+        )
+
+    @staticmethod
+    def _get_layer_assignment(
+        ctx: "TransformContext",
+        total_layers: int,
+        pp: int,
+    ) -> Optional[list[int]]:
+        """Get layer assignment from context or generate uniform distribution.
+        
+        Args:
+            ctx: TransformContext (may have pp_layer_assignment)
+            total_layers: Total number of layers
+            pp: Pipeline parallel degree
+        
+        Returns:
+            List of stage IDs (0 to pp-1) for each layer, or None for uniform
+        """
+        explicit = None
+        if ctx.training:
+            explicit = getattr(ctx.training, "pp_layer_assignment", None)
+        
+        if explicit and len(explicit) == total_layers:
+            return [max(0, min(s, pp - 1)) for s in explicit]
+        
+        # Uniform distribution
+        stage_size = total_layers // pp
+        return [min(i // stage_size, pp - 1) for i in range(total_layers)]
 
     @staticmethod
     def _compute_dp_ar_time(

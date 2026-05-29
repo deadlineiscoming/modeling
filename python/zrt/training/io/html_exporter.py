@@ -102,6 +102,38 @@ def _dw_flops(cost) -> float:
     return cost.dw_cube_flops + cost.dw_vector_flops
 
 
+def _matmul_display_dims(op) -> tuple[int, int, int]:
+    """Return the dimensions used by the matmul cost path.
+
+    Formula display must follow ``models.flops._matmul_cost`` exactly:
+    most matmuls use local tensor shapes after CP/TP sharding, while fused
+    grouped matmuls keep authoritative dimensions in metadata.
+    """
+    meta = getattr(op, "meta", {}) or {}
+    meta_k = meta.get("k", 0)
+    inputs = getattr(op, "inputs", None) or []
+    outputs = getattr(op, "outputs", None) or []
+    use_meta = (
+        meta.get("fused_weight_dims", False)
+        or not inputs
+        or not outputs
+        or (meta_k > 0 and inputs[0].shape_logical[-1] != meta_k)
+    )
+
+    if use_meta:
+        return (
+            meta.get("m", 0),
+            meta.get("n_local", meta.get("n", 0)),
+            meta.get("k_local", meta.get("k", 0)),
+        )
+
+    return (
+        inputs[0].shape_local[0],
+        outputs[0].shape_local[-1],
+        inputs[0].shape_local[-1],
+    )
+
+
 def _op_formula(op, cost):
     """Return formula strings for one op.
 
@@ -119,9 +151,7 @@ def _op_formula(op, cost):
     wf = _dw_flops(cost)
 
     if op.kind == "matmul" or op.kind == "lm_head":
-        mm = m.get("m", 0)
-        nn = m.get("n_local", m.get("n", 0))
-        kk = m.get("k_local", m.get("k", 0))
+        mm, nn, kk = _matmul_display_dims(op)
         mult = m.get("fwd_multiplier", 1.0)
         bpe = _bpe_from_op(op)
 
@@ -262,7 +292,7 @@ def _op_formula(op, cost):
             f"4×(s/m)×coff×m×d = "
             f"4×({s}//{mm_})×{co}×{mm_}×{dd} = {_fmt_e(ff)}"
         )
-        bwd_str = f"= fwd = {_fmt_e(df)}"
+        bwd_str = f"bwd = fwd = {_fmt_e(df)}"
         bytes_str = f"bytes = {_fmt_e(cost.fwd_bytes)}"
         bwd_bytes_str = f"dx_bytes = {_fmt_e(cost.dx_bytes)}"
         return fwd_str, bwd_str, bytes_str, bwd_bytes_str
@@ -279,8 +309,8 @@ def _op_formula(op, cost):
     if op.kind in ("mhc_pre", "mhc_post", "mhc_head"):
         fwd_str = f"mHC fused op fwd = {_fmt_e(ff)}"
         bwd_str = f"2.5×fwd = {_fmt_e(df + wf)}"
-        bytes_str = f"= {_fmt_e(cost.fwd_bytes)}"
-        bwd_bytes_str = f"= {_fmt_e(cost.dx_bytes + cost.dw_bytes)}"
+        bytes_str = f"fwd_bytes = {_fmt_e(cost.fwd_bytes)}"
+        bwd_bytes_str = f"dx+dw bytes = {_fmt_e(cost.dx_bytes + cost.dw_bytes)}"
         return fwd_str, bwd_str, bytes_str, bwd_bytes_str
 
     if op.kind == "hash_route":

@@ -85,7 +85,7 @@ def export_estimate_excel(
         cost = op_costs.get(op.name)
         if cost is None:
             cost = _op_cost(op, model, system)
-        operator_op_dicts.append(_op_to_dict(op, cost, system))
+        operator_op_dicts.append(_op_to_dict(op, cost, system, model))
     operator_time_rows = build_operator_time_stats(
         model=model,
         report=report,
@@ -273,7 +273,7 @@ def export_estimate_excel(
             from zrt.training.models.flops import op_cost as _op_cost
             cost = _op_cost(op, model, system)
 
-        detail = _op_detail(op, cost)
+        detail = _op_detail(op, cost, model, system)
         fwd_flops = cost.fwd_cube_flops + cost.fwd_vector_flops
         bwd_flops = cost.dx_cube_flops + cost.dx_vector_flops + cost.dw_cube_flops + cost.dw_vector_flops
         total_flops = fwd_flops + bwd_flops

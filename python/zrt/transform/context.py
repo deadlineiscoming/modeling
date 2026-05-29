@@ -282,6 +282,12 @@ class TrainingConfig:
     # Overlap DP allreduce with PP bubble window
     dp_overlap_in_bubble: bool = True
 
+    # CoC (Communication-over-Computation) for TP all_reduce
+    # When True, TP comm nodes start after 1/K of the predecessor compute
+    # (K-wave overlap), reducing exposed comm time in trace mode.
+    tp_coc: bool = False
+    tp_coc_tile_k: int = 4
+
     # Memory offloading (optional, disabled by default)
     offload: OffloadConfig | None = None
 

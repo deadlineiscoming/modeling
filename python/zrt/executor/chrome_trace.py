@@ -454,17 +454,26 @@ class ChromeTraceExporter:
             fwd_lat = tl.phase_latency("fwd")
             bwd_lat = tl.phase_latency("bwd")
 
+            # Index compute ops by node_id for CoC start-time shift
+            compute_index: dict[str, tuple[float, float]] = {}
+            for op in tl.scheduled_ops:
+                if op.stream_type != "comm":
+                    compute_index[op.node_id] = (op.start_us, op.latency_us)
+
             for m in range(stitched.M):
                 fwd_base = grid_index.get((s, m, "fwd"), 0.0)
                 for op in tl.scheduled_ops:
                     if op.phase == "fwd":
                         dur_us = max(op.latency_us, self._MIN_VISIBLE_US) if op.stream_type == "comm" else op.latency_us
+                        ts = (fwd_base + op.start_us) * self._mult
+                        if op.overlap_type == "coc" and op.overlap_target:
+                            ts = self._coc_shift_ts(op, compute_index, fwd_base, ts)
                         events.append(ChromeTraceEvent(
                             name=f"m{m}:{op.phase}:{op.op_type}" if op.phase else f"m{m}:{op.op_type}",
                             cat="compute" if op.stream_type != "comm" else "communication",
                             pid=s,
                             tid=2 + op.stream_id,
-                            ts=(fwd_base + op.start_us) * self._mult,
+                            ts=ts,
                             dur=dur_us * self._mult,
                             args={
                                 "phase": "fwd",
@@ -479,12 +488,15 @@ class ChromeTraceExporter:
                     if "bwd" in op.phase:
                         dur_us = max(op.latency_us, self._MIN_VISIBLE_US) if op.stream_type == "comm" else op.latency_us
                         relative_start = op.start_us - fwd_lat if len(op.phase) > 0 and "fwd" not in op.phase else op.start_us
+                        ts = (bwd_base + relative_start) * self._mult
+                        if op.overlap_type == "coc" and op.overlap_target:
+                            ts = self._coc_shift_ts(op, compute_index, bwd_base, ts)
                         events.append(ChromeTraceEvent(
                             name=f"m{m}:{op.phase}:{op.op_type}" if op.phase else f"m{m}:{op.op_type}",
                             cat="compute" if op.stream_type != "comm" else "communication",
                             pid=s,
                             tid=2 + op.stream_id,
-                            ts=(bwd_base + relative_start) * self._mult,
+                            ts=ts,
                             dur=dur_us * self._mult,
                             args={
                                 "phase": "bwd",
@@ -500,6 +512,35 @@ class ChromeTraceExporter:
         return doc
 
     # ── internals ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _coc_shift_ts(
+        op,
+        compute_index: dict[str, tuple[float, float]],
+        base_us: float,
+        original_ts: float,
+    ) -> float:
+        """Shift CoC comm op start time to model K-wave overlap in trace.
+
+        Extracts the target compute op id from ``overlap_target``
+        (format ``coc:<node_id>``), looks up its start and latency,
+        and shifts the comm op's ``ts`` earlier by
+        ``target_latency * (K-1) / K`` microseconds so the visual
+        block overlaps the tail of compute instead of starting after
+        it fully finishes.
+        """
+        target_key = op.overlap_target
+        if not target_key or ":" not in target_key:
+            return original_ts
+        target_id = target_key.split(":", 1)[1]
+        entry = compute_index.get(target_id)
+        if entry is None:
+            return original_ts
+        _target_start, target_lat = entry
+        if target_lat <= 0 or op.coc_tile_k <= 1:
+            return original_ts
+        shift_us = target_lat * (op.coc_tile_k - 1) / op.coc_tile_k
+        return original_ts - shift_us
 
     @staticmethod
     def _grid_cat(task) -> str:

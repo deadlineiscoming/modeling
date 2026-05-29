@@ -81,10 +81,17 @@ def _is_lm_head_op(op: dict) -> bool:
     return kind == "lm_head" or name == "lm_head" or name.endswith(".lm_head")
 
 
-def _is_embed_op(op: dict) -> bool:
-    kind = str(op.get("kind", "") or "").lower()
+def _is_mtp_embed_matmul_op(op: dict) -> bool:
+    if not _is_matmul_op(op):
+        return False
+
     name = str(op.get("name", "") or "").lower()
-    return kind == "embed" or name == "embed" or name.endswith(".embed")
+    layer_kind = str(op.get("layer_kind", "") or "").lower()
+    return (
+        "mtp_embed_proj" in name
+        or ("embed_proj" in name and "mtp" in name)
+        or ("embed_proj" in name and "mtp" in layer_kind)
+    )
 
 
 def _has_any_name_marker(op: dict, markers: tuple[str, ...]) -> bool:
@@ -269,8 +276,8 @@ def build_operator_time_stats(
     )
     _append_if_present(
         rows,
-        "Embedding lookup",
-        [op for op in op_dicts if _is_embed_op(op)],
+        "MTP embed matmul",
+        [op for op in op_dicts if _is_mtp_embed_matmul_op(op)],
         step_time_ms,
         useful_compute_ms,
         time_scale,

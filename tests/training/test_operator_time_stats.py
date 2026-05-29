@@ -57,6 +57,33 @@ def test_operator_time_stats_includes_matmul_total_plus_family_breakdown():
     assert by_label["LM head matmul"]["op_count"] == 1
 
 
+def test_operator_time_stats_reports_mtp_embed_matmul_not_global_embedding_lookup():
+    rows = build_operator_time_stats(
+        model=_base_model(layers=[LayerKind.MTP]),
+        report=TrainingReport(step_time_ms=100.0, compute_time_ms=50.0),
+        op_dicts=[
+            {"name": "embed", "kind": "embed", "layer_id": -1, "total_ms": 2.5},
+            {
+                "name": "L0.mtp_embed_proj",
+                "kind": "matmul",
+                "layer_kind": "mtp",
+                "layer_id": 0,
+                "total_ms": 7.5,
+            },
+            {"name": "lm_head", "kind": "lm_head", "layer_id": -1, "total_ms": 5.0},
+        ],
+    )
+
+    by_label = _by_label(rows)
+    assert by_label["Matmul family total"]["time_ms"] == 12.5
+    assert by_label["Matmul family total"]["op_count"] == 2
+    assert by_label["MTP embed matmul"]["time_ms"] == 7.5
+    assert by_label["MTP embed matmul"]["pct_of_step"] == 0.075
+    assert by_label["MTP embed matmul"]["pct_of_useful_compute"] == 0.15
+    assert by_label["MTP embed matmul"]["op_count"] == 1
+    assert "Embedding lookup" not in by_label
+
+
 def test_operator_time_stats_counts_compressor_and_indexer_matmuls_as_attention():
     rows = build_operator_time_stats(
         model=_base_model(),
@@ -234,8 +261,7 @@ def test_operator_time_stats_emits_dsv32_sparse_fa_indexer_and_mla_rows():
     assert by_label["MLA attention block"]["time_ms"] == 35.0
     # Global non-layer rows
     assert by_label["LM head matmul"]["time_ms"] == 6.0
-    assert by_label["Embedding lookup"]["time_ms"] == 2.5
-    assert by_label["Embedding lookup"]["op_count"] == 1
+    assert "Embedding lookup" not in by_label
     assert "FlashAttention" not in by_label
 
 

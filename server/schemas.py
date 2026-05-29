@@ -144,6 +144,10 @@ class SearchRequest(BaseModel):
         None,
         description="Write Pareto-frontier JSON to this file path.",
     )
+    output_dir: Optional[str] = Field(
+        None,
+        description="Directory for per-config detail HTML files. Defaults to output/estimate/.",
+    )
     username: Optional[str] = Field(
         None,
         description="提交者用户名（前端 localStorage 带入，用于使用统计）。",

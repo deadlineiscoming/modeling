@@ -38,10 +38,7 @@ python -m python.zrt --model-id Qwen/Qwen2.5-7B-Instruct --layers 4 --hw nvidia_
 python -m python.zrt --model-id Qwen/Qwen2.5-7B-Instruct --layers 4 --hw nvidia_h100_sxm --tp 8 --quant int8
 
 # 训练建模（3D 并行 + ZeRO + 重计算）
-python -m python.zrt --model-id deepseek-ai/DeepSeek-V3 --layers 4 --train \
-    --hw nvidia_h100_sxm --tp 8 --pp 4 --ep 2 --dp 2 \
-    --zero-stage 1 --optimizer adam --recompute-policy selective \
-    --total-params 671e9 --num-layers-full 61
+python -m python.zrt --model-id deepseek-ai/DeepSeek-V3 --layers 4 --train --hw nvidia_h100_sxm --tp 8 --pp 4 --ep 2 --dp 2 --zero-stage 1 --optimizer adam --recompute-policy selective --total-params 671e9 --num-layers-full 61
 
 # Spec-based 训练估算（无需抓图）
 python -m python.zrt --estimate-config python/zrt/training/configs/llama3_70b_3d.yaml
@@ -135,10 +132,46 @@ output_dir, transformed_graph = run_transform(
 
 将 CLI 的三种模式封装为异步 REST 服务，提交后立即返回 `job_id`，通过轮询获取结果。
 
+### 本机开发
+
 ```bash
 uvicorn server.main:app --host 0.0.0.0 --port 8000
-# 交互式 schema：http://localhost:8000/docs
+# 浏览器打开 http://localhost:8000/        → 启动页（launcher.html）
+# 浏览器打开 http://localhost:8000/docs    → Swagger 交互文档
 ```
+
+### 局域网部署（Linux 服务器）
+
+`scripts/deploy_server.sh` 一键部署：装依赖 → 注册 systemd 服务（`Restart=always`，宕了自拉）→ 自动放行 ufw / firewalld / iptables → SELinux 端口标签 → **强制重启并清理端口占用**（杀掉残留的 uvicorn，杜绝 `Address already in use`）。
+
+```bash
+# 首次：装依赖 + 部署服务
+sudo bash scripts/deploy_server.sh install
+
+# 日常迭代：仅检查环境、重写 unit、强制重启（秒级）
+sudo bash scripts/deploy_server.sh
+
+# 自定义端口（默认 8001）
+sudo bash scripts/deploy_server.sh install 8002
+sudo bash scripts/deploy_server.sh 8002
+```
+
+| 环境变量 | 作用 |
+|---------|------|
+| `FORCE=1` | 强制重装依赖（即使 stamp 没过期），仅 `install` 模式生效 |
+| `SKIP_FULL_DEPS=1` | 跳过 torch/transformers/networkx/openpyxl，仅装 fastapi+uvicorn。`/trace` 和 `/estimate` 将失效，仅保留 `/search` + `/health` |
+
+部署完成后脚本会列出**所有非 loopback 网卡的 IPv4 + 完整 URL**，从同局域网 Windows 浏览器直接访问即可（前端 `launcher.html` 自动用 `location.origin` 作为 API base，无需手改）。常用运维命令：
+
+```bash
+systemctl status zrt-sim          # 状态
+journalctl -u zrt-sim -f          # 实时日志（journald 自动轮转）
+sudo systemctl disable --now zrt-sim && sudo rm /etc/systemd/system/zrt-sim.service  # 卸载
+```
+
+云主机额外步骤：在云厂商控制台的**安全组 / 网络 ACL** 也放行同一端口（脚本只能管 Linux 本机防火墙）。
+
+### REST 接口
 
 | 接口 | 等价 CLI |
 |------|---------|
@@ -147,6 +180,7 @@ uvicorn server.main:app --host 0.0.0.0 --port 8000
 | `POST /search` | `--search-config <yaml>` |
 | `GET /jobs` / `GET /jobs/{id}` | 列表 / 轮询 |
 | `GET /hardware` / `GET /models` | 可用硬件 / 本地模型简写 |
+| `GET /health` | 健康检查 |
 
 任务状态：`pending` → `running` → `done` / `error`。结果体在 `done` 时填入 `result` 字段。详细 schema 见 `/docs`。
 

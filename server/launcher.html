@@ -489,6 +489,25 @@
     cursor: pointer; margin-left: auto; transition: color 0.1s, border-color 0.1s;
   }
   .panel-add-btn:hover { color: var(--amber); border-color: var(--amber-dim); }
+  /* ── HEADER BUTTONS + MINI MODALS (usage stats) ── */
+  .hdr-btn { font: inherit; font-size: 12px; background: var(--surface); color: var(--text-dim);
+             border: 1px solid var(--border); border-radius: var(--r); padding: 3px 9px; cursor: pointer;
+             transition: color .12s, border-color .12s; }
+  .hdr-btn:hover { color: var(--text); border-color: var(--border-hi); }
+  .mini-modal { background: var(--surface); border: 1px solid var(--border-hi); border-radius: var(--r);
+                width: 320px; max-width: 92vw; box-shadow: 0 8px 40px rgba(0,0,0,.65); padding: 16px; }
+  .mini-modal h3 { margin: 0 0 12px; font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: var(--text-dim); }
+  .mini-input { width: 100%; box-sizing: border-box; background: var(--surface-hi); color: var(--text);
+                border: 1px solid var(--border); border-radius: var(--r); padding: 6px 9px; font: inherit; font-size: 12px; }
+  .mini-input:focus { outline: none; border-color: var(--amber-dim); }
+  .mini-btn { font: inherit; font-size: 11px; padding: 5px 16px; border-radius: var(--r); margin-top: 12px;
+              background: var(--amber-dim); color: var(--amber-bright); border: 1px solid var(--amber); cursor: pointer; }
+  .mini-btn:hover { background: var(--amber); color: #0d0d0d; }
+  .stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .k { color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; font-size: 10px; }
+  .stat-row .v { color: var(--teal); font-weight: 600; font-size: 12px; }
+  .stat-row.total .v { color: var(--amber-bright); }
 </style>
 </head>
 <body>
@@ -498,6 +517,8 @@
   <div class="hdr-logo">ZRT</div>
   <div class="hdr-title">Sim Launcher <em>/ Training</em></div>
   <div class="hdr-right">
+    <button class="hdr-btn" id="stats-btn" onclick="openStats()" title="task submission stats">📊</button>
+    <button class="hdr-btn" id="user-btn" onclick="openUserModal()" title="change username">👤 <span id="user-name">—</span></button>
     <input class="api-url" id="api-url" value="" onblur="checkHealth()">
     <div class="api-dot" id="api-dot"></div>
     <span class="api-lbl" id="api-lbl">—</span>
@@ -774,6 +795,20 @@
 
 <!-- HISTORY PANEL -->
 <div class="overlay" id="overlay" onclick="toggleHist()"></div>
+<div class="crud-overlay" id="user-overlay" onclick="if(event.target===this)closeUserModal()">
+  <div class="mini-modal">
+    <h3>welcome · 请输入用户名</h3>
+    <input class="mini-input" id="user-input" placeholder="your name"
+           onkeydown="if(event.key==='Enter')saveUsername()">
+    <button class="mini-btn" onclick="saveUsername()">save</button>
+  </div>
+</div>
+<div class="crud-overlay" id="stats-overlay" onclick="if(event.target===this)closeStats()">
+  <div class="mini-modal">
+    <h3>task submissions</h3>
+    <div id="stats-body"><div class="stat-row"><span class="k">loading…</span></div></div>
+  </div>
+</div>
 <div class="hist-panel" id="hist-panel">
   <div class="hist-hdr">
     job history
@@ -1483,8 +1518,47 @@ function updateCounts() {
   document.getElementById('hist-count').textContent = jobs.length;
 }
 
+// ── Username + usage stats ──────────────────────────────────────────────────────
+const USER_KEY = 'zrt_username';
+function currentUsername() { return localStorage.getItem(USER_KEY) || 'anonymous'; }
+function renderUsername() { document.getElementById('user-name').textContent = currentUsername(); }
+
+function openUserModal() {
+  document.getElementById('user-input').value = localStorage.getItem(USER_KEY) || '';
+  document.getElementById('user-overlay').classList.add('show');
+  document.getElementById('user-input').focus();
+}
+function closeUserModal() { document.getElementById('user-overlay').classList.remove('show'); }
+function saveUsername() {
+  const name = document.getElementById('user-input').value.trim() || 'anonymous';
+  localStorage.setItem(USER_KEY, name);
+  renderUsername();
+  closeUserModal();
+}
+
+async function openStats() {
+  const body = document.getElementById('stats-body');
+  document.getElementById('stats-overlay').classList.add('show');
+  body.innerHTML = '<div class="stat-row"><span class="k">loading…</span></div>';
+  try {
+    const r = await fetch(api()+'/stats');
+    if (!r.ok) throw new Error(r.status);
+    const s = await r.json();
+    const t = s.totals || {};
+    body.innerHTML =
+      `<div class="stat-row"><span class="k">trace</span><span class="v">${t.trace||0}</span></div>` +
+      `<div class="stat-row"><span class="k">estimate</span><span class="v">${t.estimate||0}</span></div>` +
+      `<div class="stat-row"><span class="k">search</span><span class="v">${t.search||0}</span></div>` +
+      `<div class="stat-row total"><span class="k">total</span><span class="v">${s.total||0}</span></div>`;
+  } catch(e) {
+    body.innerHTML = `<div class="stat-row"><span class="k">error</span><span class="v">${e.message}</span></div>`;
+  }
+}
+function closeStats() { document.getElementById('stats-overlay').classList.remove('show'); }
+
 // ── Submit ─────────────────────────────────────────────────────────────────────
 async function post(endpoint, body, type) {
+  body = { ...body, username: currentUsername() };
   const r = await fetch(api()+endpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2042,6 +2116,9 @@ const _defaultApi = (location.protocol === 'file:')
   ? 'http://localhost:8000'
   : location.origin;
 document.getElementById('api-url').value = _defaultApi;
+
+renderUsername();
+if (!localStorage.getItem(USER_KEY)) openUserModal();
 
 loadPreset('est', 'llama3_70b');
 setEstimateRunState();

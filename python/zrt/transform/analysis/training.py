@@ -921,12 +921,15 @@ class TrainingPipelinePass(GraphPass):
                 formula_total_by_tag[node_tag] += comm_lat
                 formula_hidden_by_tag[node_tag] += formula_hidden
 
-        # Merge: per-strategy overlap = max(trace_hidden, formula_hidden)
+        # Merge: per-strategy overlap = max(trace_hidden, formula_hidden).
+        # Normalise formula totals to per-stage (trace totals are per-stage
+        # bottleneck, formula totals are whole-graph aggregate).
+        formula_div = pp if pp > 1 else 1
         for tag in ("tp", "ep", "pp", "cp"):
             trace_total = getattr(per_strat, f"{tag}_total_us", 0.0)
             trace_hidden = getattr(per_strat, f"{tag}_hidden_us", 0.0)
-            f_total = formula_total_by_tag.get(tag, 0.0)
-            f_hidden = formula_hidden_by_tag.get(tag, 0.0)
+            f_total = formula_total_by_tag.get(tag, 0.0) / formula_div
+            f_hidden = formula_hidden_by_tag.get(tag, 0.0) / formula_div
             merged_total = max(trace_total, f_total)
             merged_hidden = max(trace_hidden, f_hidden)
             setattr(per_strat, f"{tag}_total_us", merged_total)
@@ -1409,8 +1412,13 @@ def compute_exposed_comm_time(
     if overlap_type == "mc2":
         return 0.0
     elif overlap_type == "coc":
-        overlap_window = target_latency_us * (coc_tile_k - 1) / coc_tile_k
-        return max(0.0, comm_latency_us - overlap_window)
+        gemm_tile = target_latency_us / coc_tile_k if coc_tile_k > 0 else 0.0
+        comm_tile = comm_latency_us / coc_tile_k if coc_tile_k > 0 else 0.0
+        if gemm_tile >= comm_tile:
+            exposed = comm_tile
+        else:
+            exposed = comm_latency_us - target_latency_us * (coc_tile_k - 1) / coc_tile_k
+        return max(0.0, exposed)
     elif overlap_type == "ring_cp":
         fa_tile_latency = target_latency_us / cp_rounds if cp_rounds > 1 else target_latency_us
         p2p_round_latency = comm_latency_us / cp_rounds if cp_rounds > 1 else comm_latency_us

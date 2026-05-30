@@ -1,7 +1,7 @@
 """Test IR builders — dense block op count and shapes."""
 
 import pytest
-from zrt.training.ir.builders import dense_block, build_graph
+from zrt.training.ir.builders import _moe_block, dense_block, build_graph
 from zrt.training.models.flops import op_cost
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import ModelSpec, LayerKind
@@ -153,6 +153,19 @@ def test_attn_core_meta():
     assert attn.meta["kv_heads"] == 8
     assert attn.meta["head_dim"] == 128
     assert attn.meta["causal"] is True
+
+
+def test_moe_attn_core_meta_carries_kv_heads():
+    """Legacy MoE attention metadata should preserve grouped K/V head count."""
+    ops = _moe_block(
+        hidden=4096, ffn=16384, moe_ffn=4096,
+        num_experts=8, top_k=2, n_shared_experts=1,
+        seq=2048, num_heads=32, num_kv_heads=8, head_dim=128,
+        layer_id=0,
+    )
+    attn = next(op for op in ops if op.kind == "attn_core")
+
+    assert attn.meta["kv_heads"] == 8
 
 
 def test_v4_attn_meta_carries_single_kv_head():

@@ -100,6 +100,12 @@ class PPStitchedTimeline:
     transfer time, not per-step overhead — individual P2P gaps on different
     microbatch / stage edges may overlap in time)."""
 
+    _warmup_end_us: float = 0.0
+    """Absolute timestamp (µs) when warmup phase ends = last stage's first bwd start."""
+
+    _cooldown_start_us: float = 0.0
+    """Absolute timestamp (µs) when cooldown phase begins = stage 0's last bwd start."""
+
     def to_scheduled_ops(self, per_stage_timeline: Timeline | None = None) -> list[ScheduledOp]:
         """Convert grid tasks to ScheduledOp list for Chrome Trace export."""
         ops: list[ScheduledOp] = []
@@ -144,6 +150,56 @@ class PPStitchedTimeline:
                 t.end_us,
             )
         return max(per_stage.values(), default=0.0)
+
+    def phase_breakdown(self) -> dict[str, float]:
+        """Derive exact fwd/bwd microseconds per phase from grid tasks.
+
+        Uses the warmup/cooldown boundaries to classify each GridTask
+        into warmup, steady, or cooldown, then sums fwd and bwd
+        durations per phase independently.  P2P tasks are excluded
+        (they model inter-stage gaps, not compute).
+
+        This is a pure trace-based decomposition — no bottleneck
+        formula approximation.
+
+        Returns
+        -------
+        dict with keys:
+          warmup_fwd_us, warmup_bwd_us,
+          steady_fwd_us,  steady_bwd_us,
+          cooldown_fwd_us, cooldown_bwd_us
+        """
+        result = {
+            "warmup_fwd_us": 0.0, "warmup_bwd_us": 0.0,
+            "steady_fwd_us": 0.0, "steady_bwd_us": 0.0,
+            "cooldown_fwd_us": 0.0, "cooldown_bwd_us": 0.0,
+        }
+        if not self.tasks:
+            return result
+
+        we = self._warmup_end_us
+        cs = self._cooldown_start_us
+
+        for t in self.tasks:
+            if "p2p" in t.phase:
+                continue
+            dur = t.end_us - t.start_us
+            is_fwd = "fwd" in t.phase and "bwd" not in t.phase
+            is_bwd = "bwd" in t.phase
+
+            if t.end_us <= we:
+                _pfx = "warmup"
+            elif t.start_us >= cs:
+                _pfx = "cooldown"
+            else:
+                _pfx = "steady"
+
+            if is_fwd:
+                result[f"{_pfx}_fwd_us"] += dur
+            elif is_bwd:
+                result[f"{_pfx}_bwd_us"] += dur
+
+        return result
 
 
 # ── edge builders (the three edge types) ──────────────────────────────────────
@@ -722,7 +778,7 @@ class PPStitcher:
             PPScheduleKind.ZERO_BUBBLE: "zb",
         }
 
-        return PPStitchedTimeline(
+        result = PPStitchedTimeline(
             tasks=scheduled,
             pp=self._pp,
             M=self._M,
@@ -735,6 +791,9 @@ class PPStitcher:
             bubble_fraction=bubble_us / (max_end - min_start) if max_end > min_start else 0.0,
             p2p_total_gap_us=p2p_gap_us,
         )
+        result._warmup_end_us = warmup_end
+        result._cooldown_start_us = cooldown_start
+        return result
 
     def _stitch_pp1(self) -> PPStitchedTimeline:
         """Handle pp=1: single stage, no pipeline."""

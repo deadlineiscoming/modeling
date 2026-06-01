@@ -281,6 +281,14 @@ def estimate_training_from_graphs(
     warmup_ms = pipeline_metrics.warmup_ms if pipeline_metrics else 0.0
     steady_ms = pipeline_metrics.steady_ms if pipeline_metrics else 0.0
     cooldown_ms = pipeline_metrics.cooldown_ms if pipeline_metrics else 0.0
+    recompute_time_ms = pipeline_metrics.recompute_time_ms if pipeline_metrics else 0.0
+    recompute_time_raw_ms = pipeline_metrics.recompute_time_raw_ms if pipeline_metrics else 0.0
+    warmup_fwd_ms = pipeline_metrics.warmup_fwd_ms if pipeline_metrics else 0.0
+    warmup_bwd_ms = pipeline_metrics.warmup_bwd_ms if pipeline_metrics else 0.0
+    steady_fwd_ms = pipeline_metrics.steady_fwd_ms if pipeline_metrics else 0.0
+    steady_bwd_ms = pipeline_metrics.steady_bwd_ms if pipeline_metrics else 0.0
+    cooldown_fwd_ms = pipeline_metrics.cooldown_fwd_ms if pipeline_metrics else 0.0
+    cooldown_bwd_ms = pipeline_metrics.cooldown_bwd_ms if pipeline_metrics else 0.0
 
     parallel = ctx.parallel
     training = ctx.training
@@ -350,6 +358,14 @@ def estimate_training_from_graphs(
         pp_hidden_ms=per_strat_meta.get("pp_hidden_us", 0.0) / 1000.0,
         pp_total_ms=per_strat_meta.get("pp_total_us", 0.0) / 1000.0,
         optimizer_comm_hidden_ms=pipeline_metrics.optimizer_comm_hidden_ms if pipeline_metrics else 0.0,
+        recompute_time_ms=recompute_time_ms,
+        recompute_time_raw_ms=recompute_time_raw_ms,
+        warmup_fwd_ms=warmup_fwd_ms,
+        warmup_bwd_ms=warmup_bwd_ms,
+        steady_fwd_ms=steady_fwd_ms,
+        steady_bwd_ms=steady_bwd_ms,
+        cooldown_fwd_ms=cooldown_fwd_ms,
+        cooldown_bwd_ms=cooldown_bwd_ms,
     )
 
     if return_transformed:

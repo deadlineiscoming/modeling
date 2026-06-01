@@ -435,6 +435,8 @@ class PipelineStepMetrics:
     fwd_compute_ms: float = 0.0
     bwd_compute_ms: float = 0.0
     recompute_compute_ms: float = 0.0
+    recompute_time_ms: float = 0.0
+    recompute_time_raw_ms: float = 0.0
     exposed_comm_ms: float = 0.0
     hidden_comm_ms: float = 0.0
     total_comm_ms: float = 0.0
@@ -447,10 +449,14 @@ class PipelineStepMetrics:
     steady_ms: float = 0.0
     cooldown_ms: float = 0.0
     optimizer_comm_hidden_ms: float = 0.0
+    warmup_fwd_ms: float = 0.0
+    warmup_bwd_ms: float = 0.0
+    steady_fwd_ms: float = 0.0
+    steady_bwd_ms: float = 0.0
+    cooldown_fwd_ms: float = 0.0
+    cooldown_bwd_ms: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
-        # The graph metadata value is the authoritative source used by reports;
-        # this field keeps PipelineStepMetrics self-contained for JSON consumers.
         return {
             "step_time_ms": self.step_time_ms,
             "per_stage_ms": self.per_stage_ms,
@@ -465,6 +471,8 @@ class PipelineStepMetrics:
             "fwd_compute_ms": self.fwd_compute_ms,
             "bwd_compute_ms": self.bwd_compute_ms,
             "recompute_compute_ms": self.recompute_compute_ms,
+            "recompute_time_ms": self.recompute_time_ms,
+            "recompute_time_raw_ms": self.recompute_time_raw_ms,
             "exposed_comm_ms": self.exposed_comm_ms,
             "hidden_comm_ms": self.hidden_comm_ms,
             "total_comm_ms": self.total_comm_ms,
@@ -477,6 +485,12 @@ class PipelineStepMetrics:
             "steady_ms": self.steady_ms,
             "cooldown_ms": self.cooldown_ms,
             "optimizer_comm_hidden_ms": self.optimizer_comm_hidden_ms,
+            "warmup_fwd_ms": self.warmup_fwd_ms,
+            "warmup_bwd_ms": self.warmup_bwd_ms,
+            "steady_fwd_ms": self.steady_fwd_ms,
+            "steady_bwd_ms": self.steady_bwd_ms,
+            "cooldown_fwd_ms": self.cooldown_fwd_ms,
+            "cooldown_bwd_ms": self.cooldown_bwd_ms,
         }
 
 
@@ -568,6 +582,18 @@ class TrainingPipelinePass(GraphPass):
         pp_timeline = stitcher.stitch()
         g.metadata["pp_stitched_timeline"] = pp_timeline
 
+        # Trace-based phase breakdown: derive exact fwd/bwd per warmup/steady/cooldown
+        # from GridTask time windows (no bottleneck formula approximation).
+        pb = pp_timeline.phase_breakdown()
+        _us_to_s = 1.0 / 1e6
+        warmup_fwd = pb["warmup_fwd_us"] * _us_to_s
+        warmup_bwd = pb["warmup_bwd_us"] * _us_to_s
+        steady_fwd = pb["steady_fwd_us"] * _us_to_s
+        steady_bwd = pb["steady_bwd_us"] * _us_to_s
+        cooldown_fwd = pb["cooldown_fwd_us"] * _us_to_s
+        cooldown_bwd = pb["cooldown_bwd_us"] * _us_to_s
+
+        # Bottleneck per-stage times (still needed for DP-hiding calculation)
         t_fwd_max = max(stage_fwd.values()) / 1e6 if stage_fwd else 0.0
         t_bwd_max = max(stage_bwd.values()) / 1e6 if stage_bwd else 0.0
 
@@ -600,15 +626,15 @@ class TrainingPipelinePass(GraphPass):
             schedule_name=pp_timeline.schedule_name,
             warmup_steps=ws,
             cooldown_steps=ws,
-            warmup_fwd=pp_timeline.warmup_us / 1e6,
-            warmup_bwd=0.0,
-            steady_fwd=M * t_fwd_max,
-            steady_bwd=M * t_bwd_max,
-            cooldown_fwd=0.0,
-            cooldown_bwd=pp_timeline.cooldown_us / 1e6,
-            steady_fwd_per_mb=t_fwd_max,
-            steady_bwd_per_mb=t_bwd_max,
-            steady_per_mb=t_fwd_max + t_bwd_max,
+            warmup_fwd=warmup_fwd,
+            warmup_bwd=warmup_bwd,
+            steady_fwd=steady_fwd,
+            steady_bwd=steady_bwd,
+            cooldown_fwd=cooldown_fwd,
+            cooldown_bwd=cooldown_bwd,
+            steady_fwd_per_mb=steady_fwd / max(1, M) if M > 0 else 0.0,
+            steady_bwd_per_mb=steady_bwd / max(1, M) if M > 0 else 0.0,
+            steady_per_mb=(steady_fwd + steady_bwd) / max(1, M) if M > 0 else 0.0,
         )
 
     @staticmethod
@@ -1052,6 +1078,8 @@ class TrainingPipelinePass(GraphPass):
             fwd_compute_ms=fwd_compute_ms,
             bwd_compute_ms=bwd_compute_ms,
             recompute_compute_ms=recompute_compute_ms,
+            recompute_time_ms=recompute_compute_ms,
+            recompute_time_raw_ms=recompute_compute_ms,
             exposed_comm_ms=exposed_comm_ms,
             hidden_comm_ms=hidden_comm_ms,
             total_comm_ms=total_comm_ms,
@@ -1061,6 +1089,12 @@ class TrainingPipelinePass(GraphPass):
             warmup_ms=step_result.warmup * 1000.0,
             steady_ms=step_result.steady * 1000.0,
             cooldown_ms=step_result.cooldown * 1000.0,
+            warmup_fwd_ms=step_result.warmup_fwd * 1000.0,
+            warmup_bwd_ms=step_result.warmup_bwd * 1000.0,
+            steady_fwd_ms=step_result.steady_fwd * 1000.0,
+            steady_bwd_ms=step_result.steady_bwd * 1000.0,
+            cooldown_fwd_ms=step_result.cooldown_fwd * 1000.0,
+            cooldown_bwd_ms=step_result.cooldown_bwd * 1000.0,
         )
 
         g.metadata["pipeline_metrics"] = metrics

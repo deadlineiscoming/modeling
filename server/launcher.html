@@ -144,6 +144,15 @@
     letter-spacing: 0.2px; transition: background 0.1s, color 0.1s;
   }
   .src-btn.on { background: var(--surface-hi); color: var(--amber); }
+  .src-btn.srch.on { background: var(--surface-hi); color: var(--teal); }
+
+  /* search objective: result-mode toggle + filter/sort block */
+  .obj-block { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+  .obj-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .obj-sub-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-dim); margin: 8px 0 6px; }
+  .obj-pareto-note { font-size: 10px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+  .filter-row { display: grid; grid-template-columns: 1fr 58px 1fr 26px; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .filter-row .row-act.del { height: 100%; }
 
   .yaml-editor {
     background: var(--surface-hi); color: var(--text);
@@ -823,9 +832,48 @@
             <input class="path-input" id="srch-path" placeholder="python/zrt/training/configs/llama3_70b_3d.yaml">
           </div>
 
+          <!-- ── RESULT MODE / FILTER + SORT (applies to all source modes) ── -->
+          <div class="obj-block">
+            <div class="obj-mode-row">
+              <span class="form-label" style="margin:0">寻优方式</span>
+              <div class="src-toggle">
+                <button class="src-btn srch on" id="srch-mode-fs"     onclick="setSearchObjMode('filter_sort')">约束过滤 + 排序</button>
+                <button class="src-btn srch"    id="srch-mode-pareto" onclick="setSearchObjMode('pareto')">Pareto 前沿</button>
+              </div>
+            </div>
+
+            <div id="srch-fs-block">
+              <div class="obj-sub-lbl">过滤约束 — 不满足则剔除（显存上限始终生效）</div>
+              <div id="srch-filter-rows"></div>
+              <button type="button" class="preset-pill" style="margin-top:5px" onclick="addFilterRow()">+ 添加约束</button>
+
+              <div class="form-grid" style="margin-top:12px">
+                <div class="form-group">
+                  <label class="form-label">排序依据</label>
+                  <select class="form-select" id="srch-sort-by"></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">方向</label>
+                  <select class="form-select" id="srch-sort-dir">
+                    <option value="desc" selected>降序 (大→小)</option>
+                    <option value="asc">升序 (小→大)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Top N</label>
+                  <input class="form-input" id="srch-topn" type="number" value="50" min="1">
+                </div>
+              </div>
+            </div>
+
+            <div id="srch-pareto-note" class="hidden obj-pareto-note">
+              Pareto 模式：返回 step_time × memory 的二维非劣前沿，忽略上面的过滤 / 排序设置。
+            </div>
+          </div>
+
           <div class="run-row">
             <button class="run-btn srch-btn" id="btn-srch" onclick="runSearch()">▶ run search</button>
-            <span class="run-hint" id="srch-run-hint">POST /search → Pareto</span>
+            <span class="run-hint" id="srch-run-hint">POST /search</span>
           </div>
         </div>
       </div>
@@ -1063,6 +1111,12 @@ function switchTab(name) {
   const tabs = document.querySelectorAll('.tab');
   tabs[0].classList.toggle('on', name === 'estimate');
   tabs[1].classList.toggle('on', name === 'search');
+  // The hardware/model reference panels are noise on the search page — default
+  // them collapsed there (leave estimate's state untouched).
+  if (name === 'search') {
+    document.getElementById('hw-panel')?.classList.add('collapsed');
+    document.getElementById('models-panel')?.classList.add('collapsed');
+  }
 }
 
 function setSrc(tab, mode) {
@@ -1143,6 +1197,77 @@ function setSearchRunState() {
   const waiting = !formModelsReady || !formHardwareReady || !model || !hw;
   btn.disabled = waiting;
   if (hint) hint.textContent = waiting ? 'loading model / hardware' : 'POST /search → Pareto';
+}
+
+// ── Search objective: result mode, filter constraints, ranking ────────────────
+const SRCH_METRIC_OPTS = [
+  ['step_time_ms',    'step time (ms)'],
+  ['tokens_per_sec',  'tokens/s'],
+  ['mfu',             'MFU'],
+  ['hfu',             'HFU'],
+  ['bubble_fraction', 'bubble'],
+  ['memory_gb',       'memory (GB)'],
+];
+const SRCH_FILTER_OPS = ['<', '<=', '>', '>=', '==', '!='];
+let searchResultMode = 'filter_sort';
+
+function _metricOptionsHtml(selected) {
+  return SRCH_METRIC_OPTS.map(([v, l]) =>
+    `<option value="${v}"${v === selected ? ' selected' : ''}>${l}</option>`).join('');
+}
+
+function setSearchObjMode(mode) {
+  searchResultMode = mode;
+  document.getElementById('srch-mode-fs').classList.toggle('on', mode === 'filter_sort');
+  document.getElementById('srch-mode-pareto').classList.toggle('on', mode === 'pareto');
+  document.getElementById('srch-fs-block').classList.toggle('hidden', mode !== 'filter_sort');
+  document.getElementById('srch-pareto-note').classList.toggle('hidden', mode !== 'pareto');
+}
+
+function addFilterRow(metric = 'step_time_ms', op = '<', value = '') {
+  const host = document.getElementById('srch-filter-rows');
+  if (!host) return;
+  const row = document.createElement('div');
+  row.className = 'filter-row';
+  row.innerHTML = `
+    <select class="form-select" data-filter-metric>${_metricOptionsHtml(metric)}</select>
+    <select class="form-select" data-filter-op>${SRCH_FILTER_OPS.map(o => `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
+    <input class="form-input" data-filter-value type="number" step="any" placeholder="阈值" value="${value}">
+    <button type="button" class="row-act del" title="remove" onclick="this.closest('.filter-row').remove()">✕</button>`;
+  host.appendChild(row);
+}
+
+function initSearchObjective() {
+  const sortSel = document.getElementById('srch-sort-by');
+  if (sortSel) sortSel.innerHTML = _metricOptionsHtml('tokens_per_sec');
+  const rows = document.getElementById('srch-filter-rows');
+  if (rows && !rows.children.length) addFilterRow('memory_gb', '<=', '80');
+  setSearchObjMode(searchResultMode);
+}
+
+// Result-selection options sent with every /search request, regardless of the
+// config source (form / yaml / file).
+function collectSearchOptions() {
+  if (searchResultMode === 'pareto') return { search_mode: 'pareto' };
+  const filters = [];
+  document.querySelectorAll('#srch-filter-rows .filter-row').forEach(row => {
+    const raw = row.querySelector('[data-filter-value]').value.trim();
+    if (raw === '') return;            // skip incomplete constraints
+    const value = parseFloat(raw);
+    if (!Number.isFinite(value)) return;
+    filters.push({
+      metric: row.querySelector('[data-filter-metric]').value,
+      op:     row.querySelector('[data-filter-op]').value,
+      value,
+    });
+  });
+  return {
+    search_mode: 'filter_sort',
+    filters,
+    sort_by:   document.getElementById('srch-sort-by').value,
+    sort_desc: document.getElementById('srch-sort-dir').value === 'desc',
+    top_n:     parseInt(document.getElementById('srch-topn').value || '50', 10),
+  };
 }
 
 function buildSearchFormBody() {
@@ -1849,6 +1974,7 @@ async function runSearch() {
     }
     const out = document.getElementById('srch-out')?.value.trim();
     if (out) body.output = out;
+    Object.assign(body, collectSearchOptions());
     await post('/search', body, 'search');
   } catch(e) { inlineError(e.message, 'search'); }
   finally { setSearchRunState(); }
@@ -1929,6 +2055,16 @@ function renderEstimate(job) {
 }
 
 // ── Search result ──────────────────────────────────────────────────────────────
+// Title for the result table, reflecting the mode the job actually ran in.
+function searchListTitle(r, shownCount, isAll) {
+  const scope = `${isAll ? 'all' : 'top'} ${shownCount}`;
+  const tail = 'click "open" to expand detail inline; ★ pre-rendered';
+  if (r?.mode === 'pareto') return `pareto frontier (${scope} — ${tail})`;
+  const sortLabel = (SRCH_METRIC_OPTS.find(m => m[0] === r?.sort_by)?.[1]) || r?.sort_by || 'tokens/s';
+  const arrow = r?.sort_desc === false ? '↑' : '↓';
+  return `${scope} by ${sortLabel} ${arrow} — ${tail}`;
+}
+
 function _paretoRow(jobId, d, i) {
   const cs = d.config_summary || {};
   const ready = !!d.html_url;
@@ -1956,10 +2092,10 @@ function renderSearch(job) {
   document.getElementById('body-'+job.id).outerHTML = `<div id="body-${job.id}">
     <div class="mstrip">
       <div class="mc" style="--accent:var(--teal)"><div class="mc-l">Searched</div><div class="mc-v" style="color:var(--teal)">${r?.total_configs||0}</div></div>
-      <div class="mc"><div class="mc-l">Pareto</div><div class="mc-v" style="color:var(--teal)">${r?.pareto_count||0}</div></div>
+      <div class="mc"><div class="mc-l">${r?.mode==='pareto'?'Pareto':'Matched'}</div><div class="mc-v" style="color:var(--teal)">${r?.pareto_count||0}</div></div>
     </div>
     <div class="section">
-      <div class="section-title">pareto frontier (top 10 — click "open" to expand detail inline; ★ pre-rendered)</div>
+      <div class="section-title">${searchListTitle(r, Math.min(10, frontier.length), false)}</div>
       <table class="pareto-tbl">
         <thead><tr><th>#</th><th>strategy</th><th>step</th><th>MFU</th><th>bubble</th><th>tok/s</th><th>detail</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -2205,8 +2341,8 @@ function toggleSearchReport(jobId) {
   const title = body.querySelector('.section-title');
   if (title) {
     title.textContent = isExpanded
-      ? 'pareto frontier (top 10 — click "open" to expand detail inline; ★ pre-rendered)'
-      : `pareto frontier (all ${frontier.length} — click "open" to expand detail inline; ★ pre-rendered)`;
+      ? searchListTitle(job.result, Math.min(10, frontier.length), false)
+      : searchListTitle(job.result, frontier.length, true);
   }
   body.dataset.expanded = isExpanded ? '0' : '1';
   if (btn) btn.textContent = isExpanded ? `All ${frontier.length} configs ▾` : `Top 10 only ▴`;
@@ -2280,6 +2416,7 @@ if (!localStorage.getItem(USER_KEY)) openUserModal();
 loadPreset('est', 'llama3_70b');
 loadPreset('srch', 'llama3_70b');
 renderSrchChips();
+initSearchObjective();
 setEstimateRunState();
 setSearchRunState();
 checkHealth();

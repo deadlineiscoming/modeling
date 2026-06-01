@@ -129,6 +129,22 @@ class EstimateRequest(BaseModel):
     )
 
 
+class SearchFilter(BaseModel):
+    """A single constraint applied in filter_sort mode.
+
+    A config is kept only when it satisfies every filter. Metrics map to
+    `zrt.training.search.metric_filters.SEARCH_METRICS`; `memory_gb` uses the
+    OOM-relevant peak footprint.
+    """
+
+    metric: str = Field(
+        ...,
+        description="step_time_ms | tokens_per_sec | mfu | hfu | bubble_fraction | memory_gb",
+    )
+    op: str = Field(..., description="Comparison operator: < | <= | > | >= | == | !=")
+    value: float = Field(..., description="Threshold the metric is compared against.")
+
+
 class SearchRequest(BaseModel):
     """Grid-search parallel strategies for a training config.
 
@@ -181,3 +197,22 @@ class SearchRequest(BaseModel):
     )
     micro_batch: Optional[int] = Field(None, ge=1, description="Overrides YAML micro_batch.")
     global_batch: Optional[int] = Field(None, ge=1, description="Overrides YAML global_batch.")
+
+    # ── Result selection: how surviving configs are filtered & ranked ─────
+    search_mode: str = Field(
+        "filter_sort",
+        description=(
+            "'filter_sort' → apply `filters` then rank by `sort_by` (Top-`top_n`); "
+            "'pareto' → 2D step_time×memory Pareto frontier (legacy behaviour)."
+        ),
+    )
+    filters: Optional[List[SearchFilter]] = Field(
+        None,
+        description="Constraints applied in filter_sort mode (memory feasibility always applies).",
+    )
+    sort_by: str = Field(
+        "tokens_per_sec",
+        description="Ranking metric in filter_sort mode (see SearchFilter.metric).",
+    )
+    sort_desc: bool = Field(True, description="Rank descending (True) or ascending (False).")
+    top_n: int = Field(50, ge=1, description="Max configs returned in filter_sort mode.")

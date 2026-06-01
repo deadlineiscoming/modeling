@@ -27,6 +27,31 @@ class PPSched(Enum):
     DUALPIPE = "dualpipe"
     DUALPIPE_V = "dualpipev"
 
+    @classmethod
+    def _missing_(cls, value):
+        """Accept friendly aliases (UI / YAML presets) in addition to enum values.
+
+        The UI and config presets use names like ``interleaved`` / ``zero_bubble``
+        / ``dualpipe_v`` while the canonical values are ``i1f1b`` / ``zb`` /
+        ``dualpipev``. Normalize both here so every ``PPSched(<string>)`` call
+        site (search, config_loader, offline script) parses consistently.
+        """
+        if isinstance(value, str):
+            aliases = {
+                "1f1b": cls.ONE_F_ONE_B,
+                "one_f_one_b": cls.ONE_F_ONE_B,
+                "interleaved": cls.INTERLEAVED,
+                "i1f1b": cls.INTERLEAVED,
+                "vpp": cls.INTERLEAVED,
+                "zero_bubble": cls.ZERO_BUBBLE,
+                "zb": cls.ZERO_BUBBLE,
+                "dualpipe": cls.DUALPIPE,
+                "dualpipe_v": cls.DUALPIPE_V,
+                "dualpipev": cls.DUALPIPE_V,
+            }
+            return aliases.get(value.strip().lower())
+        return None
+
 
 class CPKind(Enum):
     NONE = "none"

@@ -640,7 +640,12 @@ def _do_search(req: SearchRequest, job_id: str) -> dict:
         # Pair each surviving (strategy, report) so we can render any Pareto
         # entry later. The stock grid_search() drops the originating strategy.
         all_pairs = _grid_search_with_strategies(model, system, space)
-        frontier_pairs = _pareto_frontier_with_strategies(all_pairs)
+        if req.search_mode == "pareto":
+            frontier_pairs = _pareto_frontier_with_strategies(all_pairs)
+        else:
+            frontier_pairs = _filter_sort_with_strategies(
+                all_pairs, req.filters, req.sort_by, req.sort_desc, req.top_n,
+            )
 
         _slug = Path(req.config_path).stem if req.config_path else "search"
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -687,6 +692,10 @@ def _do_search(req: SearchRequest, job_id: str) -> dict:
             "total_configs": len(all_pairs),
             "pareto_count": len(frontier_pairs),
             "pareto_frontier": pareto_data,
+            "mode": req.search_mode,
+            "sort_by": req.sort_by,
+            "sort_desc": req.sort_desc,
+            "filters": [f.model_dump() for f in (req.filters or [])],
         }
     finally:
         if tmp:
@@ -751,6 +760,33 @@ def _grid_search_with_strategies(model: Any, system: Any, space: Any) -> list[tu
             continue
     pairs.sort(key=lambda p: p[1].step_time_ms)
     return pairs
+
+
+def _filter_sort_with_strategies(
+    pairs: list[tuple[Any, Any]],
+    filters: Any,
+    sort_by: str,
+    descending: bool,
+    top_n: int,
+) -> list[tuple[Any, Any]]:
+    """Constraint-filter + single-metric ranking (filter_sort mode).
+
+    Reuses the shared predicate/sort from `search.metric_filters` so the HTTP
+    path and the offline `training_search_util` script agree on semantics.
+    Memory feasibility (`max_memory_gb`) is already applied upstream in
+    `_grid_search_with_strategies`.
+    """
+    from python.zrt.training.search.metric_filters import (
+        report_passes_filters, sort_reports_with_strategies,
+    )
+    flt = [f.model_dump() if hasattr(f, "model_dump") else dict(f) for f in (filters or [])]
+    kept = [p for p in pairs if report_passes_filters(p[1], flt)]
+    kept = sort_reports_with_strategies(
+        kept, sort_by=sort_by or "tokens_per_sec", ascending=not descending,
+    )
+    if top_n and top_n > 0:
+        kept = kept[:top_n]
+    return kept
 
 
 def _pareto_frontier_with_strategies(pairs: list[tuple[Any, Any]]) -> list[tuple[Any, Any]]:

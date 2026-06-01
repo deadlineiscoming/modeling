@@ -53,11 +53,15 @@ def estimate(
     # Pipeline step time (includes per-stage timing + memory + MFU via 6P rule)
     step_result: StepResult = pipeline_step_time(graph, model, system, strategy)
 
-    # Config summary
+    # Config summary. Include the PP schedule (+ VPP chunks when interleaved)
+    # so configs that differ only by schedule are distinguishable in tables.
+    _sched = getattr(strategy.pp_schedule, "value", str(strategy.pp_schedule))
+    if strategy.vpp_chunks and strategy.vpp_chunks > 1:
+        _sched += f" vpp{strategy.vpp_chunks}"
     config_summary = {
         "model": f"hidden={model.hidden}, layers={len(model.layers)}, heads={model.num_heads}",
         "system": f"{system.gpu.name} x {system.world_size}",
-        "strategy": f"TP={strategy.tp} CP={strategy.cp} PP={strategy.pp} EP={strategy.ep} DP={strategy.dp}",
+        "strategy": f"TP={strategy.tp} CP={strategy.cp} PP={strategy.pp} EP={strategy.ep} DP={strategy.dp} · {_sched}",
         "parallelism": f"TP*CP*PP*DP = {rank_product(strategy.tp, strategy.cp, strategy.pp, strategy.ep, strategy.dp)} (EP={strategy.ep} shares ranks)",
         "micro_batch": strategy.micro_batch,
         "global_batch": strategy.global_batch,

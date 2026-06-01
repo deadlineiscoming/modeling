@@ -25,6 +25,7 @@ from zrt.hardware.registry import load as load_hw
 from zrt.training.io.config_loader import _parse_model, _parse_system, _parse_strategy
 from zrt.training.models.memory import memory_breakdown
 from zrt.training.search.estimator import estimate
+from zrt.training.search.metric_filters import report_passes_filters
 from zrt.training.search.report import report_summary
 from zrt.training.spec.model import ModelSpec
 from zrt.training.spec.report import TrainingReport
@@ -869,7 +870,12 @@ def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
         return {"status": "error", "config": config, "type": "runtime_error"}
 
 
-def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.DataFrame:
+def format_results(
+    reports: List[TrainingReport],
+    configs: List[Dict],
+    sort_by: str = "tokens_per_sec",
+    ascending: bool = False,
+) -> pd.DataFrame:
     rows = []
     for cfg, report in zip(configs, reports):
         d = cfg.copy()
@@ -926,8 +932,8 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         rows.append(d)
 
     df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("tokens_per_sec", ascending=False)
+    if not df.empty and sort_by in df.columns:
+        df = df.sort_values(sort_by, ascending=ascending)
 
     metric_cols = ["compute_time_ms", "fwd_compute_ms", "bwd_compute_ms", "exposed_comm_ms",
                    "tp_total_ms", "tp_exposed_ms", "cp_total_ms", "cp_exposed_ms",
@@ -1451,7 +1457,18 @@ def run_training_search_parallel(
         analysis_excel_template: Optional[str] = None,
         analysis_excel_name: Optional[str] = None,
         comparison_hw_groups: Optional[List[List[str]]] = None,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: str = "tokens_per_sec",
+        sort_ascending: bool = False,
 ) -> pd.DataFrame:
+    """Grid-search parallel strategies and tabulate the results.
+
+    ``filters`` is an optional list of ``{metric, op, value}`` constraints
+    (see :mod:`zrt.training.search.metric_filters`) applied on top of the
+    memory-feasibility / ``mfu_threshold`` checks. ``sort_by`` / ``sort_ascending``
+    pick the ranking column. Defaults reproduce the historical behaviour
+    (no extra filters, ranked by tokens/s descending).
+    """
     model_name = param_grid.get("model", ["unknown"])
     if isinstance(model_name, list):
         model_name = model_name[0] if model_name else "unknown"
@@ -1539,6 +1556,8 @@ def run_training_search_parallel(
         rep = r["report"]
         hw_name = r.get("hw_name") or r["config"].get("hw", "nvidia_h100_sxm")
         cap_gb = load_hw(hw_name).memory.capacity_gb
+        if not report_passes_filters(rep, filters):
+            continue
         if rep.memory is None:
             feasible_results.append(r)
             continue
@@ -1554,7 +1573,7 @@ def run_training_search_parallel(
 
     all_reports = [r["report"] for r in feasible_results]
     all_configs = [r["config"] for r in feasible_results]
-    all_df = format_results(all_reports, all_configs)
+    all_df = format_results(all_reports, all_configs, sort_by=sort_by, ascending=sort_ascending)
 
     filtered_df = all_df[all_df["mfu"] > mfu_threshold] if mfu_threshold > 0 else all_df
     if filtered_df.empty:

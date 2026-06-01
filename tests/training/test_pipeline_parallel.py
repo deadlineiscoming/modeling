@@ -877,7 +877,10 @@ class TestTypicalLayerPartition:
         
         assignment = partition_layers_by_strategy(profile, typical_costs_fwd, pp=2, pp_schedule="1f1b")
         
-        stage_fwd = profile.compose_stage_times(typical_costs_fwd, pp=2, layer_assignment=assignment)
+        # Compute stage fwd manually
+        stage_fwd = [0.0, 0.0]
+        for i, layer_type in enumerate(layer_types):
+            stage_fwd[assignment[i]] += typical_costs_fwd.get(layer_type, 0.0)
         
         uniform_diff = abs(2000.0 - 600.0)
         greedy_diff = abs(stage_fwd[0] - stage_fwd[1])

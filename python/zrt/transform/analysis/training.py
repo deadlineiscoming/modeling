@@ -1078,11 +1078,19 @@ class TrainingPipelinePass(GraphPass):
         # Use per-GPU peak (not cluster total) so result is per-device utilization.
         # Divide by PP because training_flops includes ALL layer FLOPs (via layer_scale),
         # but each GPU only handles 1/pp of the layers.
+        # Use training module's total_training_flops() which is per-GPU (already accounts for TP/EP)
+        # See schedules.py:1176: "total_training_flops is per-GPU (the graph models TP/EP-sharded computation)"
         from python.zrt.training.compose.schedules import util_from_flops
+        
         recompute_flops = float(g.metadata.get("recompute_flops", 0))
         pp = ctx.parallel.pp if ctx.parallel else 1
+        
+        # training_flops from FlopsPass is based on post-TP/EP-sharded graph nodes
+        # (FlopsPass runs after TensorParallelPass and ExpertParallelPass)
+        # Divide only by PP because each GPU handles 1/PP of the layers
         model_flops = (training_flops - recompute_flops) / pp
         total_flops_for_hfu = training_flops / pp
+        
         mfu = util_from_flops(model_flops * M, peak_flops_per_gpu, step_time_sec)
         hfu = util_from_flops(total_flops_for_hfu * M, peak_flops_per_gpu, step_time_sec)
 

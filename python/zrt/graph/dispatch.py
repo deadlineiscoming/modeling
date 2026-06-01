@@ -115,17 +115,17 @@ class TensorTracker:
         return self._tensor_origins.get(tensor_id)
 
     def infer_module_from_inputs(self, input_ids: List[int]) -> Tuple[str, str]:
-        module_path = ""
-        layer = ""
         origin_counts: Dict[str, int] = {}
         for tid in input_ids:
             origin = self.get_origin(tid)
             if origin and origin[0]:
                 origin_counts[origin[0]] = origin_counts.get(origin[0], 0) + 1
-        if origin_counts:
-            module_path = max(origin_counts.keys(), key=lambda k: origin_counts[k])
-            layer = extract_layer_idx(module_path)
-        return module_path, layer
+        
+        if not origin_counts:
+            return "", ""
+        
+        module_path = max(origin_counts.keys(), key=lambda k: origin_counts[k])
+        return module_path, extract_layer_idx(module_path)
 
 
 class RecordingDispatch(TorchDispatchMode):

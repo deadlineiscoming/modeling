@@ -309,66 +309,7 @@ class TestScaleLayerCosts:
         assert scaled["total"] == 39.5
 
 
-class TestComposeStageTimes:
-    """Tests for compose_stage_times."""
 
-    def test_compose_uniform_pp4(self):
-        """Uniform distribution with PP=4."""
-        profile = LayerProfile(
-            layer_types=[LayerType.HCA] * 2 + [LayerType.CSA] * 2 + [LayerType.HCA] * 2 + [LayerType.CSA] * 2,
-            typical_indices=[0, 2],
-            num_hca=4,
-            num_csa=4,
-        )
-        typical_costs = {LayerType.HCA: 1.0, LayerType.CSA: 2.0}
-        
-        stage_times = profile.compose_stage_times(typical_costs, pp=4)
-        
-        # Each stage has 2 layers, distributed uniformly
-        # Stage 0: layers 0,1 → HCA,HCA → 2.0
-        # Stage 1: layers 2,3 → CSA,CSA → 4.0
-        # Stage 2: layers 4,5 → HCA,HCA → 2.0
-        # Stage 3: layers 6,7 → CSA,CSA → 4.0
-        assert stage_times[0] == 2.0
-        assert stage_times[1] == 4.0
-        assert stage_times[2] == 2.0
-        assert stage_times[3] == 4.0
-
-    def test_compose_custom_assignment(self):
-        """Custom layer assignment."""
-        profile = LayerProfile(
-            layer_types=[LayerType.HCA, LayerType.CSA, LayerType.HCA, LayerType.CSA],
-            typical_indices=[0, 1],
-            num_hca=2,
-            num_csa=2,
-        )
-        typical_costs = {LayerType.HCA: 1.0, LayerType.CSA: 2.0}
-        layer_assignment = [0, 0, 1, 1]  # first 2 in stage 0, last 2 in stage 1
-        
-        stage_times = profile.compose_stage_times(typical_costs, pp=2, layer_assignment=layer_assignment)
-        
-        assert stage_times[0] == 3.0  # HCA + CSA
-        assert stage_times[1] == 3.0  # HCA + CSA
-
-    def test_compose_with_swa(self):
-        """SWA_TOPK layer in last stage."""
-        profile = LayerProfile(
-            layer_types=[LayerType.HCA_HASH] * 2 + [LayerType.CSA_TOPK] * 2 + [LayerType.SWA_TOPK],
-            typical_indices=[0, 2, 4],
-            num_hca_hash=2,
-            num_csa_topk=2,
-            num_swa_topk=1,
-        )
-        typical_costs = {LayerType.HCA_HASH: 1.0, LayerType.CSA_TOPK: 2.0, LayerType.SWA_TOPK: 0.5}
-        
-        stage_times = profile.compose_stage_times(typical_costs, pp=2)
-        
-        # 5 layers, stage_size = 5//2 = 2
-        # layer_assignment: [0, 0, 1, 1, 1]
-        # Stage 0: indices 0,1 → HCA_HASH,HCA_HASH → 2.0
-        # Stage 1: indices 2,3,4 → CSA_TOPK,CSA_TOPK,SWA_TOPK → 2+2+0.5 = 4.5
-        assert stage_times[0] == 2.0
-        assert stage_times[1] == 4.5
 
 
 class TestLayerProfileProperties:

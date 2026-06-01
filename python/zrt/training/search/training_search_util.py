@@ -61,7 +61,7 @@ RAW_DATA_HEADERS = [
     "cp_exposed_ms", "ep_total_ms", "ep_exposed_ms", "pp_total_ms",
     "pp_exposed_ms", "pp_hidden_ms", "dp_total_ms", "dp_exposed_ms",
     "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms",
-    "recompute_time_ms", "recompute_time_raw_ms", "step_time_ms",
+    "recompute_critical_ms", "recompute_raw_mag_ms", "step_time_ms",
     "pipeline_time_ms", "mfu", "mfu_native", "hfu", "bubble_fraction",
     "bubble_time_ms", "tokens_per_sec", "weights_gb", "grads_gb",
     "opt_state_gb", "activations_gb", "comm_buffers_gb", "memory_gb",
@@ -90,7 +90,7 @@ RAW_TO_ANALYSIS = {
     "单卡吞吐": "tokens_per_sec",
     "fw_time": "fwd_compute_ms",
     "bw_time": "bwd_compute_ms",
-    "recompute_time": "recompute_time_ms",
+    "recompute_critical": "recompute_critical_ms",
     "TP通信时间(未掩盖)": "tp_total_ms",
     "EP通信时间(未掩盖)": "ep_total_ms",
     "PP通信时间(未掩盖)": "pp_total_ms",
@@ -897,8 +897,8 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         d["optimizer_compute_ms"] = round(report.optimizer_time_ms, 4)
         d["optimizer_comm_ms"] = round(report.optimizer_comm_ms + report.optimizer_comm_hidden_ms, 2)
         d["optimizer_exposed_ms"] = round(report.optimizer_comm_ms, 2)
-        d["recompute_time_ms"] = round(report.recompute_time_ms, 3)
-        d["recompute_time_raw_ms"] =  round(report.recompute_time_raw_ms, 3)
+        d["recompute_critical_ms"] = round(report.recompute_critical_ms, 3)
+        d["recompute_raw_mag_ms"] =  round(report.recompute_raw_mag_ms, 3)
         d["step_time_ms"] = round(report.step_time_ms, 3)
         d["pipeline_time_ms"] = round(report.pipeline_time_ms, 3)
         d["mfu"] = round(report.mfu, 4)
@@ -927,8 +927,8 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
                    "tp_total_ms", "tp_exposed_ms", "cp_total_ms", "cp_exposed_ms",
                    "ep_total_ms", "ep_exposed_ms", "pp_total_ms", "pp_exposed_ms",
                    "pp_hidden_ms", "dp_total_ms", "dp_exposed_ms",
-                   "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms", "recompute_time_ms",
-                   "recompute_time_raw_ms", "step_time_ms", "pipeline_time_ms",
+                   "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms", "recompute_critical_ms",
+                   "recompute_raw_mag_ms", "step_time_ms", "pipeline_time_ms",
                    "mfu", "mfu_native", "hfu", "bubble_fraction", "bubble_time_ms", "tokens_per_sec",
                    "weights_gb", "grads_gb", "opt_state_gb", "activations_gb",
                    "comm_buffers_gb", "memory_gb"]
@@ -1260,7 +1260,7 @@ def _analysis_value(
         return (
             _safe_float(row, "fwd_compute_ms")
             + _safe_float(row, "bwd_compute_ms")
-            + _safe_float(row, "recompute_time_ms")
+            + _safe_float(row, "recompute_critical_ms")
         )
     if header == "单卡吞吐归一化":
         current = _safe_float(row, "tokens_per_sec")

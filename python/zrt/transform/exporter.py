@@ -1504,13 +1504,9 @@ class TrainingGraphExcelWriter(TransformedGraphExcelWriter):
         _comm_fill = PatternFill(start_color="fff3e0", end_color="fff3e0", fill_type="solid")
 
         step_time_ms = 0.0
-        pm = graph.metadata.get("pipeline_metrics")
-        if pm:
-            if hasattr(pm, "step_time_ms"):
-                val = pm.step_time_ms
-                step_time_ms = float(val) if val else 0.0
-            elif isinstance(pm, dict):
-                step_time_ms = float(pm.get("step_time_ms", 0.0))
+        pm = graph.metadata.get("step_result")
+        if isinstance(pm, dict):
+            step_time_ms = float(pm.get("step_time_ms", 0.0))
 
         hw = getattr(ctx, 'hw_spec', None)
 

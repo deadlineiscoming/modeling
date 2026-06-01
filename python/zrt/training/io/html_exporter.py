@@ -761,8 +761,8 @@ def _build_summary(
             "compute_time_ms": getattr(report, "compute_time_ms", 0.0),
             "exposed_comm_ms": getattr(report, "exposed_comm_ms", 0.0),
             "hidden_comm_ms": getattr(report, "hidden_comm_ms", 0.0),
-            "recompute_time_ms": getattr(report, "recompute_time_ms", 0.0),
-            "recompute_time_raw_ms": getattr(report, "recompute_time_raw_ms", 0.0),
+            "recompute_critical_ms": getattr(report, "recompute_critical_ms", 0.0),
+            "recompute_raw_mag_ms": getattr(report, "recompute_raw_mag_ms", 0.0),
             "optimizer_time_ms": getattr(report, "optimizer_time_ms", 0.0),
             "optimizer_comm_ms": getattr(report, "optimizer_comm_ms", 0.0),
             "tokens_per_sec": getattr(report, "tokens_per_sec", 0.0),
@@ -773,8 +773,8 @@ def _build_summary(
             "bubble_time_ms": getattr(report, "bubble_time_ms", 0.0),
             "flops_per_token": getattr(report, "flops_per_token", 0.0),
             "total_flops": getattr(report, "total_flops", 0.0),
-            "recompute_time_ms": getattr(report, "recompute_time_ms", 0.0),
-            "recompute_time_raw_ms": getattr(report, "recompute_time_raw_ms", 0.0),
+            "recompute_critical_ms": getattr(report, "recompute_critical_ms", 0.0),
+            "recompute_raw_mag_ms": getattr(report, "recompute_raw_mag_ms", 0.0),
             "bubble_time_ms": getattr(report, "bubble_time_ms", 0.0),
         },
         "memory": memory,
@@ -1773,7 +1773,7 @@ function renderSummary() {
     <h3>step time breakdown</h3>
     <div class="card kv">
       <div>Useful Compute</div><div>${fmt.ms(p.compute_time_ms)}</div>
-      <div>Recompute (crit. path)</div><div>${fmt.ms(p.recompute_time_ms || 0)}</div>
+      <div>Recompute (crit. path)</div><div>${fmt.ms(p.recompute_critical_ms || 0)}</div>
       <div>Communication (exposed)</div><div>${fmt.ms(p.exposed_comm_ms)}</div>
       <div>Pipeline Bubble</div><div>${fmt.ms(p.bubble_time_ms)}</div>
       <div>Optimizer (compute)</div><div>${fmt.ms(p.optimizer_time_ms)}</div>

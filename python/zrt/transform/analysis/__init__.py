@@ -4,13 +4,12 @@ from .training import (
     TrainingFlopsPass,
     TrainingMemoryPass,
     TrainingPipelinePass,
-    PipelineStepMetrics,
     TrainingMemoryBreakdown,
 )
 from .modeller import estimate_training_from_graphs, TrainingReport
 __all__ = [
     "FlopsPass", "RooflinePass", "StreamAssignPass", "CommLatencyPass",
     "TrainingFlopsPass", "TrainingMemoryPass", "TrainingPipelinePass",
-    "PipelineStepMetrics", "TrainingMemoryBreakdown",
+    "TrainingMemoryBreakdown",
     "estimate_training_from_graphs", "TrainingReport",
 ]

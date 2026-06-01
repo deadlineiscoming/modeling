@@ -395,24 +395,24 @@ class TestRecomputeE2E:
 
     def test_hfu_exceeds_mfu(self, full_all):
         _, _, t = full_all
-        pm = t["unified"].metadata.get("pipeline_metrics")
+        pm = t["unified"].metadata.get("step_result")
         if pm is not None:
-            assert pm.hfu > pm.mfu, f"HFU={pm.hfu} <= MFU={pm.mfu}"
+            assert pm["hfu"] > pm["mfu"], f"HFU={pm['hfu']} <= MFU={pm['mfu']}"
 
     def test_none_mfu_equals_hfu(self, none_all):
         _, _, t = none_all
-        pm = t["unified"].metadata.get("pipeline_metrics")
+        pm = t["unified"].metadata.get("step_result")
         assert pm is not None
-        assert pm.hfu == pytest.approx(pm.mfu)
+        assert pm["hfu"] == pytest.approx(pm["mfu"])
 
     @pytest.mark.parametrize("fixture_name", ["full_all", "sel_all"])
     def test_recompute_hfu_exceeds_mfu(self, request, fixture_name):
         _, _, t = request.getfixturevalue(fixture_name)
         u = t["unified"]
-        pm = u.metadata.get("pipeline_metrics")
+        pm = u.metadata.get("step_result")
         assert pm is not None
         assert u.metadata.get("recompute_flops", 0) > 0
-        assert pm.hfu > pm.mfu
+        assert pm["hfu"] > pm["mfu"]
 
     # ── memory ────────────────────────────────────────────────────────────
 

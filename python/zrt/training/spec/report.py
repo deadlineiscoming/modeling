@@ -91,7 +91,7 @@ class TrainingReport:
     # Invariants:
     #   step_time_ms     = pipeline_time_ms + optimizer_time_ms + optimizer_comm_ms
     #   pipeline_time_ms = compute_time_ms + exposed_comm_ms + bubble_time_ms
-    #   compute_time_ms  = fwd_compute_ms + bwd_compute_ms + recompute_time_ms
+    #   compute_time_ms  = fwd_compute_ms + bwd_compute_ms + recompute_critical_ms
     #   bubble_ms        = warmup_ms + cooldown_ms   (absolute pipeline idle)
     #   exposed_comm_ms  = Σ *_exposed_ms fields
     #   hidden_comm_ms   = dp_hidden_ms + tp_hidden_ms + ep_hidden_ms + pp_hidden_ms + cp_hidden_ms
@@ -123,13 +123,8 @@ class TrainingReport:
     fwd_compute_ms: float = 0.0         # Forward compute only (excludes all comm)
     bwd_compute_ms: float = 0.0         # Backward compute (excludes comm AND recompute)
     recompute_compute_ms: float = 0.0   # Graph-native external checkpoint replay compute
-    recompute_time_ms: float = 0.0      # Activation-recompute fwd redo on critical path.
-                                        # 0 with no recompute policy; >0 full/selective.
-                                        # 0 also when recompute is on a non-bottleneck
-                                        # stage (pipeline-hidden) — see recompute_time_raw_ms.
-    recompute_time_raw_ms: float = 0.0  # Raw recompute magnitude (M × heaviest recomputed
-                                        # stage). NOT in step_time; > 0 whenever any
-                                        # recompute is enabled, even if pipeline-hidden.
+    recompute_critical_ms: float = 0.0  # Activation-recompute on critical path
+    recompute_raw_mag_ms: float = 0.0   # Raw magnitude = M × max-per-stage recompute
     exposed_comm_ms: float = 0.0        # Comm on critical path = Σ *_exposed_ms
 
     # Per-group exposed comm (Σ = exposed_comm_ms)
@@ -220,8 +215,8 @@ class TrainingReport:
             "fwd_compute_ms": self.fwd_compute_ms,
             "bwd_compute_ms": self.bwd_compute_ms,
             "recompute_compute_ms": self.recompute_compute_ms,
-            "recompute_time_ms": self.recompute_time_ms,
-            "recompute_time_raw_ms": self.recompute_time_raw_ms,
+            "recompute_critical_ms": self.recompute_critical_ms,
+            "recompute_raw_mag_ms": self.recompute_raw_mag_ms,
             "exposed_comm_ms": self.exposed_comm_ms,
             "tp_exposed_ms": self.tp_exposed_ms,
             "cp_exposed_ms": self.cp_exposed_ms,
@@ -382,20 +377,19 @@ class TrainingReport:
             lines.append(f"Pipeline: bubble {self.bubble_fraction:.1%} ({self.bubble_time_ms:.1f} ms)")
 
         # ── Recompute ──
-        if self.recompute_time_raw_ms > 0 or self.recompute_time_ms > 0:
-            pct = (self.recompute_time_ms / self.step_time_ms * 100
+        if self.recompute_raw_mag_ms > 0 or self.recompute_critical_ms > 0:
+            pct = (self.recompute_critical_ms / self.step_time_ms * 100
                    if self.step_time_ms > 0 else 0.0)
-            if self.recompute_time_ms > 0:
+            if self.recompute_critical_ms > 0:
                 lines.append(
-                    f"Recompute: {self.recompute_time_ms:.1f} ms on critical path "
+                    f"Recompute: {self.recompute_critical_ms:.1f} ms on critical path "
                     f"({pct:.1f}% of step, split out of bwd) | "
-                    f"raw {self.recompute_time_raw_ms:.1f} ms"
+                    f"raw {self.recompute_raw_mag_ms:.1f} ms"
                 )
             else:
-                # Enabled but pipeline-hidden (recomputed stage not bottleneck).
                 lines.append(
                     f"Recompute: 0 ms on critical path (pipeline-hidden) | "
-                    f"raw {self.recompute_time_raw_ms:.1f} ms — recompute runs "
+                    f"raw {self.recompute_raw_mag_ms:.1f} ms — recompute runs "
                     f"inside a non-bottleneck stage, adds 0 to step_time"
                 )
 

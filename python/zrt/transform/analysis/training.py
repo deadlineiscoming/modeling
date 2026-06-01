@@ -417,82 +417,8 @@ class TrainingMemoryPass(GraphPass):
         return saved_bytes / shard
 
 
+
 # ── TrainingPipelinePass ────────────────────────────────────────────────────────
-
-@dataclass
-class PipelineStepMetrics:
-    """Pipeline step metrics for the selected PP schedule."""
-    step_time_ms: float = 0.0
-    per_stage_ms: float = 0.0
-    warmup_steps: int = 0
-    cooldown_steps: int = 0
-    steady_steps: int = 0
-    bubble_fraction: float = 0.0
-    bubble_time_ms: float = 0.0  # Absolute pipeline bubble time in ms
-    mfu: float = 0.0  # Model FLOPs Utilization
-    hfu: float = 0.0  # Hardware FLOPs Utilization (includes recompute overhead)
-    compute_time_ms: float = 0.0
-    fwd_compute_ms: float = 0.0
-    bwd_compute_ms: float = 0.0
-    recompute_compute_ms: float = 0.0
-    recompute_time_ms: float = 0.0
-    recompute_time_raw_ms: float = 0.0
-    exposed_comm_ms: float = 0.0
-    hidden_comm_ms: float = 0.0
-    total_comm_ms: float = 0.0
-    dp_exposed_ms: float = 0.0
-    dp_hidden_ms: float = 0.0
-    optimizer_time_ms: float = 0.0
-    optimizer_comm_ms: float = 0.0
-    pipeline_time_ms: float = 0.0
-    warmup_ms: float = 0.0
-    steady_ms: float = 0.0
-    cooldown_ms: float = 0.0
-    optimizer_comm_hidden_ms: float = 0.0
-    warmup_fwd_ms: float = 0.0
-    warmup_bwd_ms: float = 0.0
-    steady_fwd_ms: float = 0.0
-    steady_bwd_ms: float = 0.0
-    cooldown_fwd_ms: float = 0.0
-    cooldown_bwd_ms: float = 0.0
-
-    def to_dict(self) -> dict[str, float]:
-        return {
-            "step_time_ms": self.step_time_ms,
-            "per_stage_ms": self.per_stage_ms,
-            "warmup_steps": self.warmup_steps,
-            "cooldown_steps": self.cooldown_steps,
-            "steady_steps": self.steady_steps,
-            "bubble_fraction": self.bubble_fraction,
-            "bubble_time_ms": self.bubble_time_ms,
-            "mfu": self.mfu,
-            "hfu": self.hfu,
-            "compute_time_ms": self.compute_time_ms,
-            "fwd_compute_ms": self.fwd_compute_ms,
-            "bwd_compute_ms": self.bwd_compute_ms,
-            "recompute_compute_ms": self.recompute_compute_ms,
-            "recompute_time_ms": self.recompute_time_ms,
-            "recompute_time_raw_ms": self.recompute_time_raw_ms,
-            "exposed_comm_ms": self.exposed_comm_ms,
-            "hidden_comm_ms": self.hidden_comm_ms,
-            "total_comm_ms": self.total_comm_ms,
-            "dp_exposed_ms": self.dp_exposed_ms,
-            "dp_hidden_ms": self.dp_hidden_ms,
-            "optimizer_time_ms": self.optimizer_time_ms,
-            "optimizer_comm_ms": self.optimizer_comm_ms,
-            "pipeline_time_ms": self.pipeline_time_ms,
-            "warmup_ms": self.warmup_ms,
-            "steady_ms": self.steady_ms,
-            "cooldown_ms": self.cooldown_ms,
-            "optimizer_comm_hidden_ms": self.optimizer_comm_hidden_ms,
-            "warmup_fwd_ms": self.warmup_fwd_ms,
-            "warmup_bwd_ms": self.warmup_bwd_ms,
-            "steady_fwd_ms": self.steady_fwd_ms,
-            "steady_bwd_ms": self.steady_bwd_ms,
-            "cooldown_fwd_ms": self.cooldown_fwd_ms,
-            "cooldown_bwd_ms": self.cooldown_bwd_ms,
-        }
-
 
 class TrainingPipelinePass(GraphPass):
     """Annotate graph with pipeline schedule metrics.
@@ -505,7 +431,7 @@ class TrainingPipelinePass(GraphPass):
     where M = num_microbatches, t_stage = per-stage latency.
 
     Adds to graph.metadata:
-      "pipeline_metrics": PipelineStepMetrics
+      "step_result": dict (StepResult.to_dict_ms output)
     """
 
     name = "training_pipeline"
@@ -560,6 +486,7 @@ class TrainingPipelinePass(GraphPass):
         g, pp, M, pp_schedule, vpp_chunks,
         stage_fwd, stage_bwd, stage_bwd_dw,
         strategy_proxy, dp_ar_time_s,
+        recompute_time_ms=0.0, recompute_raw_mag_ms=0.0,
     ):
         """Build StepResult using grid-based PPStitcher (trace mode)."""
         from python.zrt.executor.pp_stitcher import PPStitcher
@@ -635,48 +562,8 @@ class TrainingPipelinePass(GraphPass):
             steady_fwd_per_mb=steady_fwd / max(1, M) if M > 0 else 0.0,
             steady_bwd_per_mb=steady_bwd / max(1, M) if M > 0 else 0.0,
             steady_per_mb=(steady_fwd + steady_bwd) / max(1, M) if M > 0 else 0.0,
-        )
-
-    @staticmethod
-    def _build_formula_step_result(
-        pp, M, pp_schedule, vpp_chunks,
-        stage_fwd, stage_bwd,
-        strategy_proxy, dp_ar_time_s,
-    ):
-        """Build StepResult using formula-based PipelineComposer."""
-        from python.zrt.training.compose.stage import StageTime
-        from python.zrt.training.compose.schedules import (
-            OneF1BComposer, Interleaved1F1BComposer,
-            DualPipeComposer, DualPipeVComposer,
-            ZeroBubbleComposer,
-        )
-
-        _SCHED_COMPOSER = {
-            "1f1b": OneF1BComposer,
-            "interleaved": Interleaved1F1BComposer,
-            "i1f1b": Interleaved1F1BComposer,
-            "dualpipe": DualPipeComposer,
-            "dualpipev": DualPipeVComposer,
-            "zb": ZeroBubbleComposer,
-        }
-
-        stage_times: list[StageTime] = []
-        for s in range(pp):
-            st = StageTime(
-                fwd=stage_fwd.get(s, 0.0) / 1e6,
-                bwd=stage_bwd.get(s, 0.0) / 1e6,
-            )
-            stage_times.append(st)
-
-        composer_cls = _SCHED_COMPOSER.get(pp_schedule, OneF1BComposer)
-        composer = composer_cls()
-
-        return composer.compose(
-            stage_times=stage_times,
-            M=M,
-            pp=pp,
-            dp_ar_time=dp_ar_time_s,
-            strategy=strategy_proxy,
+            recompute_critical=recompute_time_ms / 1000.0,
+            recompute_raw_mag=recompute_raw_mag_ms / 1000.0,
         )
 
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
@@ -845,20 +732,37 @@ class TrainingPipelinePass(GraphPass):
         M = strategy_proxy.num_microbatches()
         dp_ar_time_s = self._compute_dp_ar_time(g, hw, ctx) / 1e6
 
-        pp_mode = ctx.training.pp_mode if ctx.training else "trace"
+        # Per-stage recompute: aggregate external_recompute node latencies
+        # by stage_id, derived before PP scheduling so step_result carries
+        # correct critical-path / raw-magnitude recompute metrics.
+        stage_recompute_us: dict[int, float] = {}
+        for n in g.nodes.values():
+            if n.category == "communication" or not is_external_recompute_node(n):
+                continue
+            sid = n.annotations.get("stage_id", 0)
+            lat = n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+            stage_recompute_us[sid] = stage_recompute_us.get(sid, 0.0) + lat
+        if layer_scale != 1.0:
+            stage_recompute_us = {s: v * layer_scale for s, v in stage_recompute_us.items()}
 
-        if pp_mode == "trace":
-            step_result = self._build_trace_step_result(
-                g, pp, M, pp_schedule, vpp_chunks,
-                stage_fwd, stage_bwd, stage_bwd_dw,
-                strategy_proxy, dp_ar_time_s,
-            )
-        else:
-            step_result = self._build_formula_step_result(
-                pp, M, pp_schedule, vpp_chunks,
-                stage_fwd, stage_bwd,
-                strategy_proxy, dp_ar_time_s,
-            )
+        max_stage_recompute_ms = (
+            max(stage_recompute_us.values()) / 1000.0 if stage_recompute_us else 0.0
+        )
+        recompute_raw_mag_ms = M * max_stage_recompute_ms
+
+        bottleneck_stage = max(
+            range(pp), key=lambda s: stage_fwd.get(s, 0) + stage_bwd.get(s, 0),
+        )
+        bottleneck_rc_ms = stage_recompute_us.get(bottleneck_stage, 0.0) / 1000.0
+        recompute_time_ms = M * bottleneck_rc_ms if bottleneck_rc_ms > 0 else 0.0
+
+        step_result = self._build_trace_step_result(
+            g, pp, M, pp_schedule, vpp_chunks,
+            stage_fwd, stage_bwd, stage_bwd_dw,
+            strategy_proxy, dp_ar_time_s,
+            recompute_time_ms=recompute_time_ms,
+            recompute_raw_mag_ms=recompute_raw_mag_ms,
+        )
 
         step_time_us = step_result.step_time * 1e6
         step_time_ms = step_result.step_time * 1000
@@ -982,20 +886,9 @@ class TrainingPipelinePass(GraphPass):
         ) * M
         hidden_us = max(0.0, total_comm_us - total_exposed_us)
 
-        # In trace mode PPStitcher already produces the correct wall-clock
-        # time — DAGScheduler multi-stream scheduling absorbed intra-stage
-        # compute↔comm overlap into stage_fwd / stage_bwd, and PPStitcher
-        # delayed_deps correctly model cross-stage P2P gaps.  The trace
-        # sweep-line hidden_us is informational (for the report) and must
-        # NOT be subtracted from step_time.
-        #
-        # In formula mode the bottleneck-based composers do not model
-        # per-stream parallelism, so formula-based hidden still needs to
-        # be subtracted.
-        if pp_mode != "trace":
-            if hidden_us > 0:
-                step_time_us -= hidden_us
-                step_time_ms = step_time_us / 1000.0
+        # In trace mode, PPStitcher already models compute↔comm overlap correctly
+        # via DAGScheduler multi-stream scheduling + P2P delayed_deps, so hidden_us
+        # is informational only and must NOT be subtracted from step_time.
 
         exposed_comm_ms = total_exposed_us / 1000.0
         hidden_comm_ms = hidden_us / 1000.0
@@ -1064,42 +957,33 @@ class TrainingPipelinePass(GraphPass):
         # - recompute_compute_ms contains external checkpoint replay nodes
         compute_time_ms = fwd_compute_ms + bwd_compute_ms + recompute_compute_ms
 
-        metrics = PipelineStepMetrics(
-            step_time_ms=step_time_ms,
-            per_stage_ms=per_stage_ms,
-            warmup_steps=warmup_steps,
-            cooldown_steps=cooldown_steps,
-            steady_steps=steady_steps,
-            bubble_fraction=step_result.bubble_fraction,
-            bubble_time_ms=(step_result.warmup + step_result.cooldown) * 1000,
-            mfu=min(mfu, 1.0),
-            hfu=min(hfu, 1.0),
-            compute_time_ms=compute_time_ms,
-            fwd_compute_ms=fwd_compute_ms,
-            bwd_compute_ms=bwd_compute_ms,
-            recompute_compute_ms=recompute_compute_ms,
-            recompute_time_ms=recompute_compute_ms,
-            recompute_time_raw_ms=recompute_compute_ms,
-            exposed_comm_ms=exposed_comm_ms,
-            hidden_comm_ms=hidden_comm_ms,
-            total_comm_ms=total_comm_ms,
-            dp_exposed_ms=step_result.dp_exposed * 1000.0,
-            dp_hidden_ms=step_result.dp_hidden * 1000.0,
-            pipeline_time_ms=step_result.pipeline_time * 1000.0,
-            warmup_ms=step_result.warmup * 1000.0,
-            steady_ms=step_result.steady * 1000.0,
-            cooldown_ms=step_result.cooldown * 1000.0,
-            warmup_fwd_ms=step_result.warmup_fwd * 1000.0,
-            warmup_bwd_ms=step_result.warmup_bwd * 1000.0,
-            steady_fwd_ms=step_result.steady_fwd * 1000.0,
-            steady_bwd_ms=step_result.steady_bwd * 1000.0,
-            cooldown_fwd_ms=step_result.cooldown_fwd * 1000.0,
-            cooldown_bwd_ms=step_result.cooldown_bwd * 1000.0,
-        )
+        # Build unified step-result dict from PPStitcher output + graph annotations.
+        # This replaces the old PipelineStepMetrics intermediate class.
+        sr = step_result.to_dict_ms()
+        sr["steady_steps"] = steady_steps
+        sr["compute_time_ms"] = compute_time_ms
+        sr["fwd_compute_ms"] = fwd_compute_ms
+        sr["bwd_compute_ms"] = bwd_compute_ms
+        sr["recompute_compute_ms"] = recompute_compute_ms
+        sr["recompute_critical_ms"] = recompute_time_ms
+        sr["recompute_raw_mag_ms"] = recompute_raw_mag_ms
+        sr["recompute_graph_diag_ms"] = recompute_compute_ms
+        sr["exposed_comm_ms"] = exposed_comm_ms
+        sr["hidden_comm_ms"] = hidden_comm_ms
+        sr["total_comm_ms"] = total_comm_ms
+        sr["per_stage_ms"] = per_stage_ms
+        sr["mfu"] = min(mfu, 1.0)
+        sr["hfu"] = min(hfu, 1.0)
 
-        g.metadata["pipeline_metrics"] = metrics
+        # Per-strategy comm from overlap analysis
+        for tag in ("tp", "cp", "ep", "pp"):
+            for suffix in ("exposed_ms", "hidden_ms", "total_ms"):
+                key = f"{tag}_{suffix}"
+                us_key = key.replace("_ms", "_us")
+                sr[key] = getattr(per_strat, us_key, 0.0) / 1000.0
+
+        g.metadata["step_result"] = sr
         g.metadata["recompute_compute_ms"] = recompute_compute_ms
-
         g.metadata["per_strategy_overlap"] = per_strat.to_dict()
 
         # Add optimizer step time (per §5.5.2 of design doc)
@@ -1139,7 +1023,7 @@ class TrainingPipelinePass(GraphPass):
             rs_hidden_us = min(rs_time_us, fwd_window_us) if rotation_active else 0.0
             rs_exposed_us = rs_time_us - rs_hidden_us
 
-            metrics.hidden_comm_ms += opt_comm_hidden_us / 1000.0
+            sr["hidden_comm_ms"] = sr.get("hidden_comm_ms", 0.0) + opt_comm_hidden_us / 1000.0
 
             if muon_ag and ag_time_us > 0:
                 muon_ag.annotations["latency_us"] = ag_time_us
@@ -1176,12 +1060,12 @@ class TrainingPipelinePass(GraphPass):
 
             g.metadata["optimizer_ag_exposed_us"] = ag_exposed_us
 
-            metrics.optimizer_comm_ms = opt_comm_exposed_us / 1000.0
-            metrics.optimizer_comm_hidden_ms = opt_comm_hidden_us / 1000.0
-            metrics.optimizer_time_ms = opt_compute_us / 1000.0
+            sr["optimizer_comm_ms"] = opt_comm_exposed_us / 1000.0
+            sr["optimizer_comm_hidden_ms"] = opt_comm_hidden_us / 1000.0
+            sr["optimizer_time_ms"] = opt_compute_us / 1000.0
 
             step_time_us += opt_compute_us + opt_comm_exposed_us
-            metrics.step_time_ms = step_time_us / 1000.0
+            sr["step_time_ms"] = step_time_us / 1000.0
 
             g.metadata["optimizer_ag_hidden_us"] = ag_hidden_us
             g.metadata["optimizer_rs_exposed_us"] = rs_exposed_us

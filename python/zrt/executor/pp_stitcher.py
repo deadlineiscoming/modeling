@@ -825,11 +825,14 @@ class PPStitcher:
             tasks.extend([fwd, bwd])
 
         step = self._M * (fwd_us + bwd_us)
-        return PPStitchedTimeline(
+        result = PPStitchedTimeline(
             tasks=tasks, pp=1, M=self._M, schedule_name="1f1b",
             step_time_us=step,
             steady_us=step,
         )
+        result._warmup_end_us = 0.0
+        result._cooldown_start_us = step
+        return result
 
     def _resolve_schedule_kind(self) -> PPScheduleKind:
         s = self._schedule.lower()

@@ -283,10 +283,10 @@ def main() -> None:
         help="Virtual pipeline chunks for interleaved/dualpipev schedules.",
     )
     parser.add_argument(
-        "--pp-mode", default="trace",
-        choices=["trace", "formula"],
-        help="PP modelling mode: trace = grid-based PPStitcher (default), "
-             "formula = classic PipelineComposer.",
+        "--tp-coc", action="store_true", default=False,
+        help="Enable CoC (Communication-over-Computation) overlap for TP "
+             "all_reduce.  Comm starts after 1/K of the predecessor compute "
+             "instead of waiting for it to finish (K=4).",
     )
 
     args = parser.parse_args()
@@ -351,6 +351,9 @@ def main() -> None:
         elif "huawei" in _vendor or "ascend" in _vendor or _device_type == "npu":
             effective_platform = "ascend_npu"
 
+    # Use infer_profile for training mode to enable efficient capture
+    infer_profile = args.train if "infer_profile" not in dir(args) else getattr(args, 'infer_profile', False)
+    
     result = _run_trace_phases(
         model_id=model_id,
         num_layers=args.layers,
@@ -363,6 +366,7 @@ def main() -> None:
         platform=effective_platform,
         graph_mode=args.graph_mode,
         gradient_checkpointing=args.gradient_checkpointing,
+        infer_profile=infer_profile,
     )
 
     if args.cp_kind != "none" or args.cp > 1:
@@ -660,6 +664,10 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         logger.warning("Could not read MoE config: %s", _exc)
 
     fusion_cfg = _resolve_fusion_config(args, model_id, phase="training")
+    
+    # Extract LayerProfile from graph metadata if available
+    layer_profile = raw_fwd.metadata.get("layer_profile", None)
+    
     report, ctx, transformed = estimate_training_from_graphs(
         forward_graph=raw_fwd,
         backward_graph=raw_bwd,
@@ -691,13 +699,14 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         mega_moe_waves=getattr(args, "mega_moe_waves", 0),
         pp_schedule=args.pp_schedule,
         vpp_chunks=args.vpp_chunks,
-        pp_mode=args.pp_mode,
+        tp_coc=args.tp_coc,
         return_transformed=True,
         quant=args.quant,
         moe_total_experts=_moe_total,
         moe_active_experts=_moe_active,
         model_id=model_id,
         fusion_config=fusion_cfg,
+        layer_profile=layer_profile,
     )
 
     try:

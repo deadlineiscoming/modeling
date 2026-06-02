@@ -112,6 +112,7 @@ def _build_standard_attn(model: ModelSpec, layer_id: int, seq: int,
                    _tensor("v", (seq, h_kv), act_dtype)],
            outputs=[_tensor("attn_out", (seq, h_attn), act_dtype)],
            meta={"b": 1, "s": seq, "heads": model.num_heads,
+                 "kv_heads": model.num_kv_heads,
                  "head_dim": model.head_dim, "causal": True},
            layer_id=layer_id, layer_kind=layer_kind, component="attention"),
 
@@ -298,6 +299,7 @@ def _build_v4_attn(model: ModelSpec, layer_id: int, seq: int,
 
     # Attention core — varies by layer type
     attn_meta = {"b": 1, "s": seq, "heads": model.num_heads,
+                 "kv_heads": model.num_kv_heads,
                  "head_dim": d, "causal": True}
 
     if cp_type == 'csa':
@@ -645,6 +647,7 @@ def dense_block(
                        _tensor("v", (seq, h_kv), act_dtype)],
                outputs=[_tensor("attn_out", (seq, h_attn), act_dtype)],
                meta={"b": 1, "s": seq, "heads": num_heads,
+                     "kv_heads": num_kv_heads,
                      "head_dim": head_dim, "causal": True},
                layer_id=layer_id, layer_kind=LayerKind.DENSE,
                component="attention"),
@@ -821,6 +824,7 @@ def _moe_block(
                        _tensor("v", (seq, h_kv), act_dtype)],
                outputs=[_tensor("attn_out", (seq, h_attn), act_dtype)],
                meta={"b": 1, "s": seq, "heads": num_heads,
+                     "kv_heads": num_kv_heads,
                      "head_dim": head_dim, "causal": True},
                layer_id=layer_id, layer_kind=LayerKind.MOE,
                component="attention"),

@@ -54,8 +54,11 @@ def estimate_training_from_graphs(
     pp_schedule: str = "1f1b",
     vpp_chunks: int = 1,
     pp_mode: str = "trace",
+    tp_coc: bool = False,
     return_transformed: bool = False,
     quant: str | None = None,
+    quant_preset: str | None = None,
+    quant_config: dict[str, str] | None = None,
     moe_total_experts: int = 0,
     moe_active_experts: int = 1,
     model_id: str = "",
@@ -67,6 +70,7 @@ def estimate_training_from_graphs(
     num_heads: int | None = None,
     kv_heads: int | None = None,
     head_dim: int | None = None,
+    layer_profile: "LayerProfile | None" = None,
 ) -> "TrainingReport | tuple[TrainingReport, TransformContext, dict[str, OpGraph]]":
     """Estimate training performance from pre-built OpGraph instances.
 
@@ -109,6 +113,25 @@ def estimate_training_from_graphs(
         metadata["total_params"] = int(total_params)
     if model_type is not None:
         metadata["model_type"] = model_type
+    
+    # Add LayerProfile info for precise scaling
+    if layer_profile is not None:
+        metadata["layer_profile"] = layer_profile
+        metadata["num_dense"] = layer_profile.num_dense
+        metadata["num_moe"] = layer_profile.num_moe
+        metadata["num_hca_hash"] = layer_profile.num_hca_hash
+        metadata["num_hca_topk"] = layer_profile.num_hca_topk
+        metadata["num_hca"] = layer_profile.num_hca
+        metadata["num_csa_hash"] = layer_profile.num_csa_hash
+        metadata["num_csa_topk"] = layer_profile.num_csa_topk
+        metadata["num_csa"] = layer_profile.num_csa
+        metadata["num_swa_hash"] = layer_profile.num_swa_hash
+        metadata["num_swa_topk"] = layer_profile.num_swa_topk
+        metadata["num_swa"] = layer_profile.num_swa
+        metadata["typical_indices"] = layer_profile.typical_indices
+        # Auto-set num_layers from LayerProfile if not provided
+        if num_layers_full is None and layer_profile.total_layers > num_layers:
+            metadata["num_layers"] = layer_profile.total_layers
 
     # Force set metadata (overwrite existing keys)
     for key, val in metadata.items():
@@ -118,6 +141,17 @@ def estimate_training_from_graphs(
             backward_graph.metadata[key] = val
 
     quant_cfg = QuantConfig(weight=quant, activation=quant) if quant else None
+
+    # Build structured quant profile from preset, config dict, or scalar quant.
+    from python.zrt.transform.context import GraphQuantProfile
+    quant_profile = None
+    if quant_preset is not None:
+        quant_profile = GraphQuantProfile.from_preset(quant_preset)
+    elif quant_config is not None:
+        quant_profile = GraphQuantProfile.from_dict(quant_config)
+    elif quant is not None:
+        quant_profile = GraphQuantProfile.from_scalar(quant)
+
     ctx = TransformContext(
         hw_spec=hw_spec,
         model_id=model_id,
@@ -135,12 +169,14 @@ def estimate_training_from_graphs(
             pp_schedule=pp_schedule,
             vpp_chunks=vpp_chunks,
             pp_mode=pp_mode,
+            tp_coc=tp_coc,
             seq_len=seq_len,
             hidden=hidden,
             cp_kind=cp_kind,
         ),
         fusion=fusion_config or FusionConfig(),
         quant=quant_cfg,
+        quant_profile=quant_profile,
     )
 
     # Attach MoE profile to ctx so ExpertParallelPass and other MoE-aware
@@ -217,9 +253,9 @@ def estimate_training_from_graphs(
                         str(trace_dir / "pp_per_stage.json"),
                         M=M,
                         pp_stitched=pp_timeline,
-                        replicate=False,
+                        replicate=True,
                     )
-                    exporter.export_combined(
+                    exporter.export_stitched_detailed(
                         pp_timeline, tl_list,
                         str(trace_dir / "pp_combined.json"),
                     )
@@ -227,48 +263,21 @@ def estimate_training_from_graphs(
 
     if "unified" in results:
         g = results["unified"]
-        pipeline_metrics = g.metadata.get("pipeline_metrics")
+        sr = g.metadata.get("step_result", {})
         memory_breakdown = g.metadata.get("memory_breakdown")
         training_flops = g.metadata.get("training_flops", 0.0)
         forward_flops = g.metadata.get("forward_flops", 0.0)
         backward_flops = g.metadata.get("backward_flops", 0.0)
         total_params = g.metadata.get("total_params", 0)
-        per_strat_meta = g.metadata.get("per_strategy_overlap", {})
     else:
         fwd = results["train_forward"]
-        pipeline_metrics = fwd.metadata.get("pipeline_metrics")
+        sr = fwd.metadata.get("step_result", {})
 
         memory_breakdown = fwd.metadata.get("memory_breakdown")
         training_flops = fwd.metadata.get("training_flops", 0.0)
         forward_flops = fwd.metadata.get("forward_flops", 0.0)
         backward_flops = fwd.metadata.get("backward_flops", 0.0)
         total_params = fwd.metadata.get("total_params", 0)
-        per_strat_meta = fwd.metadata.get("per_strategy_overlap", {})
-
-    step_time_ms = pipeline_metrics.step_time_ms if pipeline_metrics else 0.0
-    per_stage_ms = pipeline_metrics.per_stage_ms if pipeline_metrics else 0.0
-    mfu = pipeline_metrics.mfu if pipeline_metrics else 0.0
-    hfu = pipeline_metrics.hfu if pipeline_metrics else 0.0
-    warmup_steps = pipeline_metrics.warmup_steps if pipeline_metrics else 0
-    cooldown_steps = pipeline_metrics.cooldown_steps if pipeline_metrics else 0
-    steady_steps = pipeline_metrics.steady_steps if pipeline_metrics else 0
-    bubble_fraction = pipeline_metrics.bubble_fraction if pipeline_metrics else 0.0
-    bubble_time_ms = pipeline_metrics.bubble_time_ms if pipeline_metrics else 0.0
-    compute_time_ms = pipeline_metrics.compute_time_ms if pipeline_metrics else 0.0
-    fwd_compute_ms = pipeline_metrics.fwd_compute_ms if pipeline_metrics else 0.0
-    bwd_compute_ms = pipeline_metrics.bwd_compute_ms if pipeline_metrics else 0.0
-    recompute_compute_ms = pipeline_metrics.recompute_compute_ms if pipeline_metrics else 0.0
-    exposed_comm_ms = pipeline_metrics.exposed_comm_ms if pipeline_metrics else 0.0
-    hidden_comm_ms = pipeline_metrics.hidden_comm_ms if pipeline_metrics else 0.0
-    total_comm_ms = pipeline_metrics.total_comm_ms if pipeline_metrics else 0.0
-    dp_exposed_ms = pipeline_metrics.dp_exposed_ms if pipeline_metrics else 0.0
-    dp_hidden_ms = pipeline_metrics.dp_hidden_ms if pipeline_metrics else 0.0
-    optimizer_time_ms = pipeline_metrics.optimizer_time_ms if pipeline_metrics else 0.0
-    optimizer_comm_ms = pipeline_metrics.optimizer_comm_ms if pipeline_metrics else 0.0
-    pipeline_time_ms = pipeline_metrics.pipeline_time_ms if pipeline_metrics else 0.0
-    warmup_ms = pipeline_metrics.warmup_ms if pipeline_metrics else 0.0
-    steady_ms = pipeline_metrics.steady_ms if pipeline_metrics else 0.0
-    cooldown_ms = pipeline_metrics.cooldown_ms if pipeline_metrics else 0.0
 
     parallel = ctx.parallel
     training = ctx.training
@@ -288,56 +297,66 @@ def estimate_training_from_graphs(
     config_summary = "-".join(config_parts) if config_parts else "default"
 
     # ── Fused-operator summary ────────────────────────────────────────────────
-    # Walk the transformed graph(s) and aggregate by op_type so the report
-    # can show what fusion produced and how it scales.
     fused_ops_summary = _summarise_fused_ops(results)
+
+    _d = sr.get
+    _dp_exposed = _d("dp_exposed_ms", 0.0)
+    _dp_hidden = _d("dp_hidden_ms", 0.0)
 
     report = TrainingReport(
         config_summary=config_summary,
-        step_time_ms=step_time_ms,
-        per_stage_ms=per_stage_ms,
-        mfu=mfu,
-        hfu=hfu,
+        step_time_ms=_d("step_time_ms", 0.0),
+        per_stage_ms=_d("per_stage_ms", 0.0),
+        mfu=_d("mfu", 0.0),
+        hfu=_d("hfu", 0.0),
         training_flops=training_flops,
         forward_flops=forward_flops,
         backward_flops=backward_flops,
         memory_breakdown=memory_breakdown.to_dict() if memory_breakdown else {},
-        warmup_steps=warmup_steps,
-        cooldown_steps=cooldown_steps,
-        steady_steps=steady_steps,
-        dp_exposed_ms=dp_exposed_ms,
-        dp_hidden_ms=dp_hidden_ms,
-        dp_total_ms=dp_exposed_ms + dp_hidden_ms,
-        bubble_fraction=bubble_fraction,
-        bubble_time_ms=bubble_time_ms,
+        warmup_steps=_d("warmup_steps", 0),
+        cooldown_steps=_d("cooldown_steps", 0),
+        steady_steps=_d("steady_steps", 0),
+        dp_exposed_ms=_dp_exposed,
+        dp_hidden_ms=_dp_hidden,
+        dp_total_ms=_dp_exposed + _dp_hidden,
+        bubble_fraction=_d("bubble_fraction", 0.0),
+        bubble_time_ms=_d("bubble_time_ms", 0.0),
         total_params=total_params,
         fused_ops_summary=fused_ops_summary,
-        compute_time_ms=compute_time_ms,
-        fwd_compute_ms=fwd_compute_ms,
-        bwd_compute_ms=bwd_compute_ms,
-        recompute_compute_ms=recompute_compute_ms,
-        exposed_comm_ms=exposed_comm_ms,
-        hidden_comm_ms=hidden_comm_ms,
-        total_comm_volume_ms=total_comm_ms,
-        optimizer_time_ms=optimizer_time_ms,
-        optimizer_comm_ms=optimizer_comm_ms,
-        pipeline_time_ms=pipeline_time_ms,
-        warmup_ms=warmup_ms,
-        steady_ms=steady_ms,
-        cooldown_ms=cooldown_ms,
-        tp_exposed_ms=per_strat_meta.get("tp_exposed_us", 0.0) / 1000.0,
-        tp_hidden_ms=per_strat_meta.get("tp_hidden_us", 0.0) / 1000.0,
-        tp_total_ms=per_strat_meta.get("tp_total_us", 0.0) / 1000.0,
-        cp_exposed_ms=per_strat_meta.get("cp_exposed_us", 0.0) / 1000.0,
-        cp_hidden_ms=per_strat_meta.get("cp_hidden_us", 0.0) / 1000.0,
-        cp_total_ms=per_strat_meta.get("cp_total_us", 0.0) / 1000.0,
-        ep_exposed_ms=per_strat_meta.get("ep_exposed_us", 0.0) / 1000.0,
-        ep_hidden_ms=per_strat_meta.get("ep_hidden_us", 0.0) / 1000.0,
-        ep_total_ms=per_strat_meta.get("ep_total_us", 0.0) / 1000.0,
-        pp_exposed_ms=per_strat_meta.get("pp_exposed_us", 0.0) / 1000.0,
-        pp_hidden_ms=per_strat_meta.get("pp_hidden_us", 0.0) / 1000.0,
-        pp_total_ms=per_strat_meta.get("pp_total_us", 0.0) / 1000.0,
-        optimizer_comm_hidden_ms=pipeline_metrics.optimizer_comm_hidden_ms if pipeline_metrics else 0.0,
+        compute_time_ms=_d("compute_time_ms", 0.0),
+        fwd_compute_ms=_d("fwd_compute_ms", 0.0),
+        bwd_compute_ms=_d("bwd_compute_ms", 0.0),
+        recompute_compute_ms=_d("recompute_compute_ms", 0.0),
+        exposed_comm_ms=_d("exposed_comm_ms", 0.0),
+        hidden_comm_ms=_d("hidden_comm_ms", 0.0),
+        total_comm_volume_ms=_d("total_comm_ms", 0.0),
+        optimizer_time_ms=_d("optimizer_time_ms", 0.0),
+        optimizer_comm_ms=_d("optimizer_comm_ms", 0.0),
+        pipeline_time_ms=_d("pipeline_time_ms", 0.0),
+        warmup_ms=_d("warmup_ms", 0.0),
+        steady_ms=_d("steady_ms", 0.0),
+        cooldown_ms=_d("cooldown_ms", 0.0),
+        tp_exposed_ms=_d("tp_exposed_ms", 0.0),
+        tp_hidden_ms=_d("tp_hidden_ms", 0.0),
+        tp_total_ms=_d("tp_total_ms", 0.0),
+        cp_exposed_ms=_d("cp_exposed_ms", 0.0),
+        cp_hidden_ms=_d("cp_hidden_ms", 0.0),
+        cp_total_ms=_d("cp_total_ms", 0.0),
+        ep_exposed_ms=_d("ep_exposed_ms", 0.0),
+        ep_hidden_ms=_d("ep_hidden_ms", 0.0),
+        ep_total_ms=_d("ep_total_ms", 0.0),
+        pp_exposed_ms=_d("pp_exposed_ms", 0.0),
+        pp_hidden_ms=_d("pp_hidden_ms", 0.0),
+        pp_total_ms=_d("pp_total_ms", 0.0),
+        optimizer_comm_hidden_ms=_d("optimizer_comm_hidden_ms", 0.0),
+        recompute_critical_ms=_d("recompute_critical_ms", 0.0),
+        recompute_raw_mag_ms=_d("recompute_raw_mag_ms", 0.0),
+        warmup_fwd_ms=_d("warmup_fwd_ms", 0.0),
+        warmup_bwd_ms=_d("warmup_bwd_ms", 0.0),
+        steady_fwd_ms=_d("steady_fwd_ms", 0.0),
+        steady_bwd_ms=_d("steady_bwd_ms", 0.0),
+        cooldown_fwd_ms=_d("cooldown_fwd_ms", 0.0),
+        cooldown_bwd_ms=_d("cooldown_bwd_ms", 0.0),
     )
 
     if return_transformed:

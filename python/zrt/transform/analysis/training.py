@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from python.zrt.ir.param_count import count_params
+from python.zrt.ir.param_count import count_params, count_params_by_component
 from python.zrt.transform.base import GraphPass
 from python.zrt.transform.training.recompute import is_external_recompute_node
 
@@ -48,7 +48,29 @@ class TrainingFlopsPass(GraphPass):
 
         num_layers = g.metadata.get("num_layers", 0)
         num_layers_traced = g.metadata.get("num_layers_traced", num_layers)
-        layer_scale = num_layers / num_layers_traced if num_layers_traced > 0 and num_layers != num_layers_traced else 1.0
+        
+        # Check for LayerProfile-based scaling
+        layer_profile = g.metadata.get("layer_profile", None)
+        typical_indices = g.metadata.get("typical_indices", None)
+        
+        if layer_profile is not None and typical_indices is not None:
+            # LayerProfile-based scaling: use precise layer type counts
+            # This is more accurate than simple num_layers / num_layers_traced
+            # when different layer types have different computational costs
+            num_typical = len(typical_indices)
+            layer_scale = num_layers / num_typical if num_typical > 0 else 1.0
+            logger.info(
+                "Using LayerProfile scaling: typical_indices=%s, "
+                "num_layers=%d, scale=%.2f",
+                typical_indices, num_layers, layer_scale,
+            )
+        else:
+            # Legacy scaling: simple layer count ratio
+            layer_scale = (
+                num_layers / num_layers_traced 
+                if num_layers_traced > 0 and num_layers != num_layers_traced 
+                else 1.0
+            )
 
         if not has_param_override and layer_scale != 1.0:
             total_params = int(total_params * layer_scale)
@@ -171,6 +193,7 @@ class TrainingMemoryPass(GraphPass):
         # Use actual model dtype from metadata (set by FlopsPass/graph capture),
         # fallback to BF16=2 bytes when unavailable.
         param_dtype = g.metadata.get("param_dtype_bytes", 2)
+        quant_profile = getattr(ctx, 'quant_profile', None)
 
         # ── Layer scaling for partial-trace graphs ─────────────────────────────
         # When only a subset of layers is traced, count_params(g) returns the
@@ -213,6 +236,33 @@ class TrainingMemoryPass(GraphPass):
 
         weights_bytes = (total_params * param_dtype) / weight_shard
         grads_bytes = (total_params * param_dtype) / grad_shard
+
+        # ── Per-component dtype sizing when quant_profile available ──────────
+        if quant_profile is not None:
+            from zrt.training.spec.dtype import Dtype
+            comp_params = count_params_by_component(g)
+            if layer_scale != 1.0:
+                comp_params.routed_expert = int(comp_params.routed_expert * layer_scale)
+                comp_params.shared_expert = int(comp_params.shared_expert * layer_scale)
+                comp_params.other = int(comp_params.other * layer_scale)
+                # non_layer (embedding, lm_head, final_norm) captured at full size
+
+            # Weights use stored_bytes (includes FP4 MXFP block overhead for
+            # on-device storage).  Grads use raw .bytes (grads are always
+            # full-precision in memory — no block compression overhead).
+            weights_bytes = (
+                comp_params.routed_expert * quant_profile.routed_expert_weight_dtype.stored_bytes
+                + comp_params.shared_expert * quant_profile.shared_expert_weight_dtype.stored_bytes
+                + comp_params.other * quant_profile.param_dtype.stored_bytes
+                + comp_params.non_layer * quant_profile.param_dtype.stored_bytes
+            ) / weight_shard
+
+            grads_bytes = (
+                comp_params.routed_expert * quant_profile.routed_expert_grad_dtype.bytes
+                + comp_params.shared_expert * quant_profile.shared_expert_grad_dtype.bytes
+                + comp_params.other * quant_profile.grad_dtype.bytes
+                + comp_params.non_layer * quant_profile.grad_dtype.bytes
+            ) / grad_shard
 
         # ── Optimizer state memory ───────────────────────────────────────────────
         # Try to use OptimizerPass annotation first (graph-based modeling)
@@ -389,68 +439,8 @@ class TrainingMemoryPass(GraphPass):
         return saved_bytes / shard
 
 
+
 # ── TrainingPipelinePass ────────────────────────────────────────────────────────
-
-@dataclass
-class PipelineStepMetrics:
-    """Pipeline step metrics for the selected PP schedule."""
-    step_time_ms: float = 0.0
-    per_stage_ms: float = 0.0
-    warmup_steps: int = 0
-    cooldown_steps: int = 0
-    steady_steps: int = 0
-    bubble_fraction: float = 0.0
-    bubble_time_ms: float = 0.0  # Absolute pipeline bubble time in ms
-    mfu: float = 0.0  # Model FLOPs Utilization
-    hfu: float = 0.0  # Hardware FLOPs Utilization (includes recompute overhead)
-    compute_time_ms: float = 0.0
-    fwd_compute_ms: float = 0.0
-    bwd_compute_ms: float = 0.0
-    recompute_compute_ms: float = 0.0
-    exposed_comm_ms: float = 0.0
-    hidden_comm_ms: float = 0.0
-    total_comm_ms: float = 0.0
-    dp_exposed_ms: float = 0.0
-    dp_hidden_ms: float = 0.0
-    optimizer_time_ms: float = 0.0
-    optimizer_comm_ms: float = 0.0
-    pipeline_time_ms: float = 0.0
-    warmup_ms: float = 0.0
-    steady_ms: float = 0.0
-    cooldown_ms: float = 0.0
-    optimizer_comm_hidden_ms: float = 0.0
-
-    def to_dict(self) -> dict[str, float]:
-        # The graph metadata value is the authoritative source used by reports;
-        # this field keeps PipelineStepMetrics self-contained for JSON consumers.
-        return {
-            "step_time_ms": self.step_time_ms,
-            "per_stage_ms": self.per_stage_ms,
-            "warmup_steps": self.warmup_steps,
-            "cooldown_steps": self.cooldown_steps,
-            "steady_steps": self.steady_steps,
-            "bubble_fraction": self.bubble_fraction,
-            "bubble_time_ms": self.bubble_time_ms,
-            "mfu": self.mfu,
-            "hfu": self.hfu,
-            "compute_time_ms": self.compute_time_ms,
-            "fwd_compute_ms": self.fwd_compute_ms,
-            "bwd_compute_ms": self.bwd_compute_ms,
-            "recompute_compute_ms": self.recompute_compute_ms,
-            "exposed_comm_ms": self.exposed_comm_ms,
-            "hidden_comm_ms": self.hidden_comm_ms,
-            "total_comm_ms": self.total_comm_ms,
-            "dp_exposed_ms": self.dp_exposed_ms,
-            "dp_hidden_ms": self.dp_hidden_ms,
-            "optimizer_time_ms": self.optimizer_time_ms,
-            "optimizer_comm_ms": self.optimizer_comm_ms,
-            "pipeline_time_ms": self.pipeline_time_ms,
-            "warmup_ms": self.warmup_ms,
-            "steady_ms": self.steady_ms,
-            "cooldown_ms": self.cooldown_ms,
-            "optimizer_comm_hidden_ms": self.optimizer_comm_hidden_ms,
-        }
-
 
 class TrainingPipelinePass(GraphPass):
     """Annotate graph with pipeline schedule metrics.
@@ -463,7 +453,7 @@ class TrainingPipelinePass(GraphPass):
     where M = num_microbatches, t_stage = per-stage latency.
 
     Adds to graph.metadata:
-      "pipeline_metrics": PipelineStepMetrics
+      "step_result": dict (StepResult.to_dict_ms output)
     """
 
     name = "training_pipeline"
@@ -518,10 +508,13 @@ class TrainingPipelinePass(GraphPass):
         g, pp, M, pp_schedule, vpp_chunks,
         stage_fwd, stage_bwd, stage_bwd_dw,
         strategy_proxy, dp_ar_time_s,
+        recompute_time_ms=0.0, recompute_raw_mag_ms=0.0,
     ):
         """Build StepResult using grid-based PPStitcher (trace mode)."""
         from python.zrt.executor.pp_stitcher import PPStitcher
         from python.zrt.training.compose.schedules import _dp_hidden, StepResult
+
+        p2p_fwd_us, p2p_bwd_us = _extract_p2p_latency_per_edge(g)
 
         stitcher = PPStitcher(
             stage_fwd_us=stage_fwd,
@@ -529,13 +522,27 @@ class TrainingPipelinePass(GraphPass):
             stage_bwd_dw_us=stage_bwd_dw,
             pp=pp,
             M=M,
-            p2p_latency_us=_extract_p2p_latency_us(g),
+            p2p_latency_us=0.0,
+            p2p_fwd_us=p2p_fwd_us,
+            p2p_bwd_us=p2p_bwd_us,
             schedule=pp_schedule,
             vpp_chunks=vpp_chunks,
         )
         pp_timeline = stitcher.stitch()
         g.metadata["pp_stitched_timeline"] = pp_timeline
 
+        # Trace-based phase breakdown: derive exact fwd/bwd per warmup/steady/cooldown
+        # from GridTask time windows (no bottleneck formula approximation).
+        pb = pp_timeline.phase_breakdown()
+        _us_to_s = 1.0 / 1e6
+        warmup_fwd = pb["warmup_fwd_us"] * _us_to_s
+        warmup_bwd = pb["warmup_bwd_us"] * _us_to_s
+        steady_fwd = pb["steady_fwd_us"] * _us_to_s
+        steady_bwd = pb["steady_bwd_us"] * _us_to_s
+        cooldown_fwd = pb["cooldown_fwd_us"] * _us_to_s
+        cooldown_bwd = pb["cooldown_bwd_us"] * _us_to_s
+
+        # Bottleneck per-stage times (still needed for DP-hiding calculation)
         t_fwd_max = max(stage_fwd.values()) / 1e6 if stage_fwd else 0.0
         t_bwd_max = max(stage_bwd.values()) / 1e6 if stage_bwd else 0.0
 
@@ -568,57 +575,17 @@ class TrainingPipelinePass(GraphPass):
             schedule_name=pp_timeline.schedule_name,
             warmup_steps=ws,
             cooldown_steps=ws,
-            warmup_fwd=pp_timeline.warmup_us / 1e6,
-            warmup_bwd=0.0,
-            steady_fwd=M * t_fwd_max,
-            steady_bwd=M * t_bwd_max,
-            cooldown_fwd=0.0,
-            cooldown_bwd=pp_timeline.cooldown_us / 1e6,
-            steady_fwd_per_mb=t_fwd_max,
-            steady_bwd_per_mb=t_bwd_max,
-            steady_per_mb=t_fwd_max + t_bwd_max,
-        )
-
-    @staticmethod
-    def _build_formula_step_result(
-        pp, M, pp_schedule, vpp_chunks,
-        stage_fwd, stage_bwd,
-        strategy_proxy, dp_ar_time_s,
-    ):
-        """Build StepResult using formula-based PipelineComposer."""
-        from python.zrt.training.compose.stage import StageTime
-        from python.zrt.training.compose.schedules import (
-            OneF1BComposer, Interleaved1F1BComposer,
-            DualPipeComposer, DualPipeVComposer,
-            ZeroBubbleComposer,
-        )
-
-        _SCHED_COMPOSER = {
-            "1f1b": OneF1BComposer,
-            "interleaved": Interleaved1F1BComposer,
-            "i1f1b": Interleaved1F1BComposer,
-            "dualpipe": DualPipeComposer,
-            "dualpipev": DualPipeVComposer,
-            "zb": ZeroBubbleComposer,
-        }
-
-        stage_times: list[StageTime] = []
-        for s in range(pp):
-            st = StageTime(
-                fwd=stage_fwd.get(s, 0.0) / 1e6,
-                bwd=stage_bwd.get(s, 0.0) / 1e6,
-            )
-            stage_times.append(st)
-
-        composer_cls = _SCHED_COMPOSER.get(pp_schedule, OneF1BComposer)
-        composer = composer_cls()
-
-        return composer.compose(
-            stage_times=stage_times,
-            M=M,
-            pp=pp,
-            dp_ar_time=dp_ar_time_s,
-            strategy=strategy_proxy,
+            warmup_fwd=warmup_fwd,
+            warmup_bwd=warmup_bwd,
+            steady_fwd=steady_fwd,
+            steady_bwd=steady_bwd,
+            cooldown_fwd=cooldown_fwd,
+            cooldown_bwd=cooldown_bwd,
+            steady_fwd_per_mb=steady_fwd / max(1, M) if M > 0 else 0.0,
+            steady_bwd_per_mb=steady_bwd / max(1, M) if M > 0 else 0.0,
+            steady_per_mb=(steady_fwd + steady_bwd) / max(1, M) if M > 0 else 0.0,
+            recompute_critical=recompute_time_ms / 1000.0,
+            recompute_raw_mag=recompute_raw_mag_ms / 1000.0,
         )
 
     def run(self, graph: "OpGraph", ctx: "TransformContext") -> "OpGraph":
@@ -638,6 +605,15 @@ class TrainingPipelinePass(GraphPass):
         stage_bwd: dict[int, float] = {}
         stage_bwd_dw: dict[int, float] = {}
         stage_timelines: dict[int, "Timeline"] = {}  # per-stage DAGScheduler output
+
+        # Check for typical layer data for layer-type scaling
+        layer_profile = g.metadata.get("layer_profile", None)
+        typical_indices = g.metadata.get("typical_indices", None)
+        use_layer_type_scaling = (
+            layer_profile is not None
+            and typical_indices is not None
+            and layer_scale != 1.0
+        )
 
         if pp > 1 and any("stage_id" in n.annotations for n in g.nodes.values()):
             # Per-stage scheduling: schedule each stage's subgraph independently
@@ -695,21 +671,78 @@ class TrainingPipelinePass(GraphPass):
             # Step 2: homogeneous fallback when too few traced layers cover all pp stages.
             # E.g. DeepSeek-V3 with --layers 4 traces only 2 representative layers but
             # pp=4, so stages 2-3 are empty. Distribute total evenly across all stages.
+            # OR when stage_fwd distribution is severely imbalanced (ratio > 5x).
             stages_with_fwd = sum(1 for s in range(pp) if stage_fwd.get(s, 0.0) > 0)
-            if 0 < stages_with_fwd < pp:
-                total_fwd_us_h = sum(stage_fwd.values())
-                total_bwd_us_h = sum(stage_bwd.values())
-                per_fwd_h = total_fwd_us_h / pp
-                per_bwd_h = total_bwd_us_h / pp
-                logger.debug(
-                    "TrainingPipelinePass: %d/%d stages have fwd ops "
-                    "(too few traced layers for pp=%d); applying homogeneous fallback "
-                    "per_fwd=%.1fms per_bwd=%.1fms",
-                    stages_with_fwd, pp, pp, per_fwd_h / 1000, per_bwd_h / 1000,
-                )
-                for s in range(pp):
-                    stage_fwd[s] = per_fwd_h
-                    stage_bwd[s] = per_bwd_h
+            
+            # Check for severe imbalance
+            fwd_values = [stage_fwd.get(s, 0.0) for s in range(pp)]
+            max_fwd = max(fwd_values) if fwd_values else 0.0
+            min_fwd = min(v for v in fwd_values if v > 0) if any(v > 0 for v in fwd_values) else 0.0
+            fwd_imbalance_ratio = max_fwd / min_fwd if min_fwd > 0 else 0.0
+            
+            needs_fallback = (0 < stages_with_fwd < pp) or (fwd_imbalance_ratio > 5.0)
+            
+            if needs_fallback:
+                # FIX: Use per-layer latency to compute total, then uniform distribution
+                if use_layer_type_scaling:
+                    from python.zrt.graph.layer_strategy import LayerType
+                    
+                    per_layer_fwd, per_layer_bwd, _ = (
+                        self._scale_compute_by_layer_type(g, layer_profile, typical_indices)
+                    )
+                    
+                    layer_counts = {
+                        LayerType.DENSE: layer_profile.num_dense,
+                        LayerType.MOE: layer_profile.num_moe,
+                        LayerType.HCA_HASH: layer_profile.num_hca_hash,
+                        LayerType.HCA_TOPK: layer_profile.num_hca_topk,
+                        LayerType.CSA_HASH: layer_profile.num_csa_hash,
+                        LayerType.CSA_TOPK: layer_profile.num_csa_topk,
+                        LayerType.SWA_HASH: layer_profile.num_swa_hash,
+                        LayerType.SWA_TOPK: layer_profile.num_swa_topk,
+                    }
+                    
+                    total_fwd_us = sum(
+                        per_layer_fwd.get(lt, 0.0) * count
+                        for lt, count in layer_counts.items()
+                        if count > 0
+                    )
+                    total_bwd_us = sum(
+                        per_layer_bwd.get(lt, 0.0) * count
+                        for lt, count in layer_counts.items()
+                        if count > 0
+                    )
+                    
+                    per_fwd = total_fwd_us / pp
+                    per_bwd = total_bwd_us / pp
+                    
+                    logger.info(
+                        "TrainingPipelinePass: %d/%d stages have fwd ops "
+                        "(too few traced layers for pp=%d); using layer-type scaling "
+                        "with uniform distribution. "
+                        "total_fwd=%.1fms, total_bwd=%.1fms, per_stage_fwd=%.1fms, per_stage_bwd=%.1fms",
+                        stages_with_fwd, pp, pp,
+                        total_fwd_us / 1000.0, total_bwd_us / 1000.0,
+                        per_fwd / 1000.0, per_bwd / 1000.0,
+                    )
+                    
+                    for s in range(pp):
+                        stage_fwd[s] = per_fwd
+                        stage_bwd[s] = per_bwd
+                else:
+                    total_fwd_us_h = sum(stage_fwd.values())
+                    total_bwd_us_h = sum(stage_bwd.values())
+                    per_fwd_h = total_fwd_us_h / pp
+                    per_bwd_h = total_bwd_us_h / pp
+                    logger.debug(
+                        "TrainingPipelinePass: %d/%d stages have fwd ops "
+                        "(too few traced layers for pp=%d); applying homogeneous fallback "
+                        "per_fwd=%.1fms per_bwd=%.1fms",
+                        stages_with_fwd, pp, pp, per_fwd_h / 1000, per_bwd_h / 1000,
+                    )
+                    for s in range(pp):
+                        stage_fwd[s] = per_fwd_h
+                        stage_bwd[s] = per_bwd_h
 
             g.metadata["stage_timelines_fwd"] = dict(stage_fwd)
             g.metadata["stage_timelines_bwd"] = dict(stage_bwd)
@@ -738,17 +771,59 @@ class TrainingPipelinePass(GraphPass):
                     "per-stage scheduling.",
                     pp,
                 )
-            tl = sched.schedule(g)
-            stage_timelines[0] = tl
-            _fwd = tl.phase_latency("fwd")
-            _bwd = tl.phase_latency("bwd")
-            fwd = _fwd if isinstance(_fwd, (int, float)) else 0.0
-            bwd = _bwd if isinstance(_bwd, (int, float)) else 0.0
-            if fwd == 0.0 and bwd == 0.0:
-                fwd = tl.total_latency_us
-            if layer_scale != 1.0:
-                fwd *= layer_scale
-                bwd *= layer_scale
+
+            if use_layer_type_scaling:
+                from python.zrt.graph.layer_strategy import LayerType
+                
+                per_layer_fwd, per_layer_bwd, _ = (
+                    self._scale_compute_by_layer_type(g, layer_profile, typical_indices)
+                )
+                
+                layer_counts = {
+                    LayerType.DENSE: layer_profile.num_dense,
+                    LayerType.MOE: layer_profile.num_moe,
+                    LayerType.HCA_HASH: layer_profile.num_hca_hash,
+                    LayerType.HCA_TOPK: layer_profile.num_hca_topk,
+                    LayerType.CSA_HASH: layer_profile.num_csa_hash,
+                    LayerType.CSA_TOPK: layer_profile.num_csa_topk,
+                    LayerType.SWA_HASH: layer_profile.num_swa_hash,
+                    LayerType.SWA_TOPK: layer_profile.num_swa_topk,
+                }
+                
+                fwd = sum(
+                    per_layer_fwd.get(lt, 0.0) * count
+                    for lt, count in layer_counts.items()
+                    if count > 0
+                )
+                bwd = sum(
+                    per_layer_bwd.get(lt, 0.0) * count
+                    for lt, count in layer_counts.items()
+                    if count > 0
+                )
+                
+                logger.info(
+                    "TrainingPipelinePass: using layer-type scaling for stage_fwd/bwd: "
+                    "fwd=%.1f us, bwd=%.1f us",
+                    fwd, bwd,
+                )
+            else:
+                tl = sched.schedule(g)
+                stage_timelines[0] = tl
+                _fwd = tl.phase_latency("fwd")
+                _bwd = tl.phase_latency("bwd")
+                fwd = _fwd if isinstance(_fwd, (int, float)) else 0.0
+                bwd = _bwd if isinstance(_bwd, (int, float)) else 0.0
+                if fwd == 0.0 and bwd == 0.0:
+                    fwd = tl.total_latency_us / 2.0
+                    bwd = tl.total_latency_us / 2.0
+                elif fwd == 0.0:
+                    fwd = tl.total_latency_us - bwd
+                elif bwd == 0.0:
+                    bwd = tl.total_latency_us - fwd
+                if layer_scale != 1.0:
+                    fwd *= layer_scale
+                    bwd *= layer_scale
+
             per_stage_fwd = fwd / pp
             per_stage_bwd = bwd / pp
             for s in range(pp):
@@ -787,20 +862,37 @@ class TrainingPipelinePass(GraphPass):
         M = strategy_proxy.num_microbatches()
         dp_ar_time_s = self._compute_dp_ar_time(g, hw, ctx) / 1e6
 
-        pp_mode = ctx.training.pp_mode if ctx.training else "trace"
+        # Per-stage recompute: aggregate external_recompute node latencies
+        # by stage_id, derived before PP scheduling so step_result carries
+        # correct critical-path / raw-magnitude recompute metrics.
+        stage_recompute_us: dict[int, float] = {}
+        for n in g.nodes.values():
+            if n.category == "communication" or not is_external_recompute_node(n):
+                continue
+            sid = n.annotations.get("stage_id", 0)
+            lat = n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+            stage_recompute_us[sid] = stage_recompute_us.get(sid, 0.0) + lat
+        if layer_scale != 1.0:
+            stage_recompute_us = {s: v * layer_scale for s, v in stage_recompute_us.items()}
 
-        if pp_mode == "trace":
-            step_result = self._build_trace_step_result(
-                g, pp, M, pp_schedule, vpp_chunks,
-                stage_fwd, stage_bwd, stage_bwd_dw,
-                strategy_proxy, dp_ar_time_s,
-            )
-        else:
-            step_result = self._build_formula_step_result(
-                pp, M, pp_schedule, vpp_chunks,
-                stage_fwd, stage_bwd,
-                strategy_proxy, dp_ar_time_s,
-            )
+        max_stage_recompute_ms = (
+            max(stage_recompute_us.values()) / 1000.0 if stage_recompute_us else 0.0
+        )
+        recompute_raw_mag_ms = M * max_stage_recompute_ms
+
+        bottleneck_stage = max(
+            range(pp), key=lambda s: stage_fwd.get(s, 0) + stage_bwd.get(s, 0),
+        )
+        bottleneck_rc_ms = stage_recompute_us.get(bottleneck_stage, 0.0) / 1000.0
+        recompute_time_ms = M * bottleneck_rc_ms if bottleneck_rc_ms > 0 else 0.0
+
+        step_result = self._build_trace_step_result(
+            g, pp, M, pp_schedule, vpp_chunks,
+            stage_fwd, stage_bwd, stage_bwd_dw,
+            strategy_proxy, dp_ar_time_s,
+            recompute_time_ms=recompute_time_ms,
+            recompute_raw_mag_ms=recompute_raw_mag_ms,
+        )
 
         step_time_us = step_result.step_time * 1e6
         step_time_ms = step_result.step_time * 1000
@@ -857,7 +949,7 @@ class TrainingPipelinePass(GraphPass):
                 target_node = g.nodes.get(target_id)
                 if target_node:
                     target_lat = target_node.annotations.get("latency_us", 0.0)
-            if otype == "coc" and target_lat <= 0.0:
+            if otype in ("coc", "p2p_overlap", "ring_cp") and target_lat <= 0.0:
                 pred_ids = g.predecessors(node.id)
                 pred_lats = [
                     g.nodes[p].annotations.get("latency_us", 0.0)
@@ -889,12 +981,15 @@ class TrainingPipelinePass(GraphPass):
                 formula_total_by_tag[node_tag] += comm_lat
                 formula_hidden_by_tag[node_tag] += formula_hidden
 
-        # Merge: per-strategy overlap = max(trace_hidden, formula_hidden)
+        # Merge: per-strategy overlap = max(trace_hidden, formula_hidden).
+        # Normalise formula totals to per-stage (trace totals are per-stage
+        # bottleneck, formula totals are whole-graph aggregate).
+        formula_div = pp if pp > 1 else 1
         for tag in ("tp", "ep", "pp", "cp"):
             trace_total = getattr(per_strat, f"{tag}_total_us", 0.0)
             trace_hidden = getattr(per_strat, f"{tag}_hidden_us", 0.0)
-            f_total = formula_total_by_tag.get(tag, 0.0)
-            f_hidden = formula_hidden_by_tag.get(tag, 0.0)
+            f_total = formula_total_by_tag.get(tag, 0.0) / formula_div
+            f_hidden = formula_hidden_by_tag.get(tag, 0.0) / formula_div
             merged_total = max(trace_total, f_total)
             merged_hidden = max(trace_hidden, f_hidden)
             setattr(per_strat, f"{tag}_total_us", merged_total)
@@ -921,9 +1016,9 @@ class TrainingPipelinePass(GraphPass):
         ) * M
         hidden_us = max(0.0, total_comm_us - total_exposed_us)
 
-        if hidden_us > 0:
-            step_time_us -= hidden_us
-            step_time_ms = step_time_us / 1000.0
+        # In trace mode, PPStitcher already models compute↔comm overlap correctly
+        # via DAGScheduler multi-stream scheduling + P2P delayed_deps, so hidden_us
+        # is informational only and must NOT be subtracted from step_time.
 
         exposed_comm_ms = total_exposed_us / 1000.0
         hidden_comm_ms = hidden_us / 1000.0
@@ -946,45 +1041,104 @@ class TrainingPipelinePass(GraphPass):
         # Use per-GPU peak (not cluster total) so result is per-device utilization.
         # Divide by PP because training_flops includes ALL layer FLOPs (via layer_scale),
         # but each GPU only handles 1/pp of the layers.
+        # Use training module's total_training_flops() which is per-GPU (already accounts for TP/EP)
+        # See schedules.py:1176: "total_training_flops is per-GPU (the graph models TP/EP-sharded computation)"
         from python.zrt.training.compose.schedules import util_from_flops
+        
         recompute_flops = float(g.metadata.get("recompute_flops", 0))
         pp = ctx.parallel.pp if ctx.parallel else 1
+        
+        # training_flops from FlopsPass is based on post-TP/EP-sharded graph nodes
+        # (FlopsPass runs after TensorParallelPass and ExpertParallelPass)
+        # Divide only by PP because each GPU handles 1/PP of the layers
         model_flops = (training_flops - recompute_flops) / pp
         total_flops_for_hfu = training_flops / pp
+        
         mfu = util_from_flops(model_flops * M, peak_flops_per_gpu, step_time_sec)
         hfu = util_from_flops(total_flops_for_hfu * M, peak_flops_per_gpu, step_time_sec)
 
         def _is_bwd_node(node):
             return node.annotations.get("phase", "") in _BWD_PHASES
 
-        # Forward latency includes activation-save overhead added by RooflinePass.
-        # External checkpoint nodes are reported in recompute_compute_ms below,
-        # so exclude their base latency here to keep compute_time_ms from
-        # charging the same replay-eligible work twice.
-        fwd_compute_ms = sum(
-            n.annotations.get("latency_us", 0.0)
-            for n in g.nodes.values()
-            if not _is_bwd_node(n)
-            and n.category != "communication"
-            and not is_external_recompute_node(n)
-        ) / 1000.0
-        bwd_compute_ms = sum(
-            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
-            for n in g.nodes.values()
-            if _is_bwd_node(n)
-            and n.category != "communication"
-            and not is_external_recompute_node(n)
-        ) / 1000.0
-        recompute_compute_ms = sum(
-            n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
-            for n in g.nodes.values()
-            if n.category != "communication"
-            and is_external_recompute_node(n)
-        ) / 1000.0
-        if layer_scale != 1.0:
-            fwd_compute_ms *= layer_scale
-            bwd_compute_ms *= layer_scale
-            recompute_compute_ms *= layer_scale
+        # Check if we can use layer-type-based scaling
+        use_layer_type_scaling = (
+            layer_profile is not None
+            and typical_indices is not None
+            and layer_scale != 1.0
+        )
+
+        if use_layer_type_scaling:
+            from python.zrt.graph.layer_strategy import LayerType
+            
+            per_layer_fwd, per_layer_bwd, per_layer_recompute = (
+                self._scale_compute_by_layer_type(g, layer_profile, typical_indices)
+            )
+            
+            layer_counts = {
+                LayerType.DENSE: layer_profile.num_dense,
+                LayerType.MOE: layer_profile.num_moe,
+                LayerType.HCA_HASH: layer_profile.num_hca_hash,
+                LayerType.HCA_TOPK: layer_profile.num_hca_topk,
+                LayerType.CSA_HASH: layer_profile.num_csa_hash,
+                LayerType.CSA_TOPK: layer_profile.num_csa_topk,
+                LayerType.SWA_HASH: layer_profile.num_swa_hash,
+                LayerType.SWA_TOPK: layer_profile.num_swa_topk,
+            }
+            
+            fwd_compute_ms = sum(
+                per_layer_fwd.get(lt, 0.0) * count / 1000.0
+                for lt, count in layer_counts.items()
+                if count > 0 and lt in per_layer_fwd
+            )
+            bwd_compute_ms = sum(
+                per_layer_bwd.get(lt, 0.0) * count / 1000.0
+                for lt, count in layer_counts.items()
+                if count > 0 and lt in per_layer_bwd
+            )
+            recompute_compute_ms = sum(
+                per_layer_recompute.get(lt, 0.0) * count / 1000.0
+                for lt, count in layer_counts.items()
+                if count > 0 and lt in per_layer_recompute
+            )
+        else:
+            fwd_compute_ms = sum(
+                n.annotations.get("latency_us", 0.0)
+                for n in g.nodes.values()
+                if not _is_bwd_node(n)
+                and n.category != "communication"
+                and not is_external_recompute_node(n)
+                and not n.annotations.get("optimizer_step")
+            ) / 1000.0
+            bwd_compute_ms = sum(
+                n.annotations.get("latency_us", 0.0)
+                for n in g.nodes.values()
+                if _is_bwd_node(n)
+                and n.category != "communication"
+                and not is_external_recompute_node(n)
+                and not n.annotations.get("optimizer_step")
+            ) / 1000.0
+            logger.info(
+                "TrainingPipelinePass: bwd_compute_ms (before scaling) = %.1f ms "
+                "(summed from %d backward nodes, excluding optimizer)",
+                bwd_compute_ms,
+                sum(1 for n in g.nodes.values() if _is_bwd_node(n) 
+                    and n.category != "communication" 
+                    and not n.annotations.get("optimizer_step")),
+            )
+            recompute_compute_ms = sum(
+                n.annotations.get("base_latency_us", n.annotations.get("latency_us", 0.0))
+                for n in g.nodes.values()
+                if n.category != "communication"
+                and is_external_recompute_node(n)
+            ) / 1000.0
+            if layer_scale != 1.0:
+                logger.info(
+                    "TrainingPipelinePass: applying layer_scale=%.2f to fwd_compute_ms=%.1f ms",
+                    layer_scale, fwd_compute_ms,
+                )
+                fwd_compute_ms *= layer_scale
+                bwd_compute_ms *= layer_scale
+                recompute_compute_ms *= layer_scale
         # These buckets are mutually exclusive:
         # - fwd_compute_ms excludes external checkpoint replay nodes
         # - bwd_compute_ms uses backward base latency and also excludes any
@@ -992,34 +1146,33 @@ class TrainingPipelinePass(GraphPass):
         # - recompute_compute_ms contains external checkpoint replay nodes
         compute_time_ms = fwd_compute_ms + bwd_compute_ms + recompute_compute_ms
 
-        metrics = PipelineStepMetrics(
-            step_time_ms=step_time_ms,
-            per_stage_ms=per_stage_ms,
-            warmup_steps=warmup_steps,
-            cooldown_steps=cooldown_steps,
-            steady_steps=steady_steps,
-            bubble_fraction=step_result.bubble_fraction,
-            bubble_time_ms=(step_result.warmup + step_result.cooldown) * 1000,
-            mfu=min(mfu, 1.0),
-            hfu=min(hfu, 1.0),
-            compute_time_ms=compute_time_ms,
-            fwd_compute_ms=fwd_compute_ms,
-            bwd_compute_ms=bwd_compute_ms,
-            recompute_compute_ms=recompute_compute_ms,
-            exposed_comm_ms=exposed_comm_ms,
-            hidden_comm_ms=hidden_comm_ms,
-            total_comm_ms=total_comm_ms,
-            dp_exposed_ms=step_result.dp_exposed * 1000.0,
-            dp_hidden_ms=step_result.dp_hidden * 1000.0,
-            pipeline_time_ms=step_result.pipeline_time * 1000.0,
-            warmup_ms=step_result.warmup * 1000.0,
-            steady_ms=step_result.steady * 1000.0,
-            cooldown_ms=step_result.cooldown * 1000.0,
-        )
+        # Build unified step-result dict from PPStitcher output + graph annotations.
+        # This replaces the old PipelineStepMetrics intermediate class.
+        sr = step_result.to_dict_ms()
+        sr["steady_steps"] = steady_steps
+        sr["compute_time_ms"] = compute_time_ms
+        sr["fwd_compute_ms"] = fwd_compute_ms
+        sr["bwd_compute_ms"] = bwd_compute_ms
+        sr["recompute_compute_ms"] = recompute_compute_ms
+        sr["recompute_critical_ms"] = recompute_time_ms
+        sr["recompute_raw_mag_ms"] = recompute_raw_mag_ms
+        sr["recompute_graph_diag_ms"] = recompute_compute_ms
+        sr["exposed_comm_ms"] = exposed_comm_ms
+        sr["hidden_comm_ms"] = hidden_comm_ms
+        sr["total_comm_ms"] = total_comm_ms
+        sr["per_stage_ms"] = per_stage_ms
+        sr["mfu"] = min(mfu, 1.0)
+        sr["hfu"] = min(hfu, 1.0)
 
-        g.metadata["pipeline_metrics"] = metrics
+        # Per-strategy comm from overlap analysis
+        for tag in ("tp", "cp", "ep", "pp"):
+            for suffix in ("exposed_ms", "hidden_ms", "total_ms"):
+                key = f"{tag}_{suffix}"
+                us_key = key.replace("_ms", "_us")
+                sr[key] = getattr(per_strat, us_key, 0.0) / 1000.0
+
+        g.metadata["step_result"] = sr
         g.metadata["recompute_compute_ms"] = recompute_compute_ms
-
         g.metadata["per_strategy_overlap"] = per_strat.to_dict()
 
         # Add optimizer step time (per §5.5.2 of design doc)
@@ -1059,7 +1212,7 @@ class TrainingPipelinePass(GraphPass):
             rs_hidden_us = min(rs_time_us, fwd_window_us) if rotation_active else 0.0
             rs_exposed_us = rs_time_us - rs_hidden_us
 
-            metrics.hidden_comm_ms += opt_comm_hidden_us / 1000.0
+            sr["hidden_comm_ms"] = sr.get("hidden_comm_ms", 0.0) + opt_comm_hidden_us / 1000.0
 
             if muon_ag and ag_time_us > 0:
                 muon_ag.annotations["latency_us"] = ag_time_us
@@ -1087,7 +1240,7 @@ class TrainingPipelinePass(GraphPass):
                 if rotation_active:
                     muon_rs.annotations["overlap_hide_window_us"] = fwd_window_us
 
-            if opt_node and opt_compute_us > 0:
+            if opt_node and not (muon_ag or muon_rs) and opt_compute_us > 0:
                 opt_node.annotations["latency_us"] = opt_compute_us
                 opt_node.annotations["compute_us"] = opt_compute_us
                 opt_node.annotations["memory_us"] = 0.0
@@ -1096,12 +1249,12 @@ class TrainingPipelinePass(GraphPass):
 
             g.metadata["optimizer_ag_exposed_us"] = ag_exposed_us
 
-            metrics.optimizer_comm_ms = opt_comm_exposed_us / 1000.0
-            metrics.optimizer_comm_hidden_ms = opt_comm_hidden_us / 1000.0
-            metrics.optimizer_time_ms = opt_compute_us / 1000.0
+            sr["optimizer_comm_ms"] = opt_comm_exposed_us / 1000.0
+            sr["optimizer_comm_hidden_ms"] = opt_comm_hidden_us / 1000.0
+            sr["optimizer_time_ms"] = opt_compute_us / 1000.0
 
             step_time_us += opt_compute_us + opt_comm_exposed_us
-            metrics.step_time_ms = step_time_us / 1000.0
+            sr["step_time_ms"] = step_time_us / 1000.0
 
             g.metadata["optimizer_ag_hidden_us"] = ag_hidden_us
             g.metadata["optimizer_rs_exposed_us"] = rs_exposed_us
@@ -1219,6 +1372,142 @@ class TrainingPipelinePass(GraphPass):
         return bwd_us * dw_flops / total_bwd_flops
 
     @staticmethod
+    def _scale_compute_by_layer_type(
+        g: "OpGraph",
+        layer_profile: Any,
+        typical_indices: list[int],
+    ) -> tuple[dict[Any, float], dict[Any, float], dict[Any, float]]:
+        """Extract per-layer latency by layer type from typical layers.
+
+        Args:
+            g: OpGraph with node annotations (latency_us, phase)
+            layer_profile: LayerProfile with layer_types
+            typical_indices: List of typical layer indices (one per unique layer type)
+
+        Returns:
+            (per_layer_fwd_us, per_layer_bwd_us, per_layer_recompute_us)
+            Each is a dict[LayerType, float] mapping layer type to average latency per layer.
+        """
+        from python.zrt.graph.layer_strategy import LayerType
+        from collections import defaultdict
+
+        def _is_bwd_node(node):
+            return node.annotations.get("phase", "") in _BWD_PHASES
+
+        def _is_recompute_node(node):
+            return is_external_recompute_node(node)
+
+        # Group nodes by layer index
+        layer_fwd_total: dict[int, float] = defaultdict(float)
+        layer_bwd_total: dict[int, float] = defaultdict(float)
+        layer_recompute_total: dict[int, float] = defaultdict(float)
+
+        for node in g.nodes.values():
+            layer = node.annotations.get("layer") or getattr(node, "layer", "")
+            if not layer:
+                continue
+
+            try:
+                layer_idx = int(layer)
+            except (ValueError, TypeError):
+                continue
+
+            if layer_idx not in typical_indices:
+                continue
+
+            if layer_idx >= len(layer_profile.layer_types):
+                continue
+
+            latency = node.annotations.get("latency_us", 0.0)
+
+            if node.category == "communication":
+                continue
+            if node.annotations.get("optimizer_step"):
+                continue
+
+            if _is_recompute_node(node):
+                base_lat = node.annotations.get("base_latency_us", latency)
+                layer_recompute_total[layer_idx] += base_lat
+            elif _is_bwd_node(node):
+                layer_bwd_total[layer_idx] += latency
+            else:
+                layer_fwd_total[layer_idx] += latency
+
+        # Aggregate by layer type, averaging across typical layers of same type
+        typical_fwd_by_type: dict[Any, list[float]] = defaultdict(list)
+        typical_bwd_by_type: dict[Any, list[float]] = defaultdict(list)
+        typical_recompute_by_type: dict[Any, list[float]] = defaultdict(list)
+
+        for layer_idx in typical_indices:
+            if layer_idx >= len(layer_profile.layer_types):
+                continue
+            layer_type = layer_profile.layer_types[layer_idx]
+            
+            if layer_idx in layer_fwd_total:
+                typical_fwd_by_type[layer_type].append(layer_fwd_total[layer_idx])
+            if layer_idx in layer_bwd_total:
+                typical_bwd_by_type[layer_type].append(layer_bwd_total[layer_idx])
+            if layer_idx in layer_recompute_total:
+                typical_recompute_by_type[layer_type].append(layer_recompute_total[layer_idx])
+
+        per_layer_fwd: dict[Any, float] = {}
+        per_layer_bwd: dict[Any, float] = {}
+        per_layer_recompute: dict[Any, float] = {}
+
+        for layer_type, latencies in typical_fwd_by_type.items():
+            if latencies:
+                per_layer_fwd[layer_type] = sum(latencies) / len(latencies)
+        
+        for layer_type, latencies in typical_bwd_by_type.items():
+            if latencies:
+                per_layer_bwd[layer_type] = sum(latencies) / len(latencies)
+        
+        for layer_type, latencies in typical_recompute_by_type.items():
+            if latencies:
+                per_layer_recompute[layer_type] = sum(latencies) / len(latencies)
+
+        logger.info(
+            "_scale_compute_by_layer_type: per_layer_fwd=%s us, per_layer_bwd=%s us, "
+            "typical_layers_per_type=%s",
+            {k.value: f"{v:.1f}" for k, v in per_layer_fwd.items()},
+            {k.value: f"{v:.1f}" for k, v in per_layer_bwd.items()},
+            {k.value: len(v) for k, v in typical_fwd_by_type.items()},
+        )
+
+        return per_layer_fwd, per_layer_bwd, per_layer_recompute
+
+    @staticmethod
+    def _get_layer_assignment(
+        ctx: "TransformContext",
+        total_layers: int,
+        pp: int,
+    ) -> Optional[list[int]]:
+        """Get layer assignment from context or generate uniform distribution.
+        
+        DEPRECATED: Use partition_layers_by_strategy from python.zrt.graph.partition instead.
+        This method only supports uniform distribution and explicit assignment,
+        not greedy bin-packing or VPP interleaved schedules.
+        
+        Args:
+            ctx: TransformContext (may have pp_layer_assignment)
+            total_layers: Total number of layers
+            pp: Pipeline parallel degree
+        
+        Returns:
+            List of stage IDs (0 to pp-1) for each layer, or None for uniform
+        """
+        explicit = None
+        if ctx.training:
+            explicit = getattr(ctx.training, "pp_layer_assignment", None)
+        
+        if explicit and len(explicit) == total_layers:
+            return [max(0, min(s, pp - 1)) for s in explicit]
+        
+        # Uniform distribution
+        stage_size = total_layers // pp
+        return [min(i // stage_size, pp - 1) for i in range(total_layers)]
+
+    @staticmethod
     def _compute_dp_ar_time(
         g: "OpGraph", hw: "HardwareSpec", ctx: "TransformContext",
     ) -> float:
@@ -1291,10 +1580,49 @@ class TrainingPipelinePass(GraphPass):
 
 # ── Exposed comm-time helper ────────────────────────────────────────────────────
 
+def _extract_p2p_latency_per_edge(g) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], float]]:
+    """Extract per-edge P2P latency from send_recv nodes in the graph.
+
+    Groups comm.send_recv nodes by (src_stage, dst_stage, phase), taking
+    the maximum latency per group (bottleneck edge).
+
+    Returns
+    -------
+    fwd_us : dict[tuple[int,int], float]
+        Forward P2P latency keyed by (src_stage, dst_stage).
+    bwd_us : dict[tuple[int,int], float]
+        Backward P2P latency keyed by (src_stage, dst_stage).
+    """
+    fwd_us: dict[tuple[int, int], float] = {}
+    bwd_us: dict[tuple[int, int], float] = {}
+    for node in g.nodes.values():
+        if node.op_type != "comm.send_recv":
+            continue
+        src = node.attrs.get("src_stage", -1)
+        dst = node.attrs.get("dst_stage", -1)
+        if src < 0 or dst < 0:
+            continue
+        lat = node.annotations.get("latency_us", 0.0)
+        phase = node.annotations.get("phase", "")
+        key = (src, dst)
+        if phase == "fwd":
+            fwd_us[key] = max(fwd_us.get(key, 0.0), lat)
+        elif "bwd" in phase:
+            bwd_us[key] = max(bwd_us.get(key, 0.0), lat)
+        else:
+            logger.warning(
+                "comm.send_recv node %s has unexpected phase=%r, skipping P2P extraction",
+                node.id, phase,
+            )
+    return fwd_us, bwd_us
+
+
 def _extract_p2p_latency_us(g) -> float:
     """Extract maximum P2P communication latency from send_recv nodes in the graph.
 
     Returns 0.0 if no P2P nodes are found.
+
+    Deprecated: prefer ``_extract_p2p_latency_per_edge`` for per-edge resolution.
     """
     max_lat = 0.0
     for node in g.nodes.values():
@@ -1316,7 +1644,7 @@ def compute_exposed_comm_time(
 
     Args:
         comm_latency_us: latency of the comm node in microseconds.
-        overlap_type: "coc", "mc2", "ring_cp", or "none".
+        overlap_type: "coc", "mc2", "ring_cp", "p2p_overlap", or "none".
         target_latency_us: latency of the compute node being overlapped.
         coc_tile_k: number of tiles for CoC overlap (default 4).
         cp_rounds: number of CP P2P rounds (for ring_cp).
@@ -1327,12 +1655,21 @@ def compute_exposed_comm_time(
     if overlap_type == "mc2":
         return 0.0
     elif overlap_type == "coc":
-        overlap_window = target_latency_us * (coc_tile_k - 1) / coc_tile_k
-        return max(0.0, comm_latency_us - overlap_window)
+        gemm_tile = target_latency_us / coc_tile_k if coc_tile_k > 0 else 0.0
+        comm_tile = comm_latency_us / coc_tile_k if coc_tile_k > 0 else 0.0
+        if gemm_tile >= comm_tile:
+            exposed = comm_tile
+        else:
+            exposed = comm_latency_us - target_latency_us * (coc_tile_k - 1) / coc_tile_k
+        return max(0.0, exposed)
     elif overlap_type == "ring_cp":
         fa_tile_latency = target_latency_us / cp_rounds if cp_rounds > 1 else target_latency_us
         p2p_round_latency = comm_latency_us / cp_rounds if cp_rounds > 1 else comm_latency_us
         exposed_per_round = max(0.0, p2p_round_latency - fa_tile_latency)
         return exposed_per_round * cp_rounds
+    elif overlap_type == "p2p_overlap":
+        if target_latency_us > 0:
+            return max(0.0, comm_latency_us - target_latency_us)
+        return comm_latency_us
     else:
         return comm_latency_us

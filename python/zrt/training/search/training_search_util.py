@@ -7,10 +7,11 @@ import math
 import multiprocessing
 import os
 import time
+from copy import copy
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Generator
+from typing import Any, Dict, List, Optional, Tuple, Generator, Iterable
 
 import pandas as pd
 from tqdm import tqdm
@@ -24,6 +25,7 @@ from zrt.hardware.registry import load as load_hw
 from zrt.training.io.config_loader import _parse_model, _parse_system, _parse_strategy
 from zrt.training.models.memory import memory_breakdown
 from zrt.training.search.estimator import estimate
+from zrt.training.search.metric_filters import report_passes_filters
 from zrt.training.search.report import report_summary
 from zrt.training.spec.model import ModelSpec
 from zrt.training.spec.report import TrainingReport
@@ -48,6 +50,70 @@ _WORKER_GRAPH_CACHE: Dict[Tuple[Any, ...], Any] = {}
 _MODELS_DIR = Path(__file__).parent.parent / "configs" / "models"
 _DEFAULT_POD_PACKING_AXES = ("tp", "cp")
 _COMM_DOMAIN_AXES = ("ep", "pp", "dp", "tp", "cp")
+
+RAW_DATA_HEADERS = [
+    "组号", "model", "hw", "micro_batch", "seq_len", "total_token", "zero_stage",
+    "pp_schedule", "cp_kind", "vpp_chunks", "tp_overlap", "ep_overlap",
+    "dualbatch", "dp_overlap_in_bubble", "recompute", "optimizer", "quant_preset",
+    "world_size", "global_batch", "tp", "cp", "pp", "ep", "dp",
+    "ep_comm_domain", "pp_comm_domain", "dp_comm_domain", "tp_comm_domain",
+    "cp_comm_domain", "compute_time_ms", "fwd_compute_ms", "bwd_compute_ms",
+    "exposed_comm_ms", "tp_total_ms", "tp_exposed_ms", "cp_total_ms",
+    "cp_exposed_ms", "ep_total_ms", "ep_exposed_ms", "pp_total_ms",
+    "pp_exposed_ms", "pp_hidden_ms", "dp_total_ms", "dp_exposed_ms",
+    "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms",
+    "recompute_critical_ms", "recompute_raw_mag_ms", "step_time_ms",
+    "pipeline_time_ms", "mfu", "mfu_native", "hfu", "bubble_fraction",
+    "bubble_time_ms", "tokens_per_sec", "weights_gb", "grads_gb",
+    "opt_state_gb", "activations_gb", "comm_buffers_gb", "memory_gb",
+]
+
+ANALYSIS_HEADERS = [
+    "组号", "硬件+seq", "TP", "PP", "DP", "EP", "CP", "重计算",
+    "单卡迭代时间", "集群吞吐", "集群吞吐归一化", "计算占比",
+    "TP通信占比", "EP通信占比", "PP通信占比", "DP通信占比",
+    "CP通信占比", "优化器占比", "空泡占比", "fw_time", "bw_time",
+    "recompute_time", "计算时间", "TP通信时间(未掩盖)",
+    "EP通信时间(未掩盖)", "PP通信时间(未掩盖)", "DP通信时间(未掩盖)",
+    "CP通信时间(未掩盖)", "TP通信时间(掩盖)", "EP通信时间(掩盖)",
+    "PP通信时间(掩盖)", "DP通信时间(掩盖)", "CP通信时间(掩盖)",
+    "优化器计算时间", "优化器通信时间", "优化器时间(掩盖)", "空泡时间",
+]
+
+RAW_TO_ANALYSIS = {
+    "TP": "tp",
+    "PP": "pp",
+    "DP": "dp",
+    "EP": "ep",
+    "CP": "cp",
+    "重计算": "recompute",
+    "单卡迭代时间": "step_time_ms",
+    "集群吞吐": "tokens_per_sec",
+    "fw_time": "fwd_compute_ms",
+    "bw_time": "bwd_compute_ms",
+    "recompute_critical": "recompute_critical_ms",
+    "TP通信时间(未掩盖)": "tp_total_ms",
+    "EP通信时间(未掩盖)": "ep_total_ms",
+    "PP通信时间(未掩盖)": "pp_total_ms",
+    "DP通信时间(未掩盖)": "dp_total_ms",
+    "CP通信时间(未掩盖)": "cp_total_ms",
+    "TP通信时间(掩盖)": "tp_exposed_ms",
+    "EP通信时间(掩盖)": "ep_exposed_ms",
+    "PP通信时间(掩盖)": "pp_exposed_ms",
+    "DP通信时间(掩盖)": "dp_exposed_ms",
+    "CP通信时间(掩盖)": "cp_exposed_ms",
+    "优化器计算时间": "optimizer_compute_ms",
+    "优化器通信时间": "optimizer_comm_ms",
+    "优化器时间(掩盖)": "optimizer_exposed_ms",
+    "空泡时间": "bubble_time_ms",
+}
+
+PERCENT_ANALYSIS_HEADERS = {
+    "计算占比", "TP通信占比", "EP通信占比", "PP通信占比",
+    "DP通信占比", "CP通信占比", "优化器占比", "空泡占比",
+}
+REPORT_HEADER_FILL_COLOR = "4F81BD"
+REPORT_EVEN_GROUP_FILL_COLOR = "C6EFCE"
 
 
 def _ceil_nodes_for_world_size(world_size: int, gpus_per_node: int) -> int:
@@ -302,6 +368,8 @@ def _make_strategy_from_config(config: Dict) -> Strategy:
         mega_moe=config.get("mega_moe", False),
         mega_moe_waves=int(config.get("mega_moe_waves", 0)),
         cp_kind=CPKind(config.get("cp_kind", "none")),
+        cp_ulysses=config.get("cp_ulysses"),
+        cp_ring=config.get("cp_ring"),
         dualbatch=config.get("dualbatch", False),
         dp_overlap_in_bubble=config.get("dp_overlap_in_bubble", True),
         dp_grad_buckets=config.get("dp_grad_buckets", 25),
@@ -385,6 +453,8 @@ class TrainingConfigManager:
             mega_moe=other_config.get("mega_moe", False),
             mega_moe_waves=int(other_config.get("mega_moe_waves", 0)),
             cp_kind=CPKind(other_config.get("cp_kind", "none")),
+            cp_ulysses=other_config.get("cp_ulysses"),
+            cp_ring=other_config.get("cp_ring"),
             dualbatch=other_config.get("dualbatch", False),
             dp_overlap_in_bubble=other_config.get("dp_overlap_in_bubble", True),
             dp_grad_buckets=other_config.get("dp_grad_buckets", 25),
@@ -702,6 +772,8 @@ def _graph_cache_key(config: Dict[str, Any]) -> Tuple[Any, ...]:
         int(config.get("cp", 1)),
         int(config.get("ep", 1)),
         config.get("cp_kind", "none"),
+        config.get("cp_ulysses"),
+        config.get("cp_ring"),
     )
 
 
@@ -803,7 +875,12 @@ def run_training_task_wrapper(config: Dict) -> Optional[Dict]:
         return {"status": "error", "config": config, "type": "runtime_error"}
 
 
-def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.DataFrame:
+def format_results(
+    reports: List[TrainingReport],
+    configs: List[Dict],
+    sort_by: str = "tokens_per_sec",
+    ascending: bool = False,
+) -> pd.DataFrame:
     rows = []
     for cfg, report in zip(configs, reports):
         d = cfg.copy()
@@ -837,8 +914,8 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         d["optimizer_compute_ms"] = round(report.optimizer_time_ms, 4)
         d["optimizer_comm_ms"] = round(report.optimizer_comm_ms + report.optimizer_comm_hidden_ms, 2)
         d["optimizer_exposed_ms"] = round(report.optimizer_comm_ms, 2)
-        d["recompute_time_ms"] = round(report.recompute_time_ms, 3)
-        d["recompute_time_raw_ms"] =  round(report.recompute_time_raw_ms, 3)
+        d["recompute_critical_ms"] = round(report.recompute_critical_ms, 3)
+        d["recompute_raw_mag_ms"] =  round(report.recompute_raw_mag_ms, 3)
         d["step_time_ms"] = round(report.step_time_ms, 3)
         d["pipeline_time_ms"] = round(report.pipeline_time_ms, 3)
         d["mfu"] = round(report.mfu, 4)
@@ -860,15 +937,15 @@ def format_results(reports: List[TrainingReport], configs: List[Dict]) -> pd.Dat
         rows.append(d)
 
     df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("mfu", ascending=False)
+    if not df.empty and sort_by in df.columns:
+        df = df.sort_values(sort_by, ascending=ascending)
 
     metric_cols = ["compute_time_ms", "fwd_compute_ms", "bwd_compute_ms", "exposed_comm_ms",
                    "tp_total_ms", "tp_exposed_ms", "cp_total_ms", "cp_exposed_ms",
                    "ep_total_ms", "ep_exposed_ms", "pp_total_ms", "pp_exposed_ms",
                    "pp_hidden_ms", "dp_total_ms", "dp_exposed_ms",
-                   "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms", "recompute_time_ms",
-                   "recompute_time_raw_ms", "step_time_ms", "pipeline_time_ms",
+                   "optimizer_compute_ms", "optimizer_comm_ms", "optimizer_exposed_ms", "recompute_critical_ms",
+                   "recompute_raw_mag_ms", "step_time_ms", "pipeline_time_ms",
                    "mfu", "mfu_native", "hfu", "bubble_fraction", "bubble_time_ms", "tokens_per_sec",
                    "weights_gb", "grads_gb", "opt_state_gb", "activations_gb",
                    "comm_buffers_gb", "memory_gb"]
@@ -890,9 +967,413 @@ def save_results(df: pd.DataFrame, output_path: str):
     print("=" * 60)
     print(f"Total results: {len(df)} configs")
     print()
-    print("Top 5 configs by MFU:")
+    print("Top 5 configs by tokens_per_sec:")
     print(df.head(5).to_string())
     print("=" * 60)
+
+
+def _first_seen(values: Iterable[Any]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for value in values:
+        text = str(value)
+        if text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _normalize_comparison_hw_groups(
+        df: pd.DataFrame,
+        comparison_hw_groups: Optional[List[List[str]]] = None,
+) -> List[List[str]]:
+    if comparison_hw_groups:
+        return [[str(hw) for hw in group] for group in comparison_hw_groups]
+    if "hw" not in df.columns:
+        return [[]]
+    return [_first_seen(df["hw"])]
+
+
+def _sequence_order(df: pd.DataFrame, seq_lens: Optional[List[int]] = None) -> List[int]:
+    if seq_lens:
+        return [int(seq) for seq in seq_lens]
+    if "seq_len" not in df.columns:
+        return []
+    return sorted(int(seq) for seq in df["seq_len"].dropna().unique())
+
+
+def select_best_configs_by_tokens(
+        df: pd.DataFrame,
+        *,
+        comparison_hw_groups: Optional[List[List[str]]] = None,
+        seq_lens: Optional[List[int]] = None,
+) -> pd.DataFrame:
+    """Pick the highest-token-throughput row for every group + hw + seq_len.
+
+    The same hardware may intentionally appear in multiple comparison groups
+    as the baseline. In that case the row is duplicated with a different
+    ``_group_idx`` so each group can normalize against its own first hardware.
+    """
+    required = {"hw", "seq_len", "tokens_per_sec"}
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise ValueError(f"Cannot select best configs; missing columns: {missing}")
+    if df.empty:
+        return df.copy()
+
+    groups = _normalize_comparison_hw_groups(df, comparison_hw_groups)
+    seq_order = _sequence_order(df, seq_lens)
+    allowed_hw = {hw for group in groups for hw in group}
+
+    best_input = df.copy()
+    best_input["hw"] = best_input["hw"].astype(str)
+    if allowed_hw:
+        best_input = best_input[best_input["hw"].isin(allowed_hw)]
+    if seq_order:
+        best_input = best_input[best_input["seq_len"].isin(seq_order)]
+    if best_input.empty:
+        return best_input
+
+    per_hw_seq = (
+        best_input.sort_values("tokens_per_sec", ascending=False)
+        .groupby(["hw", "seq_len"], as_index=False, sort=False)
+        .first()
+    )
+
+    row_map = {
+        (str(row["hw"]), int(row["seq_len"])): row
+        for _, row in per_hw_seq.iterrows()
+    }
+    seq_rank = {seq: idx for idx, seq in enumerate(seq_order)}
+    rows: List[pd.Series] = []
+    for group_idx, group in enumerate(groups):
+        for seq in seq_order:
+            for hw_idx, hw in enumerate(group):
+                row = row_map.get((str(hw), int(seq)))
+                if row is None:
+                    continue
+                out = row.copy()
+                out["_group_idx"] = group_idx
+                out["_hw_idx"] = hw_idx
+                out["_seq_idx"] = seq_rank.get(int(seq), 999)
+                rows.append(out)
+
+    if not rows:
+        return per_hw_seq.iloc[0:0].copy()
+    return pd.DataFrame(rows).sort_values(
+        ["_group_idx", "_seq_idx", "_hw_idx"]
+    ).reset_index(drop=True)
+
+
+def _with_group_labels(best_df: pd.DataFrame) -> pd.DataFrame:
+    out = best_df.copy()
+    if "组号" not in out.columns:
+        out.insert(0, "组号", "")
+    previous_group = None
+    for idx, group_idx in enumerate(out.get("_group_idx", pd.Series([0] * len(out)))):
+        if group_idx != previous_group:
+            out.at[idx, "组号"] = f"对比{int(group_idx) + 1}"
+            previous_group = group_idx
+        else:
+            out.at[idx, "组号"] = ""
+    return out
+
+
+def save_best_configs_csv(best_df: pd.DataFrame, output_path: str) -> str:
+    os.makedirs(output_path, exist_ok=True)
+    out_path = os.path.join(output_path, "best_tokens_per_hw_seq_len.csv")
+    drop_cols = [col for col in best_df.columns if str(col).startswith("_")]
+    _with_group_labels(best_df).drop(columns=drop_cols, errors="ignore").to_csv(
+        out_path,
+        index=False,
+    )
+    logger.info("Best-token configs saved to: %s", out_path)
+    return out_path
+
+
+def _seq_label(seq_len: Any) -> str:
+    seq = int(seq_len)
+    if seq % 1_048_576 == 0:
+        value = seq // 1_048_576
+        return f"{value}m"
+    if seq % 1024 == 0:
+        return f"{seq // 1024}k"
+    return str(seq)
+
+
+def _safe_float(row: pd.Series, key: str, default: float = 0.0) -> float:
+    value = row.get(key, default)
+    if pd.isna(value):
+        return default
+    return float(value)
+
+
+def _copy_row_style(ws: Any, source_row: int, target_row: int, max_col: int) -> None:
+    if source_row > ws.max_row:
+        return
+    for col_idx in range(1, max_col + 1):
+        src = ws.cell(source_row, col_idx)
+        dst = ws.cell(target_row, col_idx)
+        if src.has_style:
+            dst._style = copy(src._style)
+        dst.font = copy(src.font)
+        dst.fill = copy(src.fill)
+        dst.border = copy(src.border)
+        dst.alignment = copy(src.alignment)
+        dst.number_format = src.number_format
+    ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
+
+
+def _sheet_headers(ws: Any, fallback: List[str]) -> List[str]:
+    headers = [ws.cell(1, col).value for col in range(1, ws.max_column + 1)]
+    headers = [str(header) for header in headers if header is not None]
+    return headers or fallback
+
+
+def _clear_sheet(ws: Any, headers: List[str]) -> None:
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)
+    for col_idx, header in enumerate(headers, start=1):
+        ws.cell(1, col_idx).value = header
+
+
+def _unmerge_group_label_cells(ws: Any, headers: List[str]) -> None:
+    if "组号" not in headers:
+        return
+    group_col = headers.index("组号") + 1
+    for merged_range in list(ws.merged_cells.ranges):
+        if (
+            merged_range.min_col <= group_col <= merged_range.max_col
+            and merged_range.max_row >= 2
+        ):
+            ws.unmerge_cells(str(merged_range))
+
+
+def _apply_report_fill_styles(ws: Any, headers: List[str], rows: pd.DataFrame) -> None:
+    from openpyxl.styles import PatternFill
+
+    header_fill = PatternFill(
+        fill_type="solid",
+        fgColor=REPORT_HEADER_FILL_COLOR,
+    )
+    even_group_fill = PatternFill(
+        fill_type="solid",
+        fgColor=REPORT_EVEN_GROUP_FILL_COLOR,
+    )
+
+    for col_idx in range(1, len(headers) + 1):
+        ws.cell(1, col_idx).fill = header_fill
+
+    if rows.empty:
+        return
+
+    for row_idx, (_, row) in enumerate(rows.iterrows(), start=2):
+        group_idx = int(row.get("_group_idx", 0))
+        group_number = group_idx + 1
+        if group_number % 2 != 0:
+            continue
+        for col_idx in range(1, len(headers) + 1):
+            ws.cell(row_idx, col_idx).fill = even_group_fill
+
+
+def _merge_group_label_cells(ws: Any, headers: List[str], rows: pd.DataFrame) -> None:
+    if "组号" not in headers or rows.empty:
+        return
+
+    from openpyxl.styles import Alignment
+
+    group_col = headers.index("组号") + 1
+
+    def center_group_cell(row_idx: int) -> None:
+        cell = ws.cell(row_idx, group_col)
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+            text_rotation=cell.alignment.text_rotation,
+            wrap_text=cell.alignment.wrap_text,
+            shrink_to_fit=cell.alignment.shrink_to_fit,
+            indent=cell.alignment.indent,
+        )
+
+    _unmerge_group_label_cells(ws, headers)
+
+    group_values = list(rows.get("_group_idx", pd.Series([0] * len(rows))))
+    start_row = 2
+    current_group = group_values[0]
+    for offset, group_idx in enumerate(group_values[1:], start=1):
+        if group_idx == current_group:
+            continue
+        end_row = 1 + offset
+        if end_row > start_row:
+            ws.merge_cells(
+                start_row=start_row,
+                start_column=group_col,
+                end_row=end_row,
+                end_column=group_col,
+            )
+            center_group_cell(start_row)
+        start_row = 2 + offset
+        current_group = group_idx
+
+    end_row = 1 + len(group_values)
+    if end_row > start_row:
+        ws.merge_cells(
+            start_row=start_row,
+            start_column=group_col,
+            end_row=end_row,
+            end_column=group_col,
+        )
+    center_group_cell(start_row)
+
+
+def _write_raw_data_sheet(ws: Any, best_df: pd.DataFrame) -> None:
+    headers = _sheet_headers(ws, RAW_DATA_HEADERS)
+    _clear_sheet(ws, headers)
+    rows = _with_group_labels(best_df)
+    for row_idx, (_, row) in enumerate(rows.iterrows(), start=2):
+        if row_idx > 2:
+            _copy_row_style(ws, 2, row_idx, len(headers))
+        for col_idx, header in enumerate(headers, start=1):
+            value = row.get(header, None)
+            if pd.isna(value):
+                value = None
+            ws.cell(row_idx, col_idx).value = value
+    _apply_report_fill_styles(ws, headers, rows)
+    _merge_group_label_cells(ws, headers, rows)
+
+
+def _baseline_tokens_by_group_seq(
+        best_df: pd.DataFrame,
+        comparison_hw_groups: List[List[str]],
+) -> Dict[Tuple[int, int], float]:
+    baselines: Dict[Tuple[int, int], float] = {}
+    for group_idx, group in enumerate(comparison_hw_groups):
+        if not group:
+            continue
+        baseline_hw = str(group[0])
+        rows = best_df[
+            (best_df["_group_idx"] == group_idx)
+            & (best_df["hw"].astype(str) == baseline_hw)
+        ]
+        for _, row in rows.iterrows():
+            baselines[(group_idx, int(row["seq_len"]))] = _safe_float(row, "tokens_per_sec")
+    return baselines
+
+
+def _analysis_value(
+        header: str,
+        row: pd.Series,
+        baseline_tokens: Optional[float],
+) -> Any:
+    step_time = _safe_float(row, "step_time_ms")
+    if header == "组号":
+        return row.get("组号", "")
+    if header == "硬件+seq":
+        return f"{row.get('hw')}_{_seq_label(row.get('seq_len'))}"
+    if header in RAW_TO_ANALYSIS:
+        value = row.get(RAW_TO_ANALYSIS[header], None)
+        return None if pd.isna(value) else value
+    if header == "计算时间":
+        return (
+            _safe_float(row, "fwd_compute_ms")
+            + _safe_float(row, "bwd_compute_ms")
+            + _safe_float(row, "recompute_critical_ms")
+        )
+    if header == "集群吞吐归一化":
+        current = _safe_float(row, "tokens_per_sec")
+        return round(current / baseline_tokens, 3) if baseline_tokens else None
+    if step_time <= 0:
+        return None
+    if header == "计算占比":
+        return _analysis_value("计算时间", row, baseline_tokens) / step_time
+    if header == "TP通信占比":
+        return _safe_float(row, "tp_exposed_ms") / step_time
+    if header == "EP通信占比":
+        return _safe_float(row, "ep_exposed_ms") / step_time
+    if header == "PP通信占比":
+        return _safe_float(row, "pp_exposed_ms") / step_time
+    if header == "DP通信占比":
+        return _safe_float(row, "dp_exposed_ms") / step_time
+    if header == "CP通信占比":
+        return _safe_float(row, "cp_exposed_ms") / step_time
+    if header == "优化器占比":
+        return _safe_float(row, "optimizer_compute_ms") / step_time
+    if header == "空泡占比":
+        return _safe_float(row, "bubble_time_ms") / step_time
+    return None
+
+
+def _write_analysis_sheet(
+        ws: Any,
+        best_df: pd.DataFrame,
+        comparison_hw_groups: List[List[str]],
+) -> None:
+    headers = _sheet_headers(ws, ANALYSIS_HEADERS)
+    _clear_sheet(ws, headers)
+    rows = _with_group_labels(best_df)
+    baselines = _baseline_tokens_by_group_seq(best_df, comparison_hw_groups)
+    for row_idx, (_, row) in enumerate(rows.iterrows(), start=2):
+        if row_idx > 2:
+            _copy_row_style(ws, 2, row_idx, len(headers))
+        baseline = baselines.get((int(row["_group_idx"]), int(row["seq_len"])))
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row_idx, col_idx)
+            cell.value = _analysis_value(header, row, baseline)
+            if header in PERCENT_ANALYSIS_HEADERS:
+                cell.number_format = "0.00%"
+            elif header == "集群吞吐归一化":
+                cell.number_format = "0.000"
+            elif isinstance(cell.value, float):
+                cell.number_format = "0.00"
+    _apply_report_fill_styles(ws, headers, rows)
+    _merge_group_label_cells(ws, headers, rows)
+
+
+def export_best_analysis_excel(
+        best_df: pd.DataFrame,
+        output_path: str,
+        *,
+        comparison_hw_groups: List[List[str]],
+        template_path: Optional[str] = None,
+        filename: str = "best_config_analysis.xlsx",
+) -> Optional[str]:
+    """Export the filtered best rows into raw_data and analysis sheets."""
+    if best_df.empty:
+        return None
+
+    try:
+        import openpyxl
+        from openpyxl import Workbook
+    except ImportError:
+        logger.warning("openpyxl is unavailable; skip best analysis Excel export")
+        return None
+
+    if template_path:
+        wb = openpyxl.load_workbook(template_path)
+    else:
+        wb = Workbook()
+        wb.active.title = "analysis"
+        wb.create_sheet("raw_data")
+
+    if "analysis" not in wb.sheetnames:
+        wb.create_sheet("analysis", 0)
+    if "raw_data" not in wb.sheetnames:
+        wb.create_sheet("raw_data")
+
+    _write_raw_data_sheet(wb["raw_data"], best_df)
+    _write_analysis_sheet(wb["analysis"], best_df, comparison_hw_groups)
+
+    os.makedirs(output_path, exist_ok=True)
+    out_path = os.path.join(output_path, filename)
+    wb.save(out_path)
+    logger.info("Best analysis Excel exported: %s", out_path)
+    print(f"Best analysis Excel: {out_path}")
+    return out_path
+
+
+def _default_analysis_excel_name(model_name: str) -> str:
+    safe_model = str(model_name).replace("/", "_").replace("\\", "_").replace(":", "_")
+    return f"{safe_model}_best_config_analysis.xlsx"
 
 
 def export_best_configs_excel(
@@ -927,7 +1408,10 @@ def export_best_configs_excel(
         best_config = best_row["config"]
         best_report = best_row["report"]
 
-        model = _load_model_spec(model_name)
+        model = _load_model_spec(
+            model_name,
+            quant_preset=best_config.get("quant_preset") or None,
+        )
         model.seq_len = seq_len
 
         hw = load_hw(hw_name)
@@ -974,7 +1458,22 @@ def run_training_search_parallel(
         mfu_threshold: float = 0.0,
         batch_size: int = 32,
         export_best_excel: bool = True,
+        export_analysis_excel: bool = True,
+        analysis_excel_template: Optional[str] = None,
+        analysis_excel_name: Optional[str] = None,
+        comparison_hw_groups: Optional[List[List[str]]] = None,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        sort_by: str = "tokens_per_sec",
+        sort_ascending: bool = False,
 ) -> pd.DataFrame:
+    """Grid-search parallel strategies and tabulate the results.
+
+    ``filters`` is an optional list of ``{metric, op, value}`` constraints
+    (see :mod:`zrt.training.search.metric_filters`) applied on top of the
+    memory-feasibility / ``mfu_threshold`` checks. ``sort_by`` / ``sort_ascending``
+    pick the ranking column. Defaults reproduce the historical behaviour
+    (no extra filters, ranked by tokens/s descending).
+    """
     model_name = param_grid.get("model", ["unknown"])
     if isinstance(model_name, list):
         model_name = model_name[0] if model_name else "unknown"
@@ -1062,6 +1561,8 @@ def run_training_search_parallel(
         rep = r["report"]
         hw_name = r.get("hw_name") or r["config"].get("hw", "nvidia_h100_sxm")
         cap_gb = load_hw(hw_name).memory.capacity_gb
+        if not report_passes_filters(rep, filters):
+            continue
         if rep.memory is None:
             feasible_results.append(r)
             continue
@@ -1077,7 +1578,7 @@ def run_training_search_parallel(
 
     all_reports = [r["report"] for r in feasible_results]
     all_configs = [r["config"] for r in feasible_results]
-    all_df = format_results(all_reports, all_configs)
+    all_df = format_results(all_reports, all_configs, sort_by=sort_by, ascending=sort_ascending)
 
     filtered_df = all_df[all_df["mfu"] > mfu_threshold] if mfu_threshold > 0 else all_df
     if filtered_df.empty:
@@ -1085,6 +1586,35 @@ def run_training_search_parallel(
         return pd.DataFrame()
 
     save_results(filtered_df, manager.output_path)
+
+    hw_values = param_grid.get("hw", [])
+    default_hw_groups = (
+        [[str(hw) for hw in hw_values]]
+        if isinstance(hw_values, list)
+        else [[str(hw_values)]]
+    )
+    seq_values = param_grid.get("seq_len", [])
+    default_seq_order = (
+        [int(seq) for seq in seq_values]
+        if isinstance(seq_values, list)
+        else None
+    )
+    active_hw_groups = comparison_hw_groups or default_hw_groups
+    if {"hw", "seq_len", "tokens_per_sec"}.issubset(filtered_df.columns):
+        best_df = select_best_configs_by_tokens(
+            filtered_df,
+            comparison_hw_groups=active_hw_groups,
+            seq_lens=default_seq_order,
+        )
+        if not best_df.empty:
+            if export_analysis_excel:
+                export_best_analysis_excel(
+                    best_df,
+                    manager.output_path,
+                    comparison_hw_groups=active_hw_groups,
+                    template_path=analysis_excel_template,
+                    filename=analysis_excel_name or _default_analysis_excel_name(model_name),
+                )
 
     if export_best_excel:
         filtered_indices = [int(i) for i in filtered_df.index]
@@ -1104,7 +1634,7 @@ if __name__ == "__main__":
 
     training_param_grid = {
         "model": ["deepseek_v4_pro"],
-        "hw": ["nvidia_b300"],
+        "hw": ["nvidia_b300", "nvidia_gb300_nvl576", "ascend_910c"],
         "world_size": [8192],
         "tp": [1, 2, 4, 8, 16, 32, 64, 128],
         "cp": [1, 2, 4, 8, 16, 32, 64, 128],
@@ -1112,25 +1642,31 @@ if __name__ == "__main__":
         # EP must divide DP under the current expert-DP sharding model.
         "ep": [32, 64, 128],
         "dp": "auto",
-        "micro_batch": [1, 16, 32],
+        "micro_batch": [1],
         # Derived per seq_len as exact total_token // seq_len.
-        "seq_len": [8192, 65536, 131072, 262144, 524288, 1048576],
-        "total_token": [100663296],
+        "seq_len": [262144, 524288, 1048576],
+        "total_token": [536870912],
         "zero_stage": [3],
         "pp_schedule": ["dualpipev"],
         "cp_kind": ["ulysses"],
+        "vpp_chunks": [1, 2, 4],
         "tp_overlap": ["coc"],
         "ep_overlap": [True],
         "dualbatch": [True],
         "dp_overlap_in_bubble": [True],
-        "recompute": ["none", "mhc"],
+        "recompute": ["none", "mhc", "full", "selective"],
         "optimizer": ["muon"],
-        "quant_preset": ["deepseek_v4_fp8_fp4", "deepseek_v4_full_fp8"],
+        "quant_preset": ["deepseek_v4_fp8_fp4"],
     }
+    comparison_hw_groups = [
+        ["nvidia_b300", "nvidia_gb300_nvl576"],
+        ["nvidia_b300", "ascend_910c"],
+    ]
 
     df = run_training_search_parallel(
         param_grid=training_param_grid,
-        workers=128,
+        workers=32,
         mfu_threshold=0.00,
-        export_best_excel=False,
+        export_best_excel=True,
+        comparison_hw_groups=comparison_hw_groups,
     )

@@ -6,74 +6,80 @@
 <title>ZRT — Launch</title>
 <style>
   :root {
-    --bg: #0d0d0d;
-    --surface: #141414;
-    --surface-hi: #1c1c1c;
-    --border: #262626;
-    --border-hi: #363636;
-    --text: #ddd8cc;
-    --text-dim: #a09c96;
-    --text-muted: #5e5c59;
-    --amber: #d48c0c;
-    --amber-bright: #f0a828;
-    --amber-dim: #7a5008;
-    --teal: #00b890;
-    --teal-dim: #006650;
-    --coral: #e04848;
-    --green: #40c870;
-    --r: 3px;
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-hi: #eef3fb;
+    --border: #e2e8f2;
+    --border-hi: #cdd8e8;
+    --text: #152033;
+    --text-dim: #4a5a73;
+    --text-muted: #8a97ab;
+    --amber: #d97706;
+    --amber-bright: #b45309;
+    --amber-dim: #fdeccb;
+    --teal: #0d9f6e;
+    --teal-dim: #c7f0dd;
+    --coral: #dc2626;
+    --green: #16a34a;
+    --blue: #2563eb;
+    --r: 9px;
+    --r-lg: 16px;
+    --shadow: 0 10px 30px rgba(15,23,42,.08);
+    --shadow-sm: 0 1px 3px rgba(15,23,42,.06);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
     background: var(--bg);
-    background-image: radial-gradient(var(--border) 1px, transparent 1px);
-    background-size: 22px 22px;
+    background-image: radial-gradient(rgba(37,99,235,.06) 1px, transparent 1px);
+    background-size: 26px 26px;
     color: var(--text);
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 13px;
     line-height: 1.6;
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
   }
 
   /* ── HEADER ── */
   .hdr {
     position: sticky; top: 0; z-index: 100;
-    background: rgba(13,13,13,0.95);
-    backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    border-bottom: 1px solid #1e3a8a;
     padding: 10px 24px;
     display: flex; align-items: center; gap: 14px;
-    height: 48px;
+    height: 52px;
+    box-shadow: 0 1px 14px rgba(15,23,42,.18);
   }
   .hdr-logo {
-    width: 26px; height: 26px;
-    border: 1.5px solid var(--amber); border-radius: 3px;
+    width: 27px; height: 27px;
+    border: 1.5px solid rgba(255,255,255,.55); border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
-    color: var(--amber); font-size: 10px; font-weight: 700; flex-shrink: 0;
+    color: #fff; font-size: 10px; font-weight: 700; flex-shrink: 0;
   }
-  .hdr-title { font-size: 12px; letter-spacing: 0.3px; }
-  .hdr-title em { color: var(--amber); font-style: normal; }
+  .hdr-title { font-size: 13px; letter-spacing: 0.3px; color: #fff; font-weight: 600; }
+  .hdr-title em { color: #93c5fd; font-style: normal; font-weight: 500; }
   .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .api-url {
-    background: var(--surface); color: var(--text-dim);
-    border: 1px solid var(--border); padding: 3px 8px;
+    background: rgba(255,255,255,.12); color: #e8eefb;
+    border: 1px solid rgba(255,255,255,.2); padding: 4px 9px;
     border-radius: var(--r); font: inherit; font-size: 11px; width: 200px;
-    transition: border-color 0.12s, color 0.12s;
+    transition: border-color 0.12s, background 0.12s;
   }
-  .api-url:focus { outline: none; border-color: var(--amber-dim); color: var(--text); }
-  .api-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); transition: background 0.2s; }
-  .api-dot.ok  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
-  .api-dot.err { background: var(--coral); }
-  .api-lbl { font-size: 10px; color: var(--text-muted); min-width: 56px; }
+  .api-url::placeholder { color: #aab8cf; }
+  .api-url:focus { outline: none; border-color: #93c5fd; background: rgba(255,255,255,.2); color: #fff; }
+  .api-dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; transition: background 0.2s; }
+  .api-dot.ok  { background: #4ade80;  box-shadow: 0 0 7px #4ade80; }
+  .api-dot.err { background: #f87171; }
+  .api-lbl { font-size: 10px; color: #c7d3e6; min-width: 56px; }
 
   /* ── TABS ── */
   .tabs {
-    position: sticky; top: 48px; z-index: 99;
-    background: rgba(13,13,13,0.92); backdrop-filter: blur(8px);
+    position: sticky; top: 52px; z-index: 99;
+    background: rgba(255,255,255,0.85); backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
-    padding: 0 24px; display: flex; align-items: flex-end; height: 40px;
+    padding: 0 24px; display: flex; align-items: flex-end; height: 42px;
   }
   .tab {
     padding: 0 18px; height: 40px; cursor: pointer; font: inherit; font-size: 12px;
@@ -121,7 +127,7 @@
   }
 
   /* ── INPUT PANEL ── */
-  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
   .panel.est-accent { border-top: 2px solid var(--amber); }
   .panel.srch-accent { border-top: 2px solid var(--teal); }
   .panel-hdr {
@@ -138,11 +144,20 @@
     letter-spacing: 0.2px; transition: background 0.1s, color 0.1s;
   }
   .src-btn.on { background: var(--surface-hi); color: var(--amber); }
+  .src-btn.srch.on { background: var(--surface-hi); color: var(--teal); }
+
+  /* search objective: result-mode toggle + filter/sort block */
+  .obj-block { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+  .obj-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .obj-sub-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-dim); margin: 8px 0 6px; }
+  .obj-pareto-note { font-size: 10px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+  .filter-row { display: grid; grid-template-columns: 1fr 58px 1fr 26px; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .filter-row .row-act.del { height: 100%; }
 
   .yaml-editor {
-    background: var(--bg); color: var(--text);
+    background: var(--surface-hi); color: var(--text);
     border: 1px solid var(--border); padding: 10px 12px;
-    border-radius: var(--r); font: inherit; font-size: 11px;
+    border-radius: var(--r); font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', monospace; font-size: 11px;
     width: 100%; min-height: 190px; resize: vertical; line-height: 1.7; tab-size: 2;
     transition: border-color 0.12s;
   }
@@ -176,7 +191,7 @@
     transition: border-color 0.12s;
   }
   .form-input:focus, .form-select:focus { outline: none; border-color: var(--amber-dim); }
-  .form-select option { background: #141414; }
+  .form-select option { background: #fff; color: var(--text); }
   .full-col { grid-column: 1/-1; }
 
   .run-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
@@ -189,17 +204,18 @@
   .run-btn.est-btn {
     background: var(--amber-dim); color: var(--amber-bright); border-color: var(--amber);
   }
-  .run-btn.est-btn:hover { background: var(--amber); color: #0d0d0d; }
+  .run-btn.est-btn:hover { background: var(--amber); color: #fff; }
   .run-btn.srch-btn {
     background: var(--teal-dim); color: var(--teal); border-color: var(--teal-dim);
   }
-  .run-btn.srch-btn:hover { background: var(--teal); color: #0d0d0d; }
+  .run-btn.srch-btn:hover { background: var(--teal); color: #fff; }
   .run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
   .run-hint { font-size: 10px; color: var(--text-muted); }
 
   /* ── INFO PANELS (left col) ── */
   .info-panel {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
   .info-panel-hdr {
     padding: 8px 14px; display: flex; align-items: center; justify-content: space-between;
@@ -262,7 +278,8 @@
   /* ── RESULT CARD ── */
   .result-card {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--r); overflow: hidden;
+    border-radius: var(--r-lg); overflow: hidden;
+    box-shadow: var(--shadow);
     animation: slide-in 0.18s ease;
   }
   @keyframes slide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -365,10 +382,38 @@
   .pareto-tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
   .pareto-tbl th { color: var(--text-muted); font-weight: normal; text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border); }
   .pareto-tbl th:first-child, .pareto-tbl th:nth-child(2) { text-align: left; }
-  .pareto-tbl td { padding: 4px 8px; text-align: right; color: var(--text); border-bottom: 1px solid #1c1c1c; }
+  .pareto-tbl th:last-child { text-align: center; }
+  .pareto-tbl td { padding: 4px 8px; text-align: right; color: var(--text); border-bottom: 1px solid var(--border); }
   .pareto-tbl td:first-child { color: var(--text-muted); }
   .pareto-tbl td:nth-child(2) { text-align: left; }
+  .pareto-tbl td:last-child { text-align: center; }
   .pareto-tbl tr:first-child td { color: var(--teal); }
+  .detail-btn {
+    background: transparent; border: 1px solid var(--teal-dim); color: var(--teal);
+    font-family: inherit; font-size: 10px; padding: 2px 8px; cursor: pointer;
+    border-radius: 2px; transition: background .12s, color .12s;
+  }
+  .detail-btn:hover { background: var(--teal); color: #0d0d0d; }
+  .detail-btn.on-detail { background: var(--teal); color: #fff; border-color: var(--teal); }
+  .detail-btn[disabled] { opacity: .55; cursor: progress; }
+  .detail-btn.pending { color: var(--amber); border-color: var(--amber-dim); }
+  .detail-btn.failed  { color: var(--coral); border-color: var(--coral); }
+
+  /* multi-select chips for the search form */
+  .chip-group { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: 10px; padding: 3px 9px; border-radius: 3px;
+    cursor: pointer; user-select: none; transition: background .12s, color .12s, border-color .12s;
+  }
+  .chip:hover { color: var(--text); border-color: var(--teal-dim); }
+  .chip.on    { background: rgba(0,184,144,.10); color: var(--teal); border-color: var(--teal); }
+  .chip-row-lbl {
+    font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px;
+    padding-top: 3px; min-width: 70px;
+  }
+  .chip-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+  .chip-row .chip-group { flex: 1; }
 
   /* warn list */
   .warn-list { list-style: none; }
@@ -380,13 +425,19 @@
     overflow: hidden; height: 0; position: relative;
     transition: height 0.3s cubic-bezier(.4,0,.2,1);
   }
-  .report-wrap.open { height: 680px; border-top: 1px solid var(--border); }
-  .report-frame { width: 100%; height: 680px; border: none; display: block; background: #0d0d0d; opacity: 0; transition: opacity .18s ease; }
+  .report-wrap.open { height: calc(100vh - 180px); min-height: 600px; border-top: 1px solid var(--border); }
+  /* When two or more reports are open, lay the estimate cards out in two
+     columns so the reports sit side by side for comparison instead of
+     stacking and pushing each other off-screen. */
+  #est-results.compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+  #est-results.compare .report-wrap.open { height: calc(100vh - 150px); }
+  @media (max-width: 1280px) { #est-results.compare { grid-template-columns: 1fr; } }
+  .report-frame { width: 100%; height: 100%; border: none; display: block; background: #fff; opacity: 0; transition: opacity .18s ease; }
   .report-frame.ready { opacity: 1; }
   .report-loader {
     position: absolute; inset: 0; z-index: 2;
     display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(180deg, rgba(13,13,13,.98), rgba(13,13,13,.92));
+    background: linear-gradient(180deg, rgba(245,247,251,.98), rgba(245,247,251,.92));
     transition: opacity .18s ease, visibility .18s ease;
   }
   .report-loader.done { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -394,7 +445,7 @@
   .report-loader-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .report-loader-title { font-size: 11px; color: var(--amber); text-transform: uppercase; letter-spacing: .8px; }
   .report-loader-pct { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .report-progress { height: 3px; background: #1d1d1d; border: 1px solid var(--border); overflow: hidden; }
+  .report-progress { height: 3px; background: var(--surface-hi); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
   .report-progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--amber), var(--teal)); transition: width .16s ease; }
   .report-progress-bar.indeterminate { width: 42%; animation: report-progress-scan 1.1s ease-in-out infinite; }
   .report-loader-msg { margin-top: 9px; font-size: 11px; color: var(--text-muted); }
@@ -438,9 +489,9 @@
   .crud-overlay.show { display: flex; }
   .crud-modal {
     background: var(--surface); border: 1px solid var(--border-hi);
-    border-radius: var(--r); width: 580px; max-width: 96vw;
+    border-radius: var(--r-lg); width: 580px; max-width: 96vw;
     display: flex; flex-direction: column; max-height: 88vh;
-    box-shadow: 0 8px 40px rgba(0,0,0,.65);
+    box-shadow: 0 24px 60px rgba(15,23,42,.28);
   }
   .crud-hdr {
     padding: 10px 14px; border-bottom: 1px solid var(--border);
@@ -464,7 +515,7 @@
     background: var(--amber-dim); color: var(--amber-bright); border: 1px solid var(--amber);
     cursor: pointer; transition: background 0.12s;
   }
-  .crud-save:hover { background: var(--amber); color: #0d0d0d; }
+  .crud-save:hover { background: var(--amber); color: #fff; }
   .crud-copy, .crud-cancel {
     font: inherit; font-size: 11px; padding: 5px 12px; border-radius: var(--r);
     background: transparent; color: var(--text-muted); border: 1px solid var(--border);
@@ -489,6 +540,29 @@
     cursor: pointer; margin-left: auto; transition: color 0.1s, border-color 0.1s;
   }
   .panel-add-btn:hover { color: var(--amber); border-color: var(--amber-dim); }
+  /* ── HEADER BUTTONS + MINI MODALS (usage stats) ── */
+  .hdr-btn { font: inherit; font-size: 13px; background: rgba(255,255,255,.1); color: #e8eefb;
+             border: 1px solid rgba(255,255,255,.2); border-radius: var(--r); padding: 4px 10px; cursor: pointer;
+             display: inline-flex; align-items: center; gap: 5px;
+             transition: background .12s, border-color .12s; }
+  .hdr-btn:hover { background: rgba(255,255,255,.2); border-color: #93c5fd; }
+  .mini-modal { background: var(--surface); border: 1px solid var(--border-hi); border-radius: var(--r-lg);
+                width: 320px; max-width: 92vw; box-shadow: 0 24px 60px rgba(15,23,42,.28); padding: 18px; }
+  .mini-modal h3 { margin: 0 0 14px; font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: var(--text-dim); }
+  .mini-input { width: 100%; box-sizing: border-box; background: var(--surface-hi); color: var(--text);
+                border: 1px solid var(--border); border-radius: var(--r); padding: 7px 10px; font: inherit; font-size: 13px; }
+  .mini-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .mini-btn { font: inherit; font-size: 12px; padding: 7px 18px; border-radius: var(--r); margin-top: 14px;
+              background: var(--blue); color: #fff; border: 1px solid var(--blue); cursor: pointer;
+              transition: background .12s; }
+  .mini-btn:hover { background: #1d4ed8; }
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .k { color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; font-size: 10px; }
+  .stat-row .v { color: var(--blue); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .stat-row.total { margin-top: 4px; padding-top: 12px; border-top: 2px solid var(--border); }
+  .stat-row.total .k { color: var(--text); font-weight: 600; }
+  .stat-row.total .v { color: var(--amber); font-size: 18px; }
 </style>
 </head>
 <body>
@@ -498,6 +572,8 @@
   <div class="hdr-logo">ZRT</div>
   <div class="hdr-title">Sim Launcher <em>/ Training</em></div>
   <div class="hdr-right">
+    <button class="hdr-btn" id="stats-btn" onclick="openStats()" title="task submission stats">📊</button>
+    <button class="hdr-btn" id="user-btn" onclick="openUserModal()" title="change username">👤 <span id="user-name">—</span></button>
     <input class="api-url" id="api-url" value="" onblur="checkHealth()">
     <div class="api-dot" id="api-dot"></div>
     <span class="api-lbl" id="api-lbl">—</span>
@@ -688,12 +764,67 @@
         <div class="panel-hdr">
           grid search — strategy space
           <div class="src-toggle">
-            <button class="src-btn on" id="src-srch-yaml" onclick="setSrc('search','yaml')">inline yaml</button>
-            <button class="src-btn"    id="src-srch-path" onclick="setSrc('search','path')">file path</button>
+            <button class="src-btn on" id="src-srch-form" onclick="setSrc('search','form')">form</button>
+            <button class="src-btn"    id="src-srch-yaml" onclick="setSrc('search','yaml')">yaml</button>
+            <button class="src-btn"    id="src-srch-path" onclick="setSrc('search','path')">file</button>
           </div>
         </div>
         <div class="panel-body">
-          <div id="srch-yaml-sec">
+
+          <!-- ── FORM MODE ── -->
+          <div id="srch-form-sec">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-dim);margin-bottom:8px">Model & System</div>
+            <div class="form-grid">
+              <div class="form-group full-col">
+                <label class="form-label">model</label>
+                <select class="form-select" id="srch-model-sel"><option value="">loading…</option></select>
+              </div>
+              <div class="form-group full-col">
+                <label class="form-label">hardware</label>
+                <select class="form-select" id="srch-hw-sel"><option value="">loading…</option></select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">nodes</label>
+                <input class="form-input" id="srch-nodes" type="number" value="16" min="1">
+              </div>
+              <div class="form-group">
+                <label class="form-label">GPUs / node</label>
+                <select class="form-select" id="srch-gpus">
+                  <option value="8" selected>8</option>
+                  <option value="4">4</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-dim);margin:12px 0 8px">Batch & Memory</div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">micro batch</label>
+                <input class="form-input" id="srch-mb" type="number" value="1" min="1">
+              </div>
+              <div class="form-group">
+                <label class="form-label">global batch</label>
+                <input class="form-input" id="srch-gb" type="number" value="2048" min="1">
+              </div>
+              <div class="form-group full-col">
+                <label class="form-label">max memory per GPU (GB)</label>
+                <input class="form-input" id="srch-maxmem" type="number" value="80" min="1" step="1">
+              </div>
+            </div>
+
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-dim);margin:12px 0 6px">Search Space — toggle values to include</div>
+            <div id="srch-chips-host"></div>
+
+            <div class="form-grid" style="margin-top:10px">
+              <div class="form-group full-col">
+                <label class="form-label">output json (optional)</label>
+                <input class="form-input" id="srch-out" placeholder="output/pareto.json">
+              </div>
+            </div>
+          </div>
+
+          <!-- ── YAML MODE ── -->
+          <div id="srch-yaml-sec" class="hidden">
             <textarea class="yaml-editor" id="srch-yaml" spellcheck="false" placeholder="# Training config YAML — same format as estimate…"></textarea>
             <div class="presets">
               <span class="preset-lbl">presets:</span>
@@ -701,18 +832,54 @@
               <button class="preset-pill" onclick="loadPreset('srch','dsv3_h100')">DSV3 H100</button>
             </div>
           </div>
+
+          <!-- ── FILE MODE ── -->
           <div id="srch-path-sec" class="hidden">
             <input class="path-input" id="srch-path" placeholder="python/zrt/training/configs/llama3_70b_3d.yaml">
           </div>
-          <div class="form-grid" style="margin-top:10px">
-            <div class="form-group full-col">
-              <label class="form-label">output json (optional)</label>
-              <input class="form-input" id="srch-out" placeholder="output/pareto.json">
+
+          <!-- ── RESULT MODE / FILTER + SORT (applies to all source modes) ── -->
+          <div class="obj-block">
+            <div class="obj-mode-row">
+              <span class="form-label" style="margin:0">寻优方式</span>
+              <div class="src-toggle">
+                <button class="src-btn srch on" id="srch-mode-fs"     onclick="setSearchObjMode('filter_sort')">约束过滤 + 排序</button>
+                <button class="src-btn srch"    id="srch-mode-pareto" onclick="setSearchObjMode('pareto')">Pareto 前沿</button>
+              </div>
+            </div>
+
+            <div id="srch-fs-block">
+              <div class="obj-sub-lbl">过滤约束 — 不满足则剔除（显存上限始终生效）</div>
+              <div id="srch-filter-rows"></div>
+              <button type="button" class="preset-pill" style="margin-top:5px" onclick="addFilterRow()">+ 添加约束</button>
+
+              <div class="form-grid" style="margin-top:12px">
+                <div class="form-group">
+                  <label class="form-label">排序依据</label>
+                  <select class="form-select" id="srch-sort-by"></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">方向</label>
+                  <select class="form-select" id="srch-sort-dir">
+                    <option value="desc" selected>降序 (大→小)</option>
+                    <option value="asc">升序 (小→大)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Top N</label>
+                  <input class="form-input" id="srch-topn" type="number" value="50" min="1">
+                </div>
+              </div>
+            </div>
+
+            <div id="srch-pareto-note" class="hidden obj-pareto-note">
+              Pareto 模式：返回 step_time × memory 的二维非劣前沿，忽略上面的过滤 / 排序设置。
             </div>
           </div>
+
           <div class="run-row">
             <button class="run-btn srch-btn" id="btn-srch" onclick="runSearch()">▶ run search</button>
-            <span class="run-hint">POST /search → Pareto</span>
+            <span class="run-hint" id="srch-run-hint">POST /search</span>
           </div>
         </div>
       </div>
@@ -774,6 +941,20 @@
 
 <!-- HISTORY PANEL -->
 <div class="overlay" id="overlay" onclick="toggleHist()"></div>
+<div class="crud-overlay" id="user-overlay" onclick="if(event.target===this)closeUserModal()">
+  <div class="mini-modal">
+    <h3>welcome · 请输入用户名</h3>
+    <input class="mini-input" id="user-input" placeholder="your name"
+           onkeydown="if(event.key==='Enter')saveUsername()">
+    <button class="mini-btn" onclick="saveUsername()">save</button>
+  </div>
+</div>
+<div class="crud-overlay" id="stats-overlay" onclick="if(event.target===this)closeStats()">
+  <div class="mini-modal">
+    <h3>task submissions</h3>
+    <div id="stats-body"><div class="stat-row"><span class="k">loading…</span></div></div>
+  </div>
+</div>
 <div class="hist-panel" id="hist-panel">
   <div class="hist-hdr">
     job history
@@ -936,6 +1117,12 @@ function switchTab(name) {
   const tabs = document.querySelectorAll('.tab');
   tabs[0].classList.toggle('on', name === 'estimate');
   tabs[1].classList.toggle('on', name === 'search');
+  // The hardware/model reference panels are noise on the search page — default
+  // them collapsed there (leave estimate's state untouched).
+  if (name === 'search') {
+    document.getElementById('hw-panel')?.classList.add('collapsed');
+    document.getElementById('models-panel')?.classList.add('collapsed');
+  }
 }
 
 function setSrc(tab, mode) {
@@ -948,11 +1135,218 @@ function setSrc(tab, mode) {
     document.getElementById('src-est-path').classList.toggle('on', mode === 'path');
     setEstimateRunState();
   } else {
+    document.getElementById('srch-form-sec').classList.toggle('hidden', mode !== 'form');
     document.getElementById('srch-yaml-sec').classList.toggle('hidden', mode !== 'yaml');
     document.getElementById('srch-path-sec').classList.toggle('hidden', mode !== 'path');
+    document.getElementById('src-srch-form').classList.toggle('on', mode === 'form');
     document.getElementById('src-srch-yaml').classList.toggle('on', mode === 'yaml');
     document.getElementById('src-srch-path').classList.toggle('on', mode === 'path');
+    setSearchRunState();
   }
+}
+
+// ── Search form: chip groups, run state, request builder ──────────────────────
+// Each entry: [label, id-suffix, type, options, defaults]. type='int' values
+// are sent as integers; 'str' as strings (for PP schedules / recompute / opt).
+const _SRCH_CHIPS = [
+  ['TP',         'tp',       'int', [1,2,4,8,16,32,64],    [1,2,4,8]],
+  ['PP',         'pp',       'int', [1,2,4,8,16],          [1,2,4,8]],
+  ['EP',         'ep',       'int', [1,2,4,8,16,32,64],    [1,8]],
+  ['CP',         'cp',       'int', [1,2,4,8],             [1]],
+  ['DP',         'dp',       'int', [1,2,4,8,16,32,64],    [1,2,4,8]],
+  ['ZeRO',       'zero',     'int', [0,1,2,3],             [0,1,2,3]],
+  ['VPP chunks', 'vpp',      'int', [1,2,4,8],             [1,2,4]],
+  ['PP sched',   'sched',    'str', ['1f1b','interleaved','dualpipe','dualpipe_v','zero_bubble'], ['1f1b','interleaved','dualpipe']],
+  ['Recompute',  'recomp',   'str', ['none','selective','full'], ['none','selective','full']],
+  ['Optimizer',  'opt',      'str', ['adam','muon'],       ['adam','muon']],
+];
+
+function renderSrchChips() {
+  const host = document.getElementById('srch-chips-host');
+  if (!host) return;
+  host.innerHTML = _SRCH_CHIPS.map(([label, id, , opts, defaults]) => {
+    const def = new Set(defaults.map(String));
+    const chips = opts.map(v => {
+      const on = def.has(String(v)) ? ' on' : '';
+      return `<button type="button" class="chip${on}" data-srch-chip="${id}" data-v="${v}" onclick="this.classList.toggle('on')">${v}</button>`;
+    }).join('');
+    return `<div class="chip-row">
+      <div class="chip-row-lbl">${label}</div>
+      <div class="chip-group">${chips}</div>
+    </div>`;
+  }).join('');
+}
+
+function _srchChipValues(suffix, type) {
+  const nodes = document.querySelectorAll(`[data-srch-chip="${suffix}"].on`);
+  const out = [];
+  nodes.forEach(n => out.push(type === 'int' ? parseInt(n.dataset.v, 10) : n.dataset.v));
+  return out;
+}
+
+function isSearchFormMode() {
+  const sec = document.getElementById('srch-form-sec');
+  return sec && !sec.classList.contains('hidden');
+}
+
+function setSearchRunState() {
+  const btn = document.getElementById('btn-srch');
+  const hint = document.getElementById('srch-run-hint');
+  if (!btn) return;
+  if (!isSearchFormMode()) {
+    btn.disabled = false;
+    if (hint) hint.textContent = 'POST /search → Pareto';
+    return;
+  }
+  const model = document.getElementById('srch-model-sel')?.value || '';
+  const hw    = document.getElementById('srch-hw-sel')?.value || '';
+  const waiting = !formModelsReady || !formHardwareReady || !model || !hw;
+  btn.disabled = waiting;
+  if (hint) hint.textContent = waiting ? 'loading model / hardware' : 'POST /search → Pareto';
+}
+
+// ── Search objective: result mode, filter constraints, ranking ────────────────
+const SRCH_METRIC_OPTS = [
+  ['step_time_ms',    'step time (ms)'],
+  ['tokens_per_sec',  'tokens/s'],
+  ['mfu',             'MFU'],
+  ['hfu',             'HFU'],
+  ['bubble_fraction', 'bubble'],
+  ['memory_gb',       'memory (GB)'],
+];
+const SRCH_FILTER_OPS = ['<', '<=', '>', '>=', '==', '!='];
+let searchResultMode = 'filter_sort';
+
+function _metricOptionsHtml(selected) {
+  return SRCH_METRIC_OPTS.map(([v, l]) =>
+    `<option value="${v}"${v === selected ? ' selected' : ''}>${l}</option>`).join('');
+}
+
+function setSearchObjMode(mode) {
+  searchResultMode = mode;
+  document.getElementById('srch-mode-fs').classList.toggle('on', mode === 'filter_sort');
+  document.getElementById('srch-mode-pareto').classList.toggle('on', mode === 'pareto');
+  document.getElementById('srch-fs-block').classList.toggle('hidden', mode !== 'filter_sort');
+  document.getElementById('srch-pareto-note').classList.toggle('hidden', mode !== 'pareto');
+}
+
+function addFilterRow(metric = 'step_time_ms', op = '<', value = '') {
+  const host = document.getElementById('srch-filter-rows');
+  if (!host) return;
+  const row = document.createElement('div');
+  row.className = 'filter-row';
+  row.innerHTML = `
+    <select class="form-select" data-filter-metric>${_metricOptionsHtml(metric)}</select>
+    <select class="form-select" data-filter-op>${SRCH_FILTER_OPS.map(o => `<option${o === op ? ' selected' : ''}>${o}</option>`).join('')}</select>
+    <input class="form-input" data-filter-value type="number" step="any" placeholder="阈值" value="${value}">
+    <button type="button" class="row-act del" title="remove" onclick="this.closest('.filter-row').remove()">✕</button>`;
+  host.appendChild(row);
+}
+
+function initSearchObjective() {
+  const sortSel = document.getElementById('srch-sort-by');
+  if (sortSel) sortSel.innerHTML = _metricOptionsHtml('tokens_per_sec');
+  const rows = document.getElementById('srch-filter-rows');
+  if (rows && !rows.children.length) addFilterRow('memory_gb', '<=', '80');
+  setSearchObjMode(searchResultMode);
+}
+
+// Result-selection options sent with every /search request, regardless of the
+// config source (form / yaml / file).
+function collectSearchOptions() {
+  if (searchResultMode === 'pareto') return { search_mode: 'pareto' };
+  const filters = [];
+  document.querySelectorAll('#srch-filter-rows .filter-row').forEach(row => {
+    const raw = row.querySelector('[data-filter-value]').value.trim();
+    if (raw === '') return;            // skip incomplete constraints
+    const value = parseFloat(raw);
+    if (!Number.isFinite(value)) return;
+    filters.push({
+      metric: row.querySelector('[data-filter-metric]').value,
+      op:     row.querySelector('[data-filter-op]').value,
+      value,
+    });
+  });
+  return {
+    search_mode: 'filter_sort',
+    filters,
+    sort_by:   document.getElementById('srch-sort-by').value,
+    sort_desc: document.getElementById('srch-sort-dir').value === 'desc',
+    top_n:     parseInt(document.getElementById('srch-topn').value || '50', 10),
+  };
+}
+
+function buildSearchFormBody() {
+  const modelKey = document.getElementById('srch-model-sel').value;
+  const hwKey    = document.getElementById('srch-hw-sel').value;
+  const nodes    = parseInt(document.getElementById('srch-nodes').value || 1);
+  const gpus     = parseInt(document.getElementById('srch-gpus').value  || 8);
+  const mb       = parseInt(document.getElementById('srch-mb').value    || 1);
+  const gb       = parseInt(document.getElementById('srch-gb').value    || 2048);
+  const maxMem   = parseFloat(document.getElementById('srch-maxmem').value || 80);
+
+  // Minimal valid strategy stub so load_specs accepts the YAML. The actual
+  // grid is driven by tp_values/pp_values/... in the request body.
+  const tpList = _srchChipValues('tp', 'int');
+  const ppList = _srchChipValues('pp', 'int');
+  const epList = _srchChipValues('ep', 'int');
+  const cpList = _srchChipValues('cp', 'int');
+  const stubTp = tpList[0] || 1;
+  const stubPp = ppList[0] || 1;
+  const stubEp = epList[0] || 1;
+  const stubCp = cpList[0] || 1;
+  const total  = nodes * gpus;
+  const stubDp = Math.max(1, Math.floor(total / (stubTp * stubPp * stubCp)));
+
+  const customModel = _modelCustom.find(c => c.key === modelKey);
+  const customHw    = _hwCustom.find(c => c.key === hwKey);
+  const modelSection = customModel
+    ? `model:\n${_indentYaml(customModel.content, 2)}`
+    : `model: ${modelKey}`;
+  const hwSection = customHw
+    ? `  hw:\n${_indentYaml(customHw.content, 4)}`
+    : `  hw: ${hwKey}`;
+
+  const yaml = `${modelSection}
+
+system:
+${hwSection}
+  nodes: ${nodes}
+  gpus_per_node: ${gpus}
+  host_mem_gb: 2048
+
+strategy:
+  tp: ${stubTp}
+  cp: ${stubCp}
+  pp: ${stubPp}
+  ep: ${stubEp}
+  dp: ${stubDp}
+  micro_batch: ${mb}
+  global_batch: ${gb}
+  zero_stage: 0
+  optimizer: adam
+  recompute:
+    per_layer:
+      dense: []
+      moe: []
+  offload: {opt_state: false, grads: false, params: false}`;
+
+  return {
+    config_content: yaml,
+    micro_batch: mb,
+    global_batch: gb,
+    max_memory_gb: maxMem,
+    tp_values: tpList,
+    pp_values: ppList,
+    ep_values: epList,
+    cp_values: cpList,
+    dp_values: _srchChipValues('dp', 'int'),
+    zero_stages: _srchChipValues('zero', 'int'),
+    vpp_chunks_values: _srchChipValues('vpp', 'int'),
+    pp_schedules: _srchChipValues('sched', 'str'),
+    recompute_policies: _srchChipValues('recomp', 'str'),
+    optimizer_values: _srchChipValues('opt', 'str'),
+  };
 }
 
 function isEstimateFormMode() {
@@ -1124,14 +1518,18 @@ function rebuildHwPanel() {
     ..._hwCustom.filter(c => c.isNew && !_hwDeleted.has(c.key)),
   ];
 
-  const hwSel = document.getElementById('form-hw-sel');
-  if (hwSel) hwSel.innerHTML = effective.map(h => {
+  const hwOptions = effective.map(h => {
     const label = (customMap.has(h.key) || h.isNew) ? `${esc(h.name||h.key)} [custom]` : esc(h.name||h.key);
     return `<option value="${esc(h.key)}">${label}</option>`;
   }).join('');
+  const hwSel = document.getElementById('form-hw-sel');
+  if (hwSel) hwSel.innerHTML = hwOptions;
+  const srchHwSel = document.getElementById('srch-hw-sel');
+  if (srchHwSel) srchHwSel.innerHTML = hwOptions;
   formHardwareReady = Boolean(effective.length);
   autoDP();
   setEstimateRunState();
+  setSearchRunState();
 
   const body = document.getElementById('hw-body');
   if (!body) return;
@@ -1229,14 +1627,17 @@ function renderModelPanel(models) {
 
 function populateModelSelect(models) {
   const sel = document.getElementById('form-model-sel');
-  if (!sel) return;
   const customKeys = new Set(_modelCustom.map(c => c.key));
-  sel.innerHTML = models.map(m => {
+  const options = models.map(m => {
     const label = (customKeys.has(m.key) || m._custom) ? `${esc(m.name||m.key)} [custom]` : esc(m.name||m.key);
     return `<option value="${esc(m.key)}">${label}</option>`;
   }).join('');
+  if (sel) sel.innerHTML = options;
+  const srchSel = document.getElementById('srch-model-sel');
+  if (srchSel) srchSel.innerHTML = options;
   formModelsReady = Boolean(models.length);
   setEstimateRunState();
+  setSearchRunState();
 }
 
 // ── CRUD modal ────────────────────────────────────────────────────────────────
@@ -1483,8 +1884,47 @@ function updateCounts() {
   document.getElementById('hist-count').textContent = jobs.length;
 }
 
+// ── Username + usage stats ──────────────────────────────────────────────────────
+const USER_KEY = 'zrt_username';
+function currentUsername() { return localStorage.getItem(USER_KEY) || 'anonymous'; }
+function renderUsername() { document.getElementById('user-name').textContent = currentUsername(); }
+
+function openUserModal() {
+  document.getElementById('user-input').value = localStorage.getItem(USER_KEY) || '';
+  document.getElementById('user-overlay').classList.add('show');
+  document.getElementById('user-input').focus();
+}
+function closeUserModal() { document.getElementById('user-overlay').classList.remove('show'); }
+function saveUsername() {
+  const name = document.getElementById('user-input').value.trim() || 'anonymous';
+  localStorage.setItem(USER_KEY, name);
+  renderUsername();
+  closeUserModal();
+}
+
+async function openStats() {
+  const body = document.getElementById('stats-body');
+  document.getElementById('stats-overlay').classList.add('show');
+  body.innerHTML = '<div class="stat-row"><span class="k">loading…</span></div>';
+  try {
+    const r = await fetch(api()+'/stats');
+    if (!r.ok) throw new Error(r.status);
+    const s = await r.json();
+    const t = s.totals || {};
+    body.innerHTML =
+      `<div class="stat-row"><span class="k">trace</span><span class="v">${t.trace||0}</span></div>` +
+      `<div class="stat-row"><span class="k">estimate</span><span class="v">${t.estimate||0}</span></div>` +
+      `<div class="stat-row"><span class="k">search</span><span class="v">${t.search||0}</span></div>` +
+      `<div class="stat-row total"><span class="k">total</span><span class="v">${s.total||0}</span></div>`;
+  } catch(e) {
+    body.innerHTML = `<div class="stat-row"><span class="k">error</span><span class="v">${e.message}</span></div>`;
+  }
+}
+function closeStats() { document.getElementById('stats-overlay').classList.remove('show'); }
+
 // ── Submit ─────────────────────────────────────────────────────────────────────
 async function post(endpoint, body, type) {
+  body = { ...body, username: currentUsername() };
   const r = await fetch(api()+endpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1525,15 +1965,25 @@ async function runSearch() {
   const btn = document.getElementById('btn-srch');
   btn.disabled = true;
   try {
+    let body;
     const isPath = !document.getElementById('srch-path-sec').classList.contains('hidden');
-    const body = isPath
-      ? { config_path: document.getElementById('srch-path').value.trim() }
-      : { config_content: document.getElementById('srch-yaml').value.trim() };
-    const out = document.getElementById('srch-out').value.trim();
+    const isYaml = !document.getElementById('srch-yaml-sec').classList.contains('hidden');
+    if (isPath) {
+      body = { config_path: document.getElementById('srch-path').value.trim() };
+    } else if (isYaml) {
+      body = { config_content: document.getElementById('srch-yaml').value.trim() };
+    } else {
+      if (!formModelsReady || !formHardwareReady) {
+        throw new Error('model / hardware is still loading');
+      }
+      body = buildSearchFormBody();
+    }
+    const out = document.getElementById('srch-out')?.value.trim();
     if (out) body.output = out;
+    Object.assign(body, collectSearchOptions());
     await post('/search', body, 'search');
   } catch(e) { inlineError(e.message, 'search'); }
-  finally { btn.disabled = false; }
+  finally { setSearchRunState(); }
 }
 
 // ── Card lifecycle ─────────────────────────────────────────────────────────────
@@ -1562,6 +2012,7 @@ function deleteJob(jobId) {
   const card = document.getElementById('res-'+jobId);
   if (card) card.remove();
   updateCounts();
+  updateCompareLayout();
   renderHist();
 }
 
@@ -1586,211 +2037,81 @@ function refreshCard(job) {
 }
 
 // ── Estimate result ────────────────────────────────────────────────────────────
-function fmtFlops(v) {
-  if (!v) return '—';
-  if (v >= 1e15) return (v/1e15).toFixed(2)+' PF';
-  if (v >= 1e12) return (v/1e12).toFixed(2)+' TF';
-  if (v >= 1e9)  return (v/1e9).toFixed(2)+' GF';
-  return v.toFixed(0);
-}
-function fmtParams(v) {
-  if (!v) return '—';
-  if (v >= 1e12) return (v/1e12).toFixed(2)+'T';
-  if (v >= 1e9)  return (v/1e9).toFixed(1)+'B';
-  if (v >= 1e6)  return (v/1e6).toFixed(0)+'M';
-  return v.toFixed(0);
-}
-
 function renderEstimate(job) {
   const d  = job.result?.data;
   if (!d) return;
-  const st = d.step_time_ms;
-  const md = job.result?.model_detail    || {};
-  const hw = job.result?.hw_detail       || {};
-  const st2= job.result?.strategy_detail || {};
-  const cs = d.config_summary            || {};
+  const reportUrl = job.result?.html_url
+    || (job.result?.html_filename ? `/estimate/${job.result.html_filename}` : '');
 
-  // ── Model section ─────────────────────────────────────────────────
-  const layerStr = Object.entries(md.layer_counts||{}).map(([t,n])=>`${n}×${t}`).join(' · ');
-  const moeBadge = md.is_moe
-    ? `<span style="font-size:9px;padding:1px 5px;border-radius:2px;background:rgba(0,184,144,.15);color:var(--teal);border:1px solid var(--teal-dim)">MoE</span>`
-    : `<span style="font-size:9px;padding:1px 5px;border-radius:2px;background:rgba(212,140,12,.12);color:var(--amber);border:1px solid var(--amber-dim)">Dense</span>`;
-  const modelRows = [
-    { k:'arch',     v: `${md.attn_type||'—'} ${moeBadge}` },
-    { k:'hidden',   v: md.hidden??'—' },
-    { k:'ffn',      v: md.ffn??'—' },
-    { k:'heads',    v: md.num_heads ? `${md.num_heads} / ${md.num_kv_heads} (Q/KV)  head_dim ${md.head_dim}` : '—' },
-    md.is_moe ? { k:'experts', v: `${md.num_experts} × top-${md.top_k}` } : null,
-    { k:'layers',   v: layerStr || (md.num_layers??'—') },
-    { k:'vocab',    v: md.vocab ? `${(md.vocab/1000).toFixed(0)}K` : '—' },
-    { k:'ctx',      v: md.seq_len??'—' },
-    { k:'dtype',    v: md.param_dtype||'—' },
-    { k:'params',   v: fmtParams(md.total_params||d.effective_params) },
-  ].filter(Boolean);
-
-  // ── Hardware section ───────────────────────────────────────────────
-  const hwRows = [
-    { k:'GPU',     v: hw.name||cs.system||'—' },
-    { k:'cluster', v: hw.world_size ? `${hw.nodes} nodes × ${hw.gpus_per_node} GPUs = ${hw.world_size}` : '—' },
-    { k:'BF16',    v: hw.bf16_tflops ? `${hw.bf16_tflops} TFLOPS` : '—' },
-    { k:'FP8',     v: hw.fp8_tops    ? `${hw.fp8_tops} TOPS`      : '—' },
-    { k:'HBM',     v: hw.hbm_gb      ? `${hw.hbm_gb} GB  ·  ${hw.hbm_bw_gbps} GB/s` : '—' },
-    hw.intra ? { k:'intra',  v: hw.intra } : null,
-    hw.inter ? { k:'inter',  v: hw.inter } : null,
-  ].filter(Boolean);
-
-  // ── Strategy section ──────────────────────────────────────────────
-  const stratRows = [
-    { k:'parallel',   v: st2.tp ? `TP${st2.tp} · CP${st2.cp} · PP${st2.pp} · EP${st2.ep} · DP${st2.dp}` : (cs.strategy||'—') },
-    { k:'schedule',   v: `${st2.pp_schedule||d.schedule_name||'—'}  ·  ${st2.num_microbatches??cs.num_microbatches??'—'} µbatches` },
-    { k:'batch',      v: `micro ${st2.micro_batch??cs.micro_batch??'—'}  ·  global ${st2.global_batch??cs.global_batch??'—'}` },
-    { k:'ZeRO',       v: `stage ${st2.zero_stage??cs.zero_stage??'—'}` },
-    { k:'optimizer',  v: st2.optimizer||'—' },
-    { k:'TP overlap', v: st2.tp_overlap||'—' },
-    { k:'FLOPs/tok',  v: fmtFlops(d.flops_per_token) },
-    { k:'total FLOPs',v: fmtFlops(d.total_flops) },
-  ];
-
-  function cfgSection(title, rows) {
-    return `<div class="section">
-      <div class="section-title">${title}</div>
-      <div class="cfg-grid">
-        ${rows.map(r=>`<div class="cfg-row${r.full?' full':''}"><span class="cfg-k">${r.k}</span><span class="cfg-v">${r.v}</span></div>`).join('')}
-      </div></div>`;
-  }
-  const cfgHtml = cfgSection('model', modelRows)
-                + cfgSection('hardware', hwRows)
-                + cfgSection('strategy', stratRows);
-
-  const comps = [
-    { l:'Forward compute',  v:d.fwd_compute_ms,   c:'#00b890' },
-    { l:'Backward compute', v:d.bwd_compute_ms,   c:'#f0a828' },
-    { l:'TP comm',          v:d.tp_exposed_ms||0, c:'#e04848' },
-    { l:'CP comm',          v:d.cp_exposed_ms||0, c:'#e04848' },
-    { l:'EP comm',          v:d.ep_exposed_ms||0, c:'#e04848' },
-    { l:'PP comm',          v:d.pp_exposed_ms||0, c:'#e04848' },
-    { l:'DP comm',          v:d.dp_exposed_ms||0, c:'#e04848' },
-    { l:'Optimizer',        v:(d.optimizer_time_ms||0)+(d.optimizer_comm_ms||0), c:'#7060c8' },
-  ].filter(c => c.v > 0);
-  const bkHtml = comps.map(c=>`
-    <div class="bk-row">
-      <span class="bk-lbl">${c.l}</span>
-      <div class="bk-wrap"><div class="bk-bar" style="width:${(c.v/st*100).toFixed(1)}%;background:${c.c}"></div></div>
-      <span class="bk-val">${fmtMs(c.v)}</span>
-    </div>`).join('');
-
-  let phaseHtml = '';
-  if (d.warmup_ms > 0 || d.steady_ms > 0) {
-    const rows = [
-      ['warmup',   d.warmup_fwd_ms,   d.warmup_bwd_ms,   d.warmup_ms],
-      ['steady',   d.steady_fwd_ms,   d.steady_bwd_ms,   d.steady_ms],
-      ['cooldown', d.cooldown_fwd_ms, d.cooldown_bwd_ms, d.cooldown_ms],
-      ['total',    d.warmup_fwd_ms+d.steady_fwd_ms+d.cooldown_fwd_ms,
-                   d.warmup_bwd_ms+d.steady_bwd_ms+d.cooldown_bwd_ms,
-                   d.warmup_ms+d.steady_ms+d.cooldown_ms],
-    ];
-    phaseHtml = `<div class="section">
-      <div class="section-title">phase breakdown</div>
-      <table class="phase-tbl">
-        <tr><th>phase</th><th>fwd</th><th>bwd</th><th>total</th></tr>
-        ${rows.map(([n,...v],i)=>`<tr${i===3?' class="total"':''}><td>${n}</td>${v.map(x=>`<td>${fmtMs(x)}</td>`).join('')}</tr>`).join('')}
-      </table>
-      ${d.steady_per_mb_ms>0?`<div style="margin-top:7px;font-size:10px;color:var(--text-muted)">per microbatch (steady): fwd ${fmtMs(d.steady_fwd_per_mb_ms)} · bwd ${fmtMs(d.steady_bwd_per_mb_ms)} · total ${fmtMs(d.steady_per_mb_ms)}</div>`:''}
-    </div>`;
-  }
-
-  let memHtml = '';
-  if (d.memory) {
-    const gb = d.memory;
-    const fields = [
-      {l:'weights',v:gb.weights_gb},{l:'grads',v:gb.grads_gb},
-      {l:'opt state',v:gb.opt_state_gb},{l:'activations',v:gb.activations_gb},
-      {l:'comm buf',v:gb.comm_buffers_gb},
-    ].filter(f=>f.v>0);
-    const peak = gb.peak_gb || gb.total_gb || 0;
-    memHtml = `<div class="section">
-      <div class="section-title">memory / gpu</div>
-      <div class="mem-grid">
-        ${fields.map(f=>`<div class="mem-cell"><div class="mem-l">${f.l}</div><div class="mem-v">${f.v.toFixed(1)}</div><div class="mem-u">GB</div></div>`).join('')}
-        <div class="mem-cell"><div class="mem-l">allocated</div><div class="mem-v">${(gb.total_gb||0).toFixed(1)}</div><div class="mem-u">GB</div></div>
-        <div class="mem-cell"><div class="mem-l">peak</div><div class="mem-v hi">${peak.toFixed(1)}</div><div class="mem-u">GB</div></div>
-      </div></div>`;
-  }
-
-  let commHtml = '';
-  if (d.hidden_comm_ms > 0 || d.exposed_comm_ms > 0) {
-    commHtml = `<div class="section">
-      <div class="section-title">communication</div>
-      <div class="cfg-grid">
-        <div class="cfg-row"><span class="cfg-k">exposed</span><span class="cfg-v">${fmtMs(d.exposed_comm_ms||0)}</span></div>
-        <div class="cfg-row"><span class="cfg-k">hidden</span><span class="cfg-v">${fmtMs(d.hidden_comm_ms||0)}</span></div>
-        <div class="cfg-row"><span class="cfg-k">volume</span><span class="cfg-v">${fmtMs(d.total_comm_volume_ms||0)}</span></div>
-        <div class="cfg-row"><span class="cfg-k">DP hidden</span><span class="cfg-v">${fmtMs(d.dp_hidden_ms||0)}</span></div>
-      </div></div>`;
-  }
-
-  let warnHtml = '';
-  if (d.warnings?.length) {
-    warnHtml = `<div class="section"><ul class="warn-list">${d.warnings.map(w=>`<li class="warn-item">${esc(w)}</li>`).join('')}</ul></div>`;
-  }
-
+  // The detailed metrics/config/breakdown sections duplicate what the report
+  // page already shows, so we embed the report itself as the main view and
+  // keep only a slim action row (toggle + Excel download + summary).
   document.getElementById('body-'+job.id).outerHTML = `<div id="body-${job.id}">
-    <div class="mstrip">
-      <div class="mc"><div class="mc-l">Step Time</div><div class="mc-v">${fmtMs(st)}</div></div>
-      <div class="mc"><div class="mc-l">MFU</div><div class="mc-v">${(d.mfu*100).toFixed(1)}<span class="mc-u">%</span></div></div>
-      <div class="mc"><div class="mc-l">HFU</div><div class="mc-v">${(d.hfu*100).toFixed(1)}<span class="mc-u">%</span></div></div>
-      <div class="mc"><div class="mc-l">Bubble</div><div class="mc-v">${(d.bubble_fraction*100).toFixed(1)}<span class="mc-u">%</span></div></div>
-      <div class="mc"><div class="mc-l">Tokens/s</div><div class="mc-v">${d.tokens_per_sec>0?fmtNum(d.tokens_per_sec):'—'}</div></div>
-    </div>
-    ${cfgHtml}
-    <div class="section">
-      <div class="section-title">step time breakdown</div>
-      ${bkHtml}
-    </div>
-    ${phaseHtml}${memHtml}${commHtml}${warnHtml}
     <div class="action-row">
-      <button class="action-btn" data-report-btn="${job.id}" onclick="toggleReport('${job.id}')">View Report ▾</button>
+      ${reportUrl ? `<button class="action-btn" data-report-btn="${job.id}" onclick="toggleReport('${job.id}')">Hide Report ▴</button>` : ''}
       ${job.result?.excel_url ? `<button class="action-btn" type="button" data-job-id="${job.id}" data-artifact-kind="excel">Download Excel</button>` : ''}
-      <span class="action-meta">${esc(d.schedule_name||'')} · ${job.id.slice(0,8)}</span>
+      <span class="action-meta">${esc(d.schedule_name||'')} · MFU ${(d.mfu*100).toFixed(1)}% · step ${fmtMs(d.step_time_ms)} · ${job.id.slice(0,8)}</span>
       <span class="action-msg" data-action-msg="${job.id}"></span>
     </div>
   </div>`;
+
+  if (reportUrl) openReportInline(job.id, apiUrl(reportUrl));
 
   job._metric = `MFU ${(d.mfu*100).toFixed(1)}%`;
   renderHist();
 }
 
 // ── Search result ──────────────────────────────────────────────────────────────
+// Title for the result table, reflecting the mode the job actually ran in.
+function searchListTitle(r, shownCount, isAll) {
+  const scope = `${isAll ? 'all' : 'top'} ${shownCount}`;
+  const tail = 'click "open" to expand detail inline; ★ pre-rendered';
+  if (r?.mode === 'pareto') return `pareto frontier (${scope} — ${tail})`;
+  const sortLabel = (SRCH_METRIC_OPTS.find(m => m[0] === r?.sort_by)?.[1]) || r?.sort_by || 'tokens/s';
+  const arrow = r?.sort_desc === false ? '↑' : '↓';
+  return `${scope} by ${sortLabel} ${arrow} — ${tail}`;
+}
+
+function _paretoRow(jobId, d, i) {
+  const cs = d.config_summary || {};
+  const ready = !!d.html_url;
+  const cls   = ready ? 'detail-btn' : 'detail-btn';
+  const label = ready ? (i === 0 ? '★ open' : 'open') : 'render';
+  return `<tr data-pareto-row="${jobId}-${i}">
+    <td>${i+1}${i===0?' ⭐':''}</td>
+    <td>${esc(cs.strategy||'')}</td>
+    <td>${fmtMs(d.step_time_ms)}</td>
+    <td>${(d.mfu*100).toFixed(1)}%</td>
+    <td>${(d.bubble_fraction*100).toFixed(1)}%</td>
+    <td>${d.tokens_per_sec>0?fmtNum(d.tokens_per_sec):'—'}</td>
+    <td><button class="${cls}" data-pareto-btn="${jobId}-${i}" data-idx="${i}" onclick="openOrRenderParetoDetail('${jobId}',${i})">${label}</button></td>
+  </tr>`;
+}
+
 function renderSearch(job) {
   const r = job.result;
   const frontier = r?.pareto_frontier || [];
-  const rows = frontier.slice(0, 10).map((d, i) => {
-    const cs = d.config_summary || {};
-    return `<tr>
-      <td>${i+1}</td>
-      <td>${esc(cs.strategy||'')}</td>
-      <td>${fmtMs(d.step_time_ms)}</td>
-      <td>${(d.mfu*100).toFixed(1)}%</td>
-      <td>${(d.bubble_fraction*100).toFixed(1)}%</td>
-      <td>${d.tokens_per_sec>0?fmtNum(d.tokens_per_sec):'—'}</td>
-    </tr>`;
-  }).join('');
+  const rows = frontier.slice(0, 10).map((d, i) => _paretoRow(job.id, d, i)).join('');
+  const moreNote = frontier.length > 10
+    ? `<div style="font-size:10px;color:var(--text-muted);padding:6px 8px">…${frontier.length - 10} more in expanded view</div>`
+    : '';
 
   document.getElementById('body-'+job.id).outerHTML = `<div id="body-${job.id}">
     <div class="mstrip">
       <div class="mc" style="--accent:var(--teal)"><div class="mc-l">Searched</div><div class="mc-v" style="color:var(--teal)">${r?.total_configs||0}</div></div>
-      <div class="mc"><div class="mc-l">Pareto</div><div class="mc-v" style="color:var(--teal)">${r?.pareto_count||0}</div></div>
+      <div class="mc"><div class="mc-l">${r?.mode==='pareto'?'Pareto':'Matched'}</div><div class="mc-v" style="color:var(--teal)">${r?.pareto_count||0}</div></div>
     </div>
     <div class="section">
-      <div class="section-title">pareto frontier (top 10)</div>
+      <div class="section-title">${searchListTitle(r, Math.min(10, frontier.length), false)}</div>
       <table class="pareto-tbl">
-        <thead><tr><th>#</th><th>strategy</th><th>step</th><th>MFU</th><th>bubble</th><th>tok/s</th></tr></thead>
+        <thead><tr><th>#</th><th>strategy</th><th>step</th><th>MFU</th><th>bubble</th><th>tok/s</th><th>detail</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${moreNote}
     </div>
-    <div class="action-row">
-      <button class="action-btn" style="color:var(--teal);border-color:var(--teal-dim);background:rgba(0,184,144,.08)" data-srch-report-btn="${job.id}" onclick="toggleSearchReport('${job.id}')">View Report ▾</button>
-    </div>
+    ${frontier.length > 10 ? `<div class="action-row">
+      <button class="action-btn" style="color:var(--teal);border-color:var(--teal-dim);background:rgba(0,184,144,.08)" data-srch-report-btn="${job.id}" onclick="toggleSearchReport('${job.id}')">All ${frontier.length} configs ▾</button>
+    </div>` : ''}
   </div>`;
 
   job._searchData = r;
@@ -1798,38 +2119,125 @@ function renderSearch(job) {
   renderHist();
 }
 
+// Refresh the labels/active-state of every pareto detail button for a job.
+// `activeIdx` is the row whose report is currently shown inline (-1 = none).
+function updateParetoBtns(jobId, activeIdx) {
+  const job = jobs.find(j => j.id === jobId);
+  const frontier = job?.result?.pareto_frontier || [];
+  document.querySelectorAll(`[data-pareto-btn^="${jobId}-"]`).forEach(b => {
+    if (b.disabled) return; // mid-render
+    const i = parseInt(b.dataset.idx, 10);
+    const active = i === activeIdx;
+    const ready = !!frontier[i]?.html_url;
+    b.classList.toggle('on-detail', active);
+    b.textContent = active ? 'hide ▴' : (ready ? (i === 0 ? '★ open' : 'open') : 'render');
+  });
+}
+
+// Show a Pareto entry's detail report inline (expand/collapse in place), reusing
+// the card's report wrap. Clicking the already-open row collapses it.
+function showParetoInline(jobId, idx, url) {
+  const wrap = ensureReportWrap(jobId);
+  if (!wrap) return;
+  if (wrap.dataset.idx === String(idx) && wrap.classList.contains('open')) {
+    wrap.classList.remove('open');
+    updateParetoBtns(jobId, -1);
+    return;
+  }
+  wrap.dataset.idx = String(idx);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add('open')));
+  loadReportFrame(jobId, apiUrl(url));
+  updateParetoBtns(jobId, idx);
+}
+
+// Open the detail report inline. If not yet rendered, ask the server to
+// render this Pareto entry first.
+async function openOrRenderParetoDetail(jobId, idx) {
+  const job = jobs.find(j => j.id === jobId);
+  if (!job) return;
+  const entry = job.result?.pareto_frontier?.[idx];
+  if (!entry) return;
+
+  if (entry.html_url) {
+    showParetoInline(jobId, idx, entry.html_url);
+    return;
+  }
+  // Lazy render.
+  const btns = document.querySelectorAll(`[data-pareto-btn="${jobId}-${idx}"]`);
+  btns.forEach(b => { b.disabled = true; b.classList.add('pending'); b.textContent = 'rendering…'; });
+  try {
+    const r = await fetch(api()+`/search/${jobId}/render/${idx}`, { method: 'POST' });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    const data = await r.json();
+    entry.html_url      = data.html_url;
+    entry.html_filename = data.html_filename;
+    btns.forEach(b => { b.disabled = false; b.classList.remove('pending'); b.textContent = 'open'; });
+    showParetoInline(jobId, idx, data.html_url);
+  } catch (e) {
+    btns.forEach(b => { b.disabled = false; b.classList.remove('pending'); b.classList.add('failed'); b.textContent = 'failed'; b.title = String(e.message || e); });
+  }
+}
+
 // ── Report ─────────────────────────────────────────────────────────────────────
+// Create (once) the inline report iframe + loader for a card and return it.
+function ensureReportWrap(jobId) {
+  let wrap = document.getElementById('report-wrap-'+jobId);
+  if (wrap) return wrap;
+  const card = document.getElementById('res-'+jobId);
+  if (!card) return null;
+  wrap = document.createElement('div');
+  wrap.id = 'report-wrap-'+jobId;
+  wrap.className = 'report-wrap';
+  wrap.innerHTML = `
+    <div class="report-loader" data-report-loader="${jobId}">
+      <div class="report-loader-box">
+        <div class="report-loader-top">
+          <div class="report-loader-title">loading report</div>
+          <div class="report-loader-pct" data-report-pct="${jobId}">0%</div>
+        </div>
+        <div class="report-progress"><div class="report-progress-bar" data-report-progress="${jobId}"></div></div>
+        <div class="report-loader-msg" data-report-msg="${jobId}">requesting artifact…</div>
+      </div>
+    </div>
+    <iframe class="report-frame" data-report-frame="${jobId}"></iframe>`;
+  card.appendChild(wrap);
+  return wrap;
+}
+
+// Open the inline report (creating the wrap if needed) and load `url` into it.
+function openReportInline(jobId, url) {
+  const wrap = ensureReportWrap(jobId);
+  if (!wrap) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    wrap.classList.add('open');
+    updateCompareLayout();
+  }));
+  loadReportFrame(jobId, url);
+}
+
 function toggleReport(jobId) {
   const job = jobs.find(j => j.id === jobId);
   const url = job?.result?.html_url || (job?.result?.html_filename ? `/estimate/${job.result.html_filename}` : '');
   if (!url) return;
-  const card = document.getElementById('res-'+jobId);
   const btn  = document.querySelector('[data-report-btn="'+jobId+'"]');
   let wrap   = document.getElementById('report-wrap-'+jobId);
   if (!wrap) {
-    wrap = document.createElement('div');
-    wrap.id = 'report-wrap-'+jobId;
-    wrap.className = 'report-wrap';
-    wrap.innerHTML = `
-      <div class="report-loader" data-report-loader="${jobId}">
-        <div class="report-loader-box">
-          <div class="report-loader-top">
-            <div class="report-loader-title">loading report</div>
-            <div class="report-loader-pct" data-report-pct="${jobId}">0%</div>
-          </div>
-          <div class="report-progress"><div class="report-progress-bar" data-report-progress="${jobId}"></div></div>
-          <div class="report-loader-msg" data-report-msg="${jobId}">requesting artifact…</div>
-        </div>
-      </div>
-      <iframe class="report-frame" data-report-frame="${jobId}"></iframe>`;
-    card.appendChild(wrap);
-    requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add('open')));
-    loadReportFrame(jobId, apiUrl(url));
+    openReportInline(jobId, apiUrl(url));
     if (btn) btn.textContent = 'Hide Report ▴';
     return;
   }
   const isOpen = wrap.classList.toggle('open');
   if (btn) btn.textContent = isOpen ? 'Hide Report ▴' : 'View Report ▾';
+  updateCompareLayout();
+}
+
+// Switch the estimate result column into a 2-up grid whenever two or more
+// reports are expanded, so they show side by side instead of stacking.
+function updateCompareLayout() {
+  const col = document.getElementById('est-results');
+  if (!col) return;
+  const openCount = col.querySelectorAll('.report-wrap.open').length;
+  col.classList.toggle('compare', openCount >= 2);
 }
 
 function apiBase() {
@@ -1858,6 +2266,10 @@ async function loadReportFrame(jobId, url) {
   const frame = document.querySelector(`[data-report-frame="${jobId}"]`);
   const loader = document.querySelector(`[data-report-loader="${jobId}"]`);
   if (!frame || !url) return;
+  // Reset state so a reused wrap (e.g. switching search detail rows) re-shows
+  // the loader and fades the new page back in.
+  frame.classList.remove('ready');
+  if (loader) loader.classList.remove('done');
   updateReportProgress(jobId, 3, 'requesting artifact…', false);
   try {
     const r = await fetch(url);
@@ -1933,56 +2345,31 @@ document.addEventListener('click', (e) => {
   downloadArtifact(jobId, kind);
 });
 
+// Expand the inline pareto table to all rows (vs. the top-10 default), so
+// users can render any frontier entry's detail page without a separate iframe.
 function toggleSearchReport(jobId) {
   const job = jobs.find(j => j.id === jobId);
-  if (!job?._searchData) return;
-  const card = document.getElementById('res-'+jobId);
-  const btn  = document.querySelector('[data-srch-report-btn="'+jobId+'"]');
-  let wrap   = document.getElementById('report-wrap-'+jobId);
-  if (!wrap) {
-    const html = buildSearchReport(job._searchData, job);
-    const url  = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
-    wrap = document.createElement('div');
-    wrap.id = 'report-wrap-'+jobId;
-    wrap.className = 'report-wrap';
-    wrap.innerHTML = `<iframe class="report-frame" src="${url}"></iframe>`;
-    card.appendChild(wrap);
-    requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add('open')));
-    if (btn) btn.textContent = 'Hide Report ▴';
-    return;
+  const frontier = job?.result?.pareto_frontier || [];
+  if (!frontier.length) return;
+  const body = document.getElementById('body-'+jobId);
+  if (!body) return;
+  const btn = document.querySelector('[data-srch-report-btn="'+jobId+'"]');
+  const isExpanded = body.dataset.expanded === '1';
+  const slice = isExpanded ? frontier.slice(0, 10) : frontier;
+  const tbody = body.querySelector('.pareto-tbl tbody');
+  if (tbody) tbody.innerHTML = slice.map((d, i) => _paretoRow(jobId, d, i)).join('');
+  const title = body.querySelector('.section-title');
+  if (title) {
+    title.textContent = isExpanded
+      ? searchListTitle(job.result, Math.min(10, frontier.length), false)
+      : searchListTitle(job.result, frontier.length, true);
   }
-  const isOpen = wrap.classList.toggle('open');
-  if (btn) btn.textContent = isOpen ? 'Hide Report ▴' : 'View Report ▾';
-}
-
-function buildSearchReport(r, job) {
-  const frontier = r.pareto_frontier || [];
-  const ts = job.finished_at ? new Date(job.finished_at).toLocaleString() : '';
-  const rows = frontier.map((d, i) => {
-    const cs = d.config_summary || {};
-    return `<tr${i===0?' class="hi"':''}><td>${i+1}</td><td>${esc(cs.strategy||'')}</td><td>${fmtMs(d.step_time_ms)}</td><td>${(d.mfu*100).toFixed(2)}%</td><td>${(d.hfu*100).toFixed(2)}%</td><td>${(d.bubble_fraction*100).toFixed(2)}%</td><td>${d.tokens_per_sec>0?fmtNum(d.tokens_per_sec):'—'}</td></tr>`;
-  }).join('');
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>ZRT Search — Pareto Frontier</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0d0d0d;background-image:radial-gradient(#262626 1px,transparent 1px);background-size:22px 22px;color:#ddd8cc;font-family:'Cascadia Code','Fira Code',ui-monospace,monospace;font-size:12px}
-.hdr{background:rgba(13,13,13,.95);border-bottom:1px solid #262626;padding:11px 32px;display:flex;align-items:center;gap:12px}
-.logo{width:24px;height:24px;border:1.5px solid #00b890;border-radius:3px;display:flex;align-items:center;justify-content:center;color:#00b890;font-size:10px;font-weight:700}
-.hdr-t{font-size:12px}.hdr-t em{color:#00b890;font-style:normal}.hdr-ts{margin-left:auto;font-size:10px;color:#5e5c59}
-.wrap{max-width:900px;margin:0 auto;padding:22px 32px;display:flex;flex-direction:column;gap:16px}
-.stats{display:flex;gap:12px}.stat{background:#141414;border:1px solid #262626;border-left:2px solid #006650;border-radius:3px;padding:10px 16px}
-.stat-l{font-size:9px;text-transform:uppercase;letter-spacing:0.8px;color:#5e5c59;margin-bottom:3px}.stat-v{font-size:18px;font-weight:700;color:#00b890}
-section{background:#141414;border:1px solid #262626;border-radius:3px;overflow:hidden}
-section h2{font-size:9px;text-transform:uppercase;letter-spacing:0.8px;color:#a09c96;padding:9px 16px;border-bottom:1px solid #262626;font-weight:normal}
-table{width:100%;border-collapse:collapse;font-size:11px}th{color:#5e5c59;font-weight:normal;text-align:right;padding:6px 12px;border-bottom:1px solid #262626}
-th:first-child,th:nth-child(2){text-align:left}td{padding:5px 12px;text-align:right;color:#ddd8cc;border-bottom:1px solid #1c1c1c}
-td:first-child{color:#5e5c59}td:nth-child(2){text-align:left}tr.hi td{color:#00b890}
-</style></head><body>
-<div class="hdr"><div class="logo">ZRT</div><div class="hdr-t">Search Report <em>/ Pareto Frontier</em></div><div class="hdr-ts">${ts}</div></div>
-<div class="wrap">
-  <div class="stats"><div class="stat"><div class="stat-l">configs searched</div><div class="stat-v">${r.total_configs||0}</div></div><div class="stat"><div class="stat-l">pareto optimal</div><div class="stat-v">${r.pareto_count||0}</div></div></div>
-  <section><h2>Pareto-optimal Configurations</h2>
-    <table><thead><tr><th>#</th><th>strategy</th><th>step time</th><th>MFU</th><th>HFU</th><th>bubble</th><th>tokens/s</th></tr></thead><tbody>${rows}</tbody></table>
-  </section>
-</div></body></html>`;
+  body.dataset.expanded = isExpanded ? '0' : '1';
+  if (btn) btn.textContent = isExpanded ? `All ${frontier.length} configs ▾` : `Top 10 only ▴`;
+  // Re-applying labels: rebuilding the tbody reset the active "hide" state.
+  const wrap = document.getElementById('report-wrap-'+jobId);
+  const activeIdx = (wrap && wrap.classList.contains('open')) ? parseInt(wrap.dataset.idx, 10) : -1;
+  updateParetoBtns(jobId, activeIdx);
 }
 
 // ── Polling ────────────────────────────────────────────────────────────────────
@@ -2043,8 +2430,15 @@ const _defaultApi = (location.protocol === 'file:')
   : location.origin;
 document.getElementById('api-url').value = _defaultApi;
 
+renderUsername();
+if (!localStorage.getItem(USER_KEY)) openUserModal();
+
 loadPreset('est', 'llama3_70b');
+loadPreset('srch', 'llama3_70b');
+renderSrchChips();
+initSearchObjective();
 setEstimateRunState();
+setSearchRunState();
 checkHealth();
 setInterval(checkHealth, 30000);
 renderHist();

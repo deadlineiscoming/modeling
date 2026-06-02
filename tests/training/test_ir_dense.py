@@ -1,7 +1,8 @@
 """Test IR builders — dense block op count and shapes."""
 
 import pytest
-from zrt.training.ir.builders import dense_block, build_graph
+from zrt.training.ir.builders import _moe_block, dense_block, build_graph
+from zrt.training.models.flops import op_cost
 from zrt.training.spec.dtype import Dtype
 from zrt.training.spec.model import ModelSpec, LayerKind
 from zrt.training.spec.strategy import Strategy
@@ -80,6 +81,48 @@ def test_build_graph_with_tp():
     assert isinstance(swiglu.meta["bytes_fwd"], (int, float))
 
 
+def test_global_lm_head_is_vocab_sharded_by_tp():
+    model = ModelSpec(
+        hidden=4096, ffn=16384, num_heads=32, num_kv_heads=32,
+        head_dim=128, vocab=32000, seq_len=2048,
+        layers=[LayerKind.DENSE],
+    )
+    graph_tp1 = build_graph(model, Strategy(tp=1, pp=1, dp=1, micro_batch=1))
+    graph_tp4 = build_graph(model, Strategy(tp=4, pp=1, dp=1, micro_batch=1))
+
+    lm_tp1 = next(op for op in graph_tp1.ops if op.kind == "lm_head")
+    lm_tp4 = next(op for op in graph_tp4.ops if op.kind == "lm_head")
+
+    assert lm_tp4.outputs[0].shape_local == (2048, 8000)
+    assert lm_tp4.meta["n_local"] == 8000
+
+    cost_tp1 = op_cost(lm_tp1, model)
+    cost_tp4 = op_cost(lm_tp4, model)
+    assert cost_tp4.fwd_cube_flops == pytest.approx(cost_tp1.fwd_cube_flops / 4)
+
+
+def test_global_lm_head_is_sequence_sharded_by_cp():
+    model = ModelSpec(
+        hidden=4096, ffn=16384, num_heads=32, num_kv_heads=32,
+        head_dim=128, vocab=32000, seq_len=2048,
+        layers=[LayerKind.DENSE],
+    )
+    graph_base = build_graph(model, Strategy(tp=1, cp=1, pp=1, dp=1, micro_batch=1))
+    graph_cp4 = build_graph(model, Strategy(tp=2, cp=4, pp=1, dp=1, micro_batch=1))
+
+    lm_base = next(op for op in graph_base.ops if op.kind == "lm_head")
+    lm_cp4 = next(op for op in graph_cp4.ops if op.kind == "lm_head")
+
+    assert lm_cp4.inputs[0].shape_local == (512, 4096)
+    assert lm_cp4.outputs[0].shape_local == (512, 16000)
+    assert lm_cp4.meta["m"] == 512
+    assert lm_cp4.meta["n_local"] == 16000
+
+    cost_base = op_cost(lm_base, model)
+    cost_cp4 = op_cost(lm_cp4, model)
+    assert cost_cp4.fwd_cube_flops == pytest.approx(cost_base.fwd_cube_flops / 8)
+
+
 def test_ops_for_layer():
     """ops_for_layer should return the correct ops."""
     model = ModelSpec(
@@ -107,8 +150,38 @@ def test_attn_core_meta():
     assert attn.kind == "attn_core"
     assert attn.meta["s"] == 2048
     assert attn.meta["heads"] == 32
+    assert attn.meta["kv_heads"] == 8
     assert attn.meta["head_dim"] == 128
     assert attn.meta["causal"] is True
+
+
+def test_moe_attn_core_meta_carries_kv_heads():
+    """Legacy MoE attention metadata should preserve grouped K/V head count."""
+    ops = _moe_block(
+        hidden=4096, ffn=16384, moe_ffn=4096,
+        num_experts=8, top_k=2, n_shared_experts=1,
+        seq=2048, num_heads=32, num_kv_heads=8, head_dim=128,
+        layer_id=0,
+    )
+    attn = next(op for op in ops if op.kind == "attn_core")
+
+    assert attn.meta["kv_heads"] == 8
+
+
+def test_v4_attn_meta_carries_single_kv_head():
+    """V4 MQA cost modeling needs the shared KV-head count in attention metadata."""
+    model = ModelSpec(
+        hidden=128, ffn=256, num_heads=8, num_kv_heads=1,
+        head_dim=16, vocab=1000, seq_len=256,
+        layers=[LayerKind.DENSE],
+        q_lora_rank=32, qk_rope_head_dim=4,
+        o_lora_rank=16, o_groups=4,
+        compress_ratios=[0], swa_window=64,
+    )
+    graph = build_graph(model, Strategy())
+    attn = next(op for op in graph.ops if op.kind == "swa_attn")
+
+    assert attn.meta["kv_heads"] == 1
 
 
 def test_tp_ag_rs_phase_both():

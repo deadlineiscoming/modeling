@@ -41,7 +41,7 @@ class StepResult:
     Strict invariants (all in seconds):
       step_time        = pipeline_time + optimizer_time + optimizer_comm
       pipeline_time    = compute_time + exposed_comm + bubble
-      compute_time     = fwd_compute + bwd_compute + recompute_time
+      compute_time     = fwd_compute + bwd_compute + recompute_critical
       bubble           = warmup + cooldown   (absolute pipeline idle, seconds)
       exposed_comm     = tp_exposed + cp_exposed + ep_exposed + pp_exposed + dp_exposed
       hidden_comm      = dp_hidden + tp_hidden + ep_hidden + pp_hidden
@@ -86,14 +86,14 @@ class StepResult:
     compute_time: float = 0.0  # Useful compute on critical path, excluding bubble
     fwd_compute: float = 0.0  # Forward compute only (excludes all comm)
     bwd_compute: float = 0.0  # Backward compute only (excludes comm AND recompute)
-    recompute_time: float = 0.0  # Activation-recompute fwd-redo on critical path.
+    recompute_critical: float = 0.0  # Activation-recompute fwd-redo on critical path.
     # 0 with no recompute policy; >0 for full/selective.
     # Part of compute_time, attributed out of bwd_compute.
-    recompute_time_raw: float = 0.0  # Raw recompute magnitude = M × max-over-stages
+    recompute_raw_mag: float = 0.0  # Raw recompute magnitude = M × max-over-stages
     # per-mb recompute. NOT in step_time / compute_time:
     # when the recomputed stage is not the pipeline
-    # bottleneck this work is hidden and recompute_time
-    # (critical-path) is 0 while this stays > 0.
+    # bottleneck this work is hidden and recompute_critical
+    # is 0 while this stays > 0.
     exposed_comm: float = 0.0  # Comm on critical path = Σ *_exposed fields
 
     # Per-group exposed comm (Σ = exposed_comm)
@@ -107,6 +107,7 @@ class StepResult:
     hidden_comm: float = 0.0  # Total hidden = Σ *_hidden fields
     dp_hidden: float = 0.0  # DP AR absorbed in pipeline bubble
     tp_hidden: float = 0.0  # TP hidden by CoC/MC2
+    cp_hidden: float = 0.0  # CP hidden by compute overlap
     ep_hidden: float = 0.0  # EP hidden by wave-overlap
     pp_hidden: float = 0.0  # PP P2P hidden by DualPipe/DualPipeV bwd_dw stream
 
@@ -124,6 +125,10 @@ class StepResult:
     grad_hbm_gb: float = 0.0
     cast_hbm_gb: float = 0.0
 
+    # ── Graph-native diagnostics ─────────────────────────────────────────
+    per_stage_ms: float = 0.0
+    recompute_graph_diag_ms: float = 0.0
+
     def __post_init__(self) -> None:
         # Absolute pipeline-idle time. Derived once here so every composer
         # (and the pp=1 path) gets it without duplicating the expression.
@@ -131,6 +136,72 @@ class StepResult:
         # afterwards and re-derives bubble there explicitly.
         if self.bubble == 0.0:
             self.bubble = self.warmup + self.cooldown
+
+    def to_dict_ms(self) -> dict:
+        """Export all fields in milliseconds.
+
+        Used by the graph-native pipeline (training.py) as the unified
+        metadata payload consumed by modeller.py and TrainingReport.
+        """
+        _k = 1000.0
+        return {
+            # Core timing
+            "step_time_ms": self.step_time * _k,
+            "pipeline_time_ms": self.pipeline_time * _k,
+            "per_stage_ms": self.per_stage_ms,
+            # Pipeline structure
+            "schedule_name": self.schedule_name,
+            "warmup_steps": self.warmup_steps,
+            "cooldown_steps": self.cooldown_steps,
+            "steady_steps": 0,  # filled by caller (graph-native)
+            "bubble_fraction": self.bubble_fraction,
+            "bubble_time_ms": self.bubble * _k,
+            "warmup_ms": self.warmup * _k,
+            "steady_ms": self.steady * _k,
+            "cooldown_ms": self.cooldown * _k,
+            # Phase breakdown
+            "warmup_fwd_ms": self.warmup_fwd * _k,
+            "warmup_bwd_ms": self.warmup_bwd * _k,
+            "steady_fwd_ms": self.steady_fwd * _k,
+            "steady_bwd_ms": self.steady_bwd * _k,
+            "cooldown_fwd_ms": self.cooldown_fwd * _k,
+            "cooldown_bwd_ms": self.cooldown_bwd * _k,
+            # Compute / comm
+            "compute_time_ms": self.compute_time * _k,
+            "fwd_compute_ms": self.fwd_compute * _k,
+            "bwd_compute_ms": self.bwd_compute * _k,
+            "exposed_comm_ms": self.exposed_comm * _k,
+            "hidden_comm_ms": self.hidden_comm * _k,
+            "total_comm_ms": self.total_comm_volume * _k,
+            # Per-strategy comm totals
+            "tp_total_ms": (self.tp_exposed + self.tp_hidden) * _k,
+            "cp_total_ms": (self.cp_exposed + self.cp_hidden) * _k,
+            "ep_total_ms": (self.ep_exposed + self.ep_hidden) * _k,
+            "pp_total_ms": (self.pp_exposed + self.pp_hidden) * _k,
+            "dp_total_ms": (self.dp_exposed + self.dp_hidden) * _k,
+            # Per-strategy exposed / hidden
+            "tp_exposed_ms": self.tp_exposed * _k,
+            "tp_hidden_ms": self.tp_hidden * _k,
+            "cp_exposed_ms": self.cp_exposed * _k,
+            "cp_hidden_ms": self.cp_hidden * _k,
+            "ep_exposed_ms": self.ep_exposed * _k,
+            "ep_hidden_ms": self.ep_hidden * _k,
+            "pp_exposed_ms": self.pp_exposed * _k,
+            "pp_hidden_ms": self.pp_hidden * _k,
+            "dp_exposed_ms": self.dp_exposed * _k,
+            "dp_hidden_ms": self.dp_hidden * _k,
+            # Recompute
+            "recompute_critical_ms": self.recompute_critical * _k,
+            "recompute_raw_mag_ms": self.recompute_raw_mag * _k,
+            "recompute_graph_diag_ms": self.recompute_graph_diag_ms,
+            # Optimizer
+            "optimizer_time_ms": self.optimizer_time * _k,
+            "optimizer_comm_ms": self.optimizer_comm * _k,
+            "optimizer_comm_hidden_ms": self.optimizer_comm_hidden * _k,
+            # Efficiency
+            "mfu": self.mfu,
+            "hfu": self.hfu,
+        }
 
 
 def _dp_hide_window(
@@ -732,7 +803,7 @@ def pipeline_step_time(
         strategy.pp_schedule in (PPSched.DUALPIPE, PPSched.DUALPIPE_V)
         and strategy.pp_overlap
     )
-    # Capture raw recompute max BEFORE augmentation — recompute_time_raw
+    # Capture raw recompute max BEFORE augmentation — recompute_raw_mag
     # uses this (the work that would be done if nothing hid it).
     recompute_raw_per_mb = max((st.recompute for st in stage_times), default=0.0)
 
@@ -823,7 +894,7 @@ def pipeline_step_time(
     # The bottleneck stage ratio gives a schedule-agnostic critical-path split.
 
     # Bottleneck selection drives the timeline-based attribution (scale,
-    # comm scaling, recompute_time). Must use the AUGMENTED view so it
+    # comm scaling, recompute_critical). Must use the AUGMENTED view so it
     # matches what the composer saw — picking from pure stage_times would
     # under-count stages whose timeline weight comes from recompute.
     bot_idx, s_bot = max(
@@ -891,24 +962,24 @@ def pipeline_step_time(
     # the augmentation block above adds it to bwd_dx so the composer
     # timeline carries it; we then split it back OUT here so the report
     # shows it as its own term:
-    #   compute_time = fwd_compute + bwd_compute + recompute_time   (exact)
+    #   compute_time = fwd_compute + bwd_compute + recompute_critical   (exact)
     # For DualPipe(V) the augmentation already trimmed st.recompute to the
     # post-bwd_dw-hide residual, so ``M * s_bot.recompute`` is the exposed
     # critical-path portion (the hidden part is absorbed by bwd_dw).
     #
-    # recompute_time_raw is the work that WOULD be done if nothing hid it
-    # (M × max across stages, pre-augmentation). recompute_time_raw stays a
+    # recompute_raw_mag is the work that WOULD be done if nothing hid it
+    # (M × max across stages, pre-augmentation). recompute_raw_mag stays a
     # reporting field — it does not affect step_time.
-    step.recompute_time_raw = M * recompute_raw_per_mb
+    step.recompute_raw_mag = M * recompute_raw_per_mb
 
     if bwd_compute_per_mb > 0 and s_bot.recompute > 0:
         bottleneck_recompute = M * s_bot.recompute
-        step.recompute_time = min(
-            step.bwd_compute, bottleneck_recompute, step.recompute_time_raw
+        step.recompute_critical = min(
+            step.bwd_compute, bottleneck_recompute, step.recompute_raw_mag
         )
-        step.bwd_compute -= step.recompute_time
+        step.bwd_compute -= step.recompute_critical
     else:
-        step.recompute_time = 0.0
+        step.recompute_critical = 0.0
 
     # ── Hidden comm ───────────────────────────────────────────────────────
     # DP AR hidden in pipeline bubble — set by composer (and updated by

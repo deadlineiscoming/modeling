@@ -280,6 +280,7 @@ def _attn_cost(op: Op, model: ModelSpec | None, system: SystemSpec | None = None
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("heads", 0)
+    kv_h = op.meta.get("kv_heads", h)
     d = op.meta.get("head_dim", 0)
     causal = op.meta.get("causal", True)
 
@@ -353,7 +354,7 @@ def _attn_cost(op: Op, model: ModelSpec | None, system: SystemSpec | None = None
 
     q_elems  = b * h * s * d
     o_elems  = b * h * s * d
-    kv_elems = b * h * Tr * tc_eff * Bc * d
+    kv_elems = b * kv_h * Tr * tc_eff * Bc * d
     # fwd: read Q + 2×KV at fwd-act dtype; write O at out_act dtype.
     fwd_bytes = (q_elems + 2.0 * kv_elems) * qkv_b + o_elems * o_b
     # Backward: ≈2× fwd minus small saved-state (M, L) overhead. dO and
@@ -391,6 +392,7 @@ def _sparse_attn_cost(op: Op, system: SystemSpec | None = None,
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("heads", 0)
+    kv_h = op.meta.get("kv_heads", h)
     d = op.meta.get("head_dim", 0)
     topk = op.meta.get("sparse_topk", 0)
     swa = op.meta.get("swa_window", 0)
@@ -412,7 +414,7 @@ def _sparse_attn_cost(op: Op, system: SystemSpec | None = None,
     tc_eff = Tc  # top-k positions are scattered, no causal halving
     q_elems = b * h * s * d
     o_elems = b * h * s * d
-    kv_elems = b * h * Tr * tc_eff * Bc * d
+    kv_elems = b * kv_h * Tr * tc_eff * Bc * d
     fwd_bytes = (q_elems + 2.0 * kv_elems) * qkv_b + o_elems * o_b
     dx_bytes = (2.0 * q_elems + 4.0 * kv_elems) * grad_b
 
@@ -437,6 +439,7 @@ def _hca_attn_cost(op: Op, system: SystemSpec | None = None,
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("heads", 0)
+    kv_h = op.meta.get("kv_heads", h)
     d = op.meta.get("head_dim", 0)
     ratio = op.meta.get("compress_ratio", 0)
     swa = op.meta.get("swa_window", 0)
@@ -459,7 +462,7 @@ def _hca_attn_cost(op: Op, system: SystemSpec | None = None,
     tc_eff = (Tc + 1) / 2  # always causal
     q_elems = b * h * s * d
     o_elems = b * h * s * d
-    kv_elems = b * h * Tr * tc_eff * Bc * d
+    kv_elems = b * kv_h * Tr * tc_eff * Bc * d
     fwd_bytes = (q_elems + 2.0 * kv_elems) * qkv_b + o_elems * o_b
     dx_bytes = (2.0 * q_elems + 4.0 * kv_elems) * grad_b
 
@@ -484,6 +487,7 @@ def _swa_attn_cost(op: Op, system: SystemSpec | None = None,
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("heads", 0)
+    kv_h = op.meta.get("kv_heads", h)
     d = op.meta.get("head_dim", 0)
     swa = op.meta.get("swa_window", 0)
 
@@ -503,7 +507,7 @@ def _swa_attn_cost(op: Op, system: SystemSpec | None = None,
     tc_eff = (Tc + 1) / 2  # always causal
     q_elems = b * h * s * d
     o_elems = b * h * s * d
-    kv_elems = b * h * Tr * tc_eff * Bc * d
+    kv_elems = b * kv_h * Tr * tc_eff * Bc * d
     fwd_bytes = (q_elems + 2.0 * kv_elems) * qkv_b + o_elems * o_b
     dx_bytes = (2.0 * q_elems + 4.0 * kv_elems) * grad_b
 
@@ -518,7 +522,14 @@ def _swa_attn_cost(op: Op, system: SystemSpec | None = None,
 
 
 def _mhc_pre_cost(op: Op) -> OpCost:
-    """Hyper-Connections pre-mix: mixes-Linear + sinkhorn iters + weighted sum."""
+    """Hyper-Connections pre-mix: RMSNorm + Linear + Sinkhorn iters + weighted sum.
+
+    Mirrors Block.hc_pre (inference/model.py):
+      1. rsqrt(x².mean(-1))           — RMSNorm over hc*d  (small, omitted)
+      2. F.linear(x, hc_fn) * rsqrt   — (s, hc*h) @ (mix, hc*h)^T → (s, mix)
+      3. hc_split_sinkhorn(mixes)      — Sinkhorn on comb(s, hc, hc) only
+      4. sum(pre * x, dim=hc)          — weighted sum → (s, h)
+    """
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("h", 0)
@@ -528,17 +539,19 @@ def _mhc_pre_cost(op: Op) -> OpCost:
     bpe = _bpe(op)
 
     fwd_lin = 2.0 * b * s * (hc * h) * mix
-    fwd_sink = float(it * b * s * mix * hc) * 4.0
+    # Sinkhorn iterates on comb(s, hc, hc): each iter = row-norm + col-norm
+    # ≈ 4 FLOPs per element per iter (sum + div, twice).
+    fwd_sink = float(it * b * s * hc * hc) * 4.0
     fwd_sum = float(b * s * hc * h) * 2.0
     fwd = fwd_lin + fwd_sink + fwd_sum
 
     # Bytes: input(s, hc*h) + weights(hc*h, mix, read once) + output(s, mix)
-    # plus sinkhorn intermediates (s, mix) and residual (s, hc*h)
+    # plus sinkhorn intermediates (s, hc, hc) and residual (s, hc*h)
     lin_in_bytes = b * s * (hc * h) * bpe
     lin_wt_bytes = (hc * h) * mix * bpe  # weights read once, NOT per-token
     lin_out_bytes = b * s * mix * bpe
-    # Sinkhorn operates on (s, mix) — read/write per iteration
-    sink_bytes = it * b * s * mix * bpe * 2
+    # Sinkhorn operates on comb(s, hc, hc) — read/write per iteration
+    sink_bytes = it * b * s * hc * hc * bpe * 2
     # Residual sum: read (s, hc*h), write (s, hc*h)
     sum_bytes = b * s * hc * h * bpe * 2
     fwd_bytes = lin_in_bytes + lin_wt_bytes + lin_out_bytes + sink_bytes + sum_bytes
@@ -553,7 +566,15 @@ def _mhc_pre_cost(op: Op) -> OpCost:
 
 
 def _mhc_post_cost(op: Op) -> OpCost:
-    """Hyper-Connections post-mix: post·x + Σ comb·residual."""
+    """Hyper-Connections post-mix: post·x + Σ comb·residual.
+
+    Mirrors Block.hc_post (inference/model.py):
+      y = post.unsqueeze(-1) * x.unsqueeze(-2)            — (s, hc) * (s, h) → (s, hc, h)
+        + torch.sum(comb.unsqueeze(-1) * residual.unsqueeze(-2), dim=2)
+                                                           — (s, hc, hc) * (s, hc, h) → sum → (s, hc, h)
+    FLOPs: post*x (b*s*hc*h) + comb*res (2*b*s*hc*hc*h) + add (b*s*hc*h)
+         = 2*b*s*hc*h + 2*b*s*hc*hc*h
+    """
     b = op.meta.get("b", 1)
     s = op.meta.get("s", 0)
     h = op.meta.get("h", 0)
@@ -654,7 +675,8 @@ def _promote_aware_elementwise_cost(
         return base
 
     n_in = op.inputs[0].num_elements()
-    extra_reads = 2 if op.kind == "softmax" else 1
+    from zrt.training.models.promotion import ln_softmax_input_byte_multiplier
+    extra_reads = int(ln_softmax_input_byte_multiplier(op.kind))
     extra_bytes = extra_reads * n_in * in_dtype.bytes
     return OpCost(
         fwd_bytes=base.fwd_bytes + extra_bytes,

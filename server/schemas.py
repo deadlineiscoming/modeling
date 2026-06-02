@@ -101,6 +101,10 @@ class TraceRequest(BaseModel):
         None,
         description="Total layers in the full model (defaults to --layers if not set).",
     )
+    username: Optional[str] = Field(
+        None,
+        description="提交者用户名（前端 localStorage 带入，用于使用统计）。",
+    )
 
 
 class EstimateRequest(BaseModel):
@@ -119,10 +123,35 @@ class EstimateRequest(BaseModel):
         None,
         description="Directory for the generated HTML report. Defaults to output/estimates/.",
     )
+    username: Optional[str] = Field(
+        None,
+        description="提交者用户名（前端 localStorage 带入，用于使用统计）。",
+    )
+
+
+class SearchFilter(BaseModel):
+    """A single constraint applied in filter_sort mode.
+
+    A config is kept only when it satisfies every filter. Metrics map to
+    `zrt.training.search.metric_filters.SEARCH_METRICS`; `memory_gb` uses the
+    OOM-relevant peak footprint.
+    """
+
+    metric: str = Field(
+        ...,
+        description="step_time_ms | tokens_per_sec | mfu | hfu | bubble_fraction | memory_gb",
+    )
+    op: str = Field(..., description="Comparison operator: < | <= | > | >= | == | !=")
+    value: float = Field(..., description="Threshold the metric is compared against.")
 
 
 class SearchRequest(BaseModel):
-    """Grid-search parallel strategies for a training config."""
+    """Grid-search parallel strategies for a training config.
+
+    Provide model / system via YAML (`config_path` or `config_content`); the
+    search space dimensions can be narrowed via the optional fields below.
+    Anything left unset falls back to `SearchSpace` defaults.
+    """
 
     config_path: Optional[str] = Field(
         None,
@@ -136,3 +165,54 @@ class SearchRequest(BaseModel):
         None,
         description="Write Pareto-frontier JSON to this file path.",
     )
+    output_dir: Optional[str] = Field(
+        None,
+        description="Directory for per-config detail HTML files. Defaults to output/estimate/.",
+    )
+    username: Optional[str] = Field(
+        None,
+        description="提交者用户名（前端 localStorage 带入，用于使用统计）。",
+    )
+
+    # ── Search-space overrides (None → use SearchSpace defaults) ──────────
+    tp_values: Optional[List[int]] = Field(None, description="Tensor-parallel degrees to search.")
+    cp_values: Optional[List[int]] = Field(None, description="Context-parallel degrees to search.")
+    pp_values: Optional[List[int]] = Field(None, description="Pipeline-parallel degrees to search.")
+    ep_values: Optional[List[int]] = Field(None, description="Expert-parallel degrees to search.")
+    dp_values: Optional[List[int]] = Field(None, description="Data-parallel degrees to search.")
+    zero_stages: Optional[List[int]] = Field(None, description="ZeRO stages (0..3).")
+    pp_schedules: Optional[List[str]] = Field(
+        None,
+        description="PP schedule names: 1f1b | interleaved | dualpipe | dualpipe_v | zero_bubble.",
+    )
+    recompute_policies: Optional[List[str]] = Field(
+        None, description="Recompute policies: none | selective | full.",
+    )
+    vpp_chunks_values: Optional[List[int]] = Field(None, description="VPP chunk counts.")
+    optimizer_values: Optional[List[str]] = Field(
+        None, description="Optimizers: adam | muon.",
+    )
+    max_memory_gb: Optional[float] = Field(
+        None, gt=0, description="Memory feasibility ceiling per GPU (default 80 GB).",
+    )
+    micro_batch: Optional[int] = Field(None, ge=1, description="Overrides YAML micro_batch.")
+    global_batch: Optional[int] = Field(None, ge=1, description="Overrides YAML global_batch.")
+
+    # ── Result selection: how surviving configs are filtered & ranked ─────
+    search_mode: str = Field(
+        "filter_sort",
+        description=(
+            "'filter_sort' → apply `filters` then rank by `sort_by` (Top-`top_n`); "
+            "'pareto' → 2D step_time×memory Pareto frontier (legacy behaviour)."
+        ),
+    )
+    filters: Optional[List[SearchFilter]] = Field(
+        None,
+        description="Constraints applied in filter_sort mode (memory feasibility always applies).",
+    )
+    sort_by: str = Field(
+        "tokens_per_sec",
+        description="Ranking metric in filter_sort mode (see SearchFilter.metric).",
+    )
+    sort_desc: bool = Field(True, description="Rank descending (True) or ascending (False).")
+    top_n: int = Field(50, ge=1, description="Max configs returned in filter_sort mode.")

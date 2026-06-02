@@ -185,12 +185,12 @@ def test_training_pipeline_pass():
     pipeline_pass = TrainingPipelinePass()
     result = pipeline_pass.run(graph, ctx)
 
-    assert "pipeline_metrics" in result.metadata
-    metrics = result.metadata["pipeline_metrics"]
-    assert metrics.warmup_steps == 1  # pp - 1
-    assert metrics.cooldown_steps == 1  # pp - 1
-    assert metrics.steady_steps == 8  # M (num_microbatches)
-    assert 0 < metrics.bubble_fraction < 1
+    assert "step_result" in result.metadata
+    metrics = result.metadata["step_result"]
+    assert metrics["warmup_steps"] == 1  # pp - 1
+    assert metrics["cooldown_steps"] == 1  # pp - 1
+    assert metrics["steady_steps"] == 8  # M (num_microbatches)
+    assert 0 < metrics["bubble_fraction"] < 1
 
 
 def test_training_config_num_microbatches():
@@ -257,8 +257,8 @@ def test_layer_scaling_step_time():
 
     result = TrainingPipelinePass().run(graph, ctx)
     # stage_time should be 100us * 4 (layer_scale) = 400us per microbatch
-    metrics = result.metadata["pipeline_metrics"]
-    assert metrics.step_time_ms > 0
+    metrics = result.metadata["step_result"]
+    assert metrics["step_time_ms"] > 0
 
 
 # ── Adam optimizer-state tests (Change 5) ────────────────────────────────────

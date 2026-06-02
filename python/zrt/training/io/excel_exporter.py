@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from zrt.training.io.operator_time_stats import build_operator_time_stats
 from zrt.training.spec.dtype import Dtype
+from zrt.training.spec.strategy import rank_product
 
 if TYPE_CHECKING:
     from zrt.training.ir.training_graph import Graph, Op
@@ -84,13 +85,25 @@ def export_estimate_excel(
         cost = op_costs.get(op.name)
         if cost is None:
             cost = _op_cost(op, model, system)
-        operator_op_dicts.append(_op_to_dict(op, cost, system))
+        operator_op_dicts.append(_op_to_dict(op, cost, system, model))
     operator_time_rows = build_operator_time_stats(
         model=model,
         report=report,
         op_dicts=operator_op_dicts,
         strategy=strategy,
     )
+
+    def _comm_breakdown_label(group: str, fallback: str) -> str:
+        kinds = sorted({
+            getattr(c, "kind", "")
+            for c in getattr(graph, "collectives", [])
+            if getattr(c, "group", "") == group and getattr(c, "kind", "")
+        })
+        if not kinds:
+            return fallback
+        return f"{group} ({'/'.join(kinds)})"
+
+    cp_comm_label = _comm_breakdown_label("CP", "CP")
 
     # ── Sheet 1: Summary ─────────────────────────────────────────────────
     ws = wb.active
@@ -137,15 +150,15 @@ def export_estimate_excel(
          f"{report.fwd_compute_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.fwd_compute_ms > 0 else "-"],
         ["  Backward Compute", f"{report.bwd_compute_ms:.2f}" if report.bwd_compute_ms > 0 else "-",
          f"{report.bwd_compute_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.bwd_compute_ms > 0 else "-"],
-        ["  Recompute (critical path)", f"{report.recompute_time_ms:.2f}" if report.recompute_time_ms > 0 else "0.00",
-         f"{report.recompute_time_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.recompute_time_ms > 0 else "0.0%"],
-        ["    Recompute (raw, NOT in step)", f"{report.recompute_time_raw_ms:.2f}" if report.recompute_time_raw_ms > 0 else "0.00",
-         "pipeline-hidden" if report.recompute_time_raw_ms > report.recompute_time_ms + 1e-9 else "on critical path"],
+        ["  Recompute (critical path)", f"{report.recompute_critical_ms:.2f}" if report.recompute_critical_ms > 0 else "0.00",
+         f"{report.recompute_critical_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.recompute_critical_ms > 0 else "0.0%"],
+        ["    Recompute (raw, NOT in step)", f"{report.recompute_raw_mag_ms:.2f}" if report.recompute_raw_mag_ms > 0 else "0.00",
+         "pipeline-hidden" if report.recompute_raw_mag_ms > report.recompute_critical_ms + 1e-9 else "on critical path"],
         ["  Communication (exposed)", f"{report.exposed_comm_ms:.2f}" if report.exposed_comm_ms > 0 else "-",
          f"{report.exposed_comm_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.exposed_comm_ms > 0 else "-"],
         ["    TP (RS/AG)", f"{report.tp_exposed_ms:.2f}" if report.tp_exposed_ms > 0 else "-",
          f"{report.tp_exposed_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.tp_exposed_ms > 0 else "-"],
-        ["    CP (A2A)", f"{report.cp_exposed_ms:.2f}" if report.cp_exposed_ms > 0 else "-",
+        [f"    {cp_comm_label}", f"{report.cp_exposed_ms:.2f}" if report.cp_exposed_ms > 0 else "-",
          f"{report.cp_exposed_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.cp_exposed_ms > 0 else "-"],
         ["    EP (A2A)", f"{report.ep_exposed_ms:.2f}" if report.ep_exposed_ms > 0 else "-",
          f"{report.ep_exposed_ms / report.step_time_ms * 100:.1f}%" if report.step_time_ms > 0 and report.ep_exposed_ms > 0 else "-"],
@@ -260,7 +273,7 @@ def export_estimate_excel(
             from zrt.training.models.flops import op_cost as _op_cost
             cost = _op_cost(op, model, system)
 
-        detail = _op_detail(op, cost)
+        detail = _op_detail(op, cost, model, system)
         fwd_flops = cost.fwd_cube_flops + cost.fwd_vector_flops
         bwd_flops = cost.dx_cube_flops + cost.dx_vector_flops + cost.dw_cube_flops + cost.dw_vector_flops
         total_flops = fwd_flops + bwd_flops
@@ -404,7 +417,7 @@ def export_estimate_excel(
         ["PP", strategy.pp, ""],
         ["EP", strategy.ep, ""],
         ["DP", strategy.dp, ""],
-        ["Total Parallelism", strategy.tp * strategy.cp * strategy.pp * strategy.ep * strategy.dp, ""],
+        ["Total Parallelism", rank_product(strategy.tp, strategy.cp, strategy.pp, strategy.ep, strategy.dp), ""],
         ["", "", ""],
         ["PP Schedule", strategy.pp_schedule.value, ""],
         ["VPP Chunks", strategy.vpp_chunks, ""],

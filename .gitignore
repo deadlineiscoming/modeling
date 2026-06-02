@@ -16,3 +16,4 @@ SESSION_PROGRESS.md
 /.omc/
 .codex
 docs/superpowers/
+server/stats.json

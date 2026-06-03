@@ -355,6 +355,14 @@ class ChromeTraceExporter:
         for s, tl in enumerate(timelines):
             fwd_lat = tl.phase_latency("fwd")
             bwd_lat = tl.phase_latency("bwd")
+            bwd_origin = min(
+                (
+                    op.start_us
+                    for op in tl.scheduled_ops
+                    if op.phase and "bwd" in op.phase
+                ),
+                default=fwd_lat,
+            )
             if fwd_lat == 0.0 and bwd_lat == 0.0:
                 fwd_lat = tl.total_latency_us
             stage_total = fwd_lat + bwd_lat
@@ -380,7 +388,7 @@ class ChromeTraceExporter:
                         rel_start = op.start_us
                     else:
                         base = bwd_base
-                        rel_start = op.start_us - fwd_lat
+                        rel_start = op.start_us - bwd_origin
 
                     dur_us = max(op.latency_us, self._MIN_VISIBLE_US) if op.stream_type == "comm" else op.latency_us
 
@@ -393,8 +401,11 @@ class ChromeTraceExporter:
                         dur=dur_us * self._mult,
                         args={
                             "phase": op.phase,
+                            "node_id": op.node_id,
                             "op_type": op.op_type,
                             "stream_type": op.stream_type,
+                            "parallelism": op.parallelism_tag,
+                            **self._bucket_args(op),
                             "mb": m,
                         },
                     ).to_dict())
@@ -468,8 +479,11 @@ class ChromeTraceExporter:
                     dur=dur_us * self._mult,
                     args={
                         "phase": op.phase,
+                        "node_id": op.node_id,
                         "op_type": op.op_type,
                         "stream_type": op.stream_type,
+                        "parallelism": op.parallelism_tag,
+                        **self._bucket_args(op),
                         "view": "detail",
                     },
                 ).to_dict())
@@ -529,8 +543,14 @@ class ChromeTraceExporter:
             ).to_dict())
 
         for d, tl in enumerate(timelines):
-            fwd_lat = tl.phase_latency("fwd")
-            bwd_lat = tl.phase_latency("bwd")
+            bwd_origin = min(
+                (
+                    op.start_us
+                    for op in tl.scheduled_ops
+                    if op.phase and "bwd" in op.phase
+                ),
+                default=0.0,
+            )
 
             # Index compute ops by node_id for CoC start-time shift
             compute_index: dict[str, tuple[float, float]] = {}
@@ -551,12 +571,16 @@ class ChromeTraceExporter:
                             cat="compute" if op.stream_type != "comm" else "communication",
                             pid=d,
                             tid=detail_base + op.stream_id,
-                            ts=(fwd_base + op.start_us) * self._mult,
+                            ts=ts,
                             dur=dur_us * self._mult,
                             args={
                                 "phase": "fwd",
                                 "mb": m,
+                                "node_id": op.node_id,
                                 "op_type": op.op_type,
+                                "stream_type": op.stream_type,
+                                "parallelism": op.parallelism_tag,
+                                **self._bucket_args(op),
                                 "view": "detail",
                             },
                         ).to_dict())
@@ -565,7 +589,7 @@ class ChromeTraceExporter:
                 for op in tl.scheduled_ops:
                     if "bwd" in op.phase:
                         dur_us = max(op.latency_us, self._MIN_VISIBLE_US) if op.stream_type == "comm" else op.latency_us
-                        relative_start = op.start_us - fwd_lat if len(op.phase) > 0 and "fwd" not in op.phase else op.start_us
+                        relative_start = op.start_us - bwd_origin
                         ts = (bwd_base + relative_start) * self._mult
                         if op.overlap_type == "coc" and op.overlap_target:
                             ts = self._coc_shift_ts(op, compute_index, bwd_base, ts)
@@ -574,12 +598,16 @@ class ChromeTraceExporter:
                             cat="compute" if op.stream_type != "comm" else "communication",
                             pid=d,
                             tid=detail_base + op.stream_id,
-                            ts=(bwd_base + relative_start) * self._mult,
+                            ts=ts,
                             dur=dur_us * self._mult,
                             args={
                                 "phase": "bwd",
                                 "mb": m,
+                                "node_id": op.node_id,
                                 "op_type": op.op_type,
+                                "stream_type": op.stream_type,
+                                "parallelism": op.parallelism_tag,
+                                **self._bucket_args(op),
                                 "view": "detail",
                             },
                         ).to_dict())
@@ -590,6 +618,21 @@ class ChromeTraceExporter:
         return doc
 
     # ── internals ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _bucket_args(op) -> dict:
+        attrs = getattr(op, "attrs", {}) or {}
+        keys = (
+            "bucket_index",
+            "bucket_bytes",
+            "bucket_cap_mb",
+            "bucket_param_count",
+            "bucket_ready_node",
+            "bucket_layers",
+            "bucket_source_ids",
+            "dp_grad_group_idx",
+        )
+        return {key: attrs[key] for key in keys if key in attrs}
 
     @staticmethod
     def _coc_shift_ts(

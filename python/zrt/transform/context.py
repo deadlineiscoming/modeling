@@ -279,8 +279,12 @@ class TrainingConfig:
     # User can override by setting cp_kind explicitly
     cp_kind: str = "none"  # Will be auto-set to "ulysses" or "compressed" when cp > 1
 
-    # Overlap DP allreduce with PP bubble window
+    # Overlap DP gradient reduction with backward/PP bubble windows. This is
+    # the original hidden/exposed accounting path; use --no-dp-overlap for a
+    # fully exposed pure-DP baseline.
     dp_overlap_in_bubble: bool = True
+    dp_bucket_mode: str = "layer"  # "layer" (existing behavior) or "ddp"
+    dp_bucket_cap_mb: float = 25.0
 
     # CoC (Communication-over-Computation) for TP all_reduce
     # When True, TP comm nodes start after 1/K of the predecessor compute

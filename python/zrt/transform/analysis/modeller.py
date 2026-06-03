@@ -48,6 +48,9 @@ def estimate_training_from_graphs(
     vocab_size: int | None = None,
     micro_batch: int = 1,
     global_batch: int = 32,
+    dp_overlap_in_bubble: bool = True,
+    dp_bucket_mode: str = "layer",
+    dp_bucket_cap_mb: float = 25.0,
     recompute_policy: str = "none",
     pp_schedule: str = "1f1b",
     vpp_chunks: int = 1,
@@ -161,6 +164,9 @@ def estimate_training_from_graphs(
             muon_ns_steps=muon_ns_steps,
             micro_batch=micro_batch,
             global_batch=global_batch,
+            dp_overlap_in_bubble=dp_overlap_in_bubble,
+            dp_bucket_mode=dp_bucket_mode,
+            dp_bucket_cap_mb=dp_bucket_cap_mb,
             recompute_policy=recompute_policy,
             pp_schedule=pp_schedule,
             vpp_chunks=vpp_chunks,
@@ -237,13 +243,15 @@ def estimate_training_from_graphs(
                 exporter = ChromeTraceExporter()
                 M = pp_timeline.M
 
-                exporter.export_stitched(pp_timeline, str(trace_dir / "pp_stitched.json"))
-
                 tl_list = [
                     stage_timelines[s] for s in range(pp_timeline.pp)
                     if s in stage_timelines and stage_timelines[s] is not None
                 ]
                 if tl_list:
+                    exporter.export_stitched_detailed(
+                        pp_timeline, tl_list,
+                        str(trace_dir / "pp_stitched.json"),
+                    )
                     exporter.export_per_stage(
                         tl_list,
                         str(trace_dir / "pp_per_stage.json"),
@@ -255,6 +263,8 @@ def estimate_training_from_graphs(
                         pp_timeline, tl_list,
                         str(trace_dir / "pp_combined.json"),
                     )
+                else:
+                    exporter.export_stitched(pp_timeline, str(trace_dir / "pp_stitched.json"))
                 logger.info("PP Chrome Trace exported to %s", trace_dir)
 
     if "unified" in results:

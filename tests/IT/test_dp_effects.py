@@ -52,14 +52,14 @@ class _DPResult:
         return self._report.get(key, default)
 
 
-def _run_cli_and_load_report(repo_root: Path, outdir: Path, dp: int, timeout: int = 900) -> _DPResult:
-    """Run `python -m python.zrt` with given dp and return report + out_dir.
-
-    Raises subprocess.CalledProcessError on failure.
-    """
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(repo_root / "python")
-
+def _build_training_cli_cmd(
+    outdir: Path,
+    *,
+    dp: int,
+    global_batch: int = 64,
+    dp_ddp_buckets: bool = True,
+    dp_bucket_cap_mb: float = 25,
+) -> list[str]:
     cmd = [
         sys.executable,
         "-m",
@@ -70,19 +70,38 @@ def _run_cli_and_load_report(repo_root: Path, outdir: Path, dp: int, timeout: in
         "--hidden", "7168",
         "--layers", "4",
         "--seq-len", "128",
-        "--global-batch", "64",
+        "--global-batch", str(global_batch),
         "--micro-batch", "8",
         "--dp", str(dp),
         "--pp", "4",
         "--tp", "1",
         "--pp-schedule", "1f1b",
-        "--pp-mode", "trace",
         "--recompute-policy", "full",
         "--optimizer", "adam",
         "--zero-stage", "1",
-        "--output-dir", str(outdir),
     ]
+    if dp_ddp_buckets:
+        cmd.extend(["--dp-ddp-buckets", "--dp-bucket-cap-mb", f"{dp_bucket_cap_mb:g}"])
+    cmd.extend(["--output-dir", str(outdir)])
+    return cmd
 
+
+def _run_cli_and_load_report(
+    repo_root: Path,
+    outdir: Path,
+    dp: int,
+    timeout: int = 900,
+    *,
+    global_batch: int = 64,
+) -> _DPResult:
+    """Run `python -m python.zrt` with given dp and return report + out_dir.
+
+    Raises subprocess.CalledProcessError on failure.
+    """
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root / "python")
+
+    cmd = _build_training_cli_cmd(outdir, dp=dp, global_batch=global_batch)
     proc = subprocess.run(cmd, check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "cli_output.log").write_text(proc.stdout)
@@ -98,7 +117,7 @@ def dp_reports(tmp_path_factory):
     if os.environ.get("RUN_DP_TEST") != "1":
         pytest.skip("Set RUN_DP_TEST=1 to run this long integration test")
 
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[2]
     tmp_path = tmp_path_factory.mktemp("dp_effects")
 
     reports = {}
@@ -107,6 +126,31 @@ def dp_reports(tmp_path_factory):
         reports[dp] = _run_cli_and_load_report(repo_root, out_dir, dp=dp)
 
     return reports
+
+
+def test_requested_dp_ddp_bucket_command_e2e():
+    """Smoke the exact DDP-bucket CLI shape requested for pp=4/dp=4.
+
+    This is skipped with the rest of the long DP integration tests unless
+    RUN_DP_TEST=1 is set.
+    """
+    if os.environ.get("RUN_DP_TEST") != "1":
+        pytest.skip("Set RUN_DP_TEST=1 to run this long integration test")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    out_dir = repo_root / "output" / "dp_test_pp4_dp4"
+    result = _run_cli_and_load_report(
+        repo_root,
+        out_dir,
+        dp=4,
+        global_batch=32,
+    )
+
+    report = result._report
+    assert report.get("dp_total_ms", 0.0) > 0
+    assert (out_dir / "pp_trace" / "pp_per_stage.json").exists()
+    assert (out_dir / "pp_trace" / "pp_combined.json").exists()
+    assert (out_dir / "pp_trace" / "pp_stitched.json").exists()
 
 
 def _load_xlsx_sheets(xlsx_path: Path) -> dict[str, list[dict]]:
@@ -139,7 +183,6 @@ def _filter_dp_comm(comm_sheet: list[dict]) -> list[dict]:
     return [
         r for r in comm_sheet
         if r.get("Role") == "dp_grad_reduce"
-        or "dp_grad" in str(r.get("Role", ""))
     ]
 
 
@@ -202,13 +245,23 @@ def test_dp_total_memory_decreases(dp_reports):
 
 # ── Throughput monotonicity ────────────────────────────────────────────────
 
-def test_dp_throughput_improves(dp_reports):
-    """Step time should decrease and tokens/sec should increase monotonically."""
+def test_dp_throughput_improves_over_dp1(dp_reports):
+    """Multi-DP should improve over dp=1, but dp8 need not beat dp4 here.
+
+    The fixture keeps global_batch fixed at 64 with micro_batch=8 and pp=4.
+    That gives M=2 for dp=4 and M=1 for dp=8; the latter can have a larger
+    pipeline bubble, so strict dp1 > dp4 > dp8 monotonicity is not a valid
+    invariant for this geometry.
+    """
     step_time = {dp: dp_reports[dp]["step_time_ms"] for dp in (1, 4, 8)}
 
-    assert step_time[1] > step_time[4] > step_time[8], (
-        f"step_time should decrease monotonically: "
+    assert step_time[1] > step_time[4], (
+        f"dp=4 step_time should improve over dp=1: "
         f"dp1={step_time[1]}, dp4={step_time[4]}, dp8={step_time[8]}"
+    )
+    assert step_time[1] > step_time[8], (
+        f"dp=8 step_time should improve over dp=1 even if PP bubble makes it "
+        f"slower than dp=4: dp1={step_time[1]}, dp4={step_time[4]}, dp8={step_time[8]}"
     )
 
 
@@ -410,11 +463,17 @@ class TestDpCommHiding:
 class TestDpCommExistence:
     """DP communication operator count and presence by dp value."""
 
-    def test_count_matches_layers(self, dp_excel_data):
+    def test_count_matches_ddp_buckets(self, dp_excel_data):
         comm = dp_excel_data[4].get("Communication Ops", [])
         dp_rows = _filter_dp_comm(comm)
-        assert len(dp_rows) == 4, (
-            f"Expected 4 DP comm ops (one per layer), got {len(dp_rows)}"
+        bucket_ids = {
+            str(row.get("Node ID", ""))
+            for row in dp_rows
+            if str(row.get("Node ID", "")).startswith("comm_grad_reduce_bucket_")
+        }
+        assert len(dp_rows) == len(bucket_ids) == 10, (
+            f"Expected 10 DDP bucket comm ops, got rows={len(dp_rows)}, "
+            f"bucket_ids={sorted(bucket_ids)}"
         )
 
     def test_none_for_dp1(self, dp_excel_data):
@@ -455,7 +514,7 @@ class TestDpCommAttributes:
         comm = dp_excel_data[4].get("Communication Ops", [])
         for row in _filter_dp_comm(comm):
             scope = str(row.get("Scope", ""))
-            assert "data_parallel.grad_reduce.layer_" in scope, (
+            assert "data_parallel.grad_reduce.bucket_" in scope, (
                 f"Unexpected scope: {scope}"
             )
 
@@ -481,7 +540,7 @@ class TestDpCommAttributes:
         comm = dp_excel_data[4].get("Communication Ops", [])
         for row in _filter_dp_comm(comm):
             nid = str(row.get("Node ID", ""))
-            assert nid.startswith("comm_grad_reduce_layer_"), (
+            assert nid.startswith("comm_grad_reduce_bucket_"), (
                 f"Unexpected Node ID: {nid}"
             )
 
@@ -489,16 +548,13 @@ class TestDpCommAttributes:
 # ── Excel: DP comm scope encodes layer info ────────────────────────────────
 
 class TestDpCommScope:
-    """DP comm node scope carries per-layer info even when Layer column is empty
-    (injected nodes do not populate `layer`)."""
+    """DP comm node scope carries bucket info in DDP bucket mode."""
 
     def test_scopes_contain_layer_keys(self, dp_excel_data):
         comm = dp_excel_data[4].get("Communication Ops", [])
         scopes = {str(r.get("Scope", "")) for r in _filter_dp_comm(comm)}
-        for lk in ("0", "1", "2", "3"):
-            assert any(f"layer_{lk}" in s for s in scopes), (
-                f"No scope found for layer_{lk} in {scopes}"
-            )
+        assert scopes
+        assert all("data_parallel.grad_reduce.bucket_" in s for s in scopes)
 
     def test_one_comm_per_scope(self, dp_excel_data):
         comm = dp_excel_data[4].get("Communication Ops", [])
@@ -522,8 +578,10 @@ class TestDpScaleOps:
             and "grad_scale" in str(r.get("Node ID", ""))
         ]
 
-    def test_count_eq_layers(self, dp_excel_data):
-        assert len(self._scale_rows(dp_excel_data[4])) == 4, "Expected 4 grad scale ops"
+    def test_count_eq_buckets(self, dp_excel_data):
+        assert len(self._scale_rows(dp_excel_data[4])) == 10, (
+            "Expected one grad scale op per DDP bucket"
+        )
 
     def test_none_for_dp1(self, dp_excel_data):
         assert len(self._scale_rows(dp_excel_data[1])) == 0, (
@@ -533,7 +591,7 @@ class TestDpScaleOps:
     def test_node_id_pattern(self, dp_excel_data):
         for row in self._scale_rows(dp_excel_data[4]):
             nid = str(row.get("Node ID", ""))
-            assert nid.startswith("grad_scale_layer_"), (
+            assert nid.startswith("grad_scale_bucket_"), (
                 f"Unexpected scale node ID: {nid}"
             )
 
@@ -585,20 +643,20 @@ class TestPpTraceDpCommExistence:
     For dp=1: M = 64 / (8*1) = 8, but dp=1 has no DP comm, so 0 events.
     """
 
-    def test_per_stage_count_eq_layers_times_M(self, dp_pp_trace):
+    def test_per_stage_count_eq_buckets_times_M(self, dp_pp_trace):
         """dp=4 with 4 layers and M=2 should produce 8 reduce_scatter events in pp_per_stage."""
         dp_comm = _filter_dp_comm_events(dp_pp_trace[4]["per_stage"])
         M = 2
-        expected = 4 * M
+        expected = 10 * M
         assert len(dp_comm) == expected, (
             f"Expected {expected} DP comm events (4 layers × {M} microbatches) in pp_per_stage for dp=4, got {len(dp_comm)}"
         )
 
-    def test_combined_count_eq_layers_times_M(self, dp_pp_trace):
+    def test_combined_count_eq_buckets_times_M(self, dp_pp_trace):
         """dp=4 with 4 layers and M=2 should produce 8 reduce_scatter events in pp_combined."""
         dp_comm = _filter_dp_comm_events(dp_pp_trace[4]["combined"])
         M = 2
-        expected = 4 * M
+        expected = 10 * M
         assert len(dp_comm) == expected, (
             f"Expected {expected} DP comm events (4 layers × {M} microbatches) in pp_combined for dp=4, got {len(dp_comm)}"
         )
@@ -617,13 +675,15 @@ class TestPpTraceDpCommExistence:
             f"Expected 0 DP comm events for dp=1, got {len(dp_comm)}"
         )
 
-    def test_stitched_has_no_dp_comm(self, dp_pp_trace):
-        """pp_stitched only contains coarse-grained F/B blocks, no DP comm nodes."""
-        for dp in (1, 4):
-            dp_comm = _filter_dp_comm_events(dp_pp_trace[dp]["stitched"])
-            assert len(dp_comm) == 0, (
-                f"pp_stitched should not contain DP comm nodes for dp={dp}"
-            )
+    def test_stitched_count_eq_buckets_times_M(self, dp_pp_trace):
+        """pp_stitched also exposes detailed DP comm events."""
+        assert len(_filter_dp_comm_events(dp_pp_trace[1]["stitched"])) == 0
+        dp_comm = _filter_dp_comm_events(dp_pp_trace[4]["stitched"])
+        M = 2
+        expected = 10 * M
+        assert len(dp_comm) == expected, (
+            f"Expected {expected} DP comm events in pp_stitched for dp=4, got {len(dp_comm)}"
+        )
 
 
 class TestPpTraceDpCommAttributes:
@@ -677,11 +737,11 @@ class TestPpTraceDpCommStageDistribution:
             f"DP comm nodes should span at least 2 PP stages, found stages: {pids}"
         )
 
-    def test_dp_comm_count_per_stage_matches_layers_times_M(self, dp_pp_trace):
+    def test_dp_comm_count_per_stage_matches_buckets_times_M(self, dp_pp_trace):
         """Total DP comm nodes across all stages should equal layers × M."""
         dp_comm = _filter_dp_comm_events(dp_pp_trace[4]["per_stage"])
         M = 2
-        expected = 4 * M
+        expected = 10 * M
         assert len(dp_comm) == expected, (
             f"Total DP comm nodes should equal {expected} (4 layers × {M} microbatches), got {len(dp_comm)}"
         )
@@ -698,13 +758,19 @@ class TestPpTraceDpCommTiming:
                 f"DP comm node should have positive timestamp, got {evt['ts']}"
             )
 
-    def test_dp_comm_duration_consistent(self, dp_pp_trace):
-        """All DP comm nodes for the same dp should have consistent duration."""
+    def test_dp_comm_duration_consistent_per_bucket(self, dp_pp_trace):
+        """The same DDP bucket should have consistent duration across microbatches."""
         dp_comm = _filter_dp_comm_events(dp_pp_trace[4]["per_stage"])
-        durations = [evt["dur"] for evt in dp_comm]
-        if len(durations) > 1:
+        by_bucket: dict[int, list[float]] = {}
+        for evt in dp_comm:
+            bucket_index = evt.get("args", {}).get("bucket_index")
+            assert bucket_index is not None, f"Missing bucket_index in event {evt}"
+            by_bucket.setdefault(int(bucket_index), []).append(evt["dur"])
+
+        assert len(by_bucket) == 10
+        for bucket_index, durations in by_bucket.items():
             ref = durations[0]
             for d in durations[1:]:
                 assert d == pytest.approx(ref, rel=0.1), (
-                    f"DP comm durations should be consistent: {durations}"
+                    f"Bucket {bucket_index} durations should be consistent: {durations}"
                 )

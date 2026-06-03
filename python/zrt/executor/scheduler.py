@@ -41,6 +41,7 @@ class ScheduledOp:
     overlap_type: str = ""    # "coc" | "mc2" | "ring_cp" | "none"
     coc_tile_k:   int = 0
     overlap_target: str = ""  # node_id of the compute predecessor for CoC
+    attrs: dict = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return (
@@ -137,6 +138,7 @@ class DAGScheduler:
 
     _PARALLELISM_TAG_MAP: dict[str, str] = {
         "tp": "tp", "ep": "ep", "pp": "pp", "cp": "cp",
+        "data_parallel": "dp",
     }
 
     @staticmethod
@@ -154,6 +156,7 @@ class DAGScheduler:
         """
         finish:       dict[str, float] = {}   # node_id → end_us
         stream_avail: dict[int, float] = {}   # stream_id → next_free_us
+        stream_types: dict[int, str] = {}
         scheduled:    list[ScheduledOp] = []
 
         for node in graph.topo_sort():
@@ -168,12 +171,24 @@ class DAGScheduler:
             )
             # resource constraint: wait for stream to be free
             s_free = stream_avail.get(stream_id, 0.0)
+            if node.annotations.get("blocking_comm"):
+                s_free = max(
+                    [s_free] + [
+                        t for sid, t in stream_avail.items()
+                        if stream_types.get(sid) == "compute"
+                    ]
+                )
 
             start = max(pred_done, s_free)
             end   = start + lat
 
             finish[node.id]         = end
             stream_avail[stream_id] = end
+            stream_types[stream_id] = stream_type
+            if node.annotations.get("blocking_comm"):
+                for sid, stype in list(stream_types.items()):
+                    if stype == "compute":
+                        stream_avail[sid] = end
 
             scheduled.append(ScheduledOp(
                 node_id     = node.id,
@@ -189,6 +204,7 @@ class DAGScheduler:
                 overlap_type = node.annotations.get("overlap_type", "none"),
                 coc_tile_k   = int(node.attrs.get("coc_tile_k", 0)),
                 overlap_target = node.annotations.get("overlap_target", ""),
+                attrs = dict(node.attrs),
             ))
 
         return Timeline(

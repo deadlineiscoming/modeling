@@ -247,6 +247,32 @@ def main() -> None:
         help="Global batch size across DP ranks (training, default: 32).",
     )
     parser.add_argument(
+        "--dp-bucket-cap-mb", type=float, default=25.0,
+        help="DDP gradient bucket cap in MiB when --dp-ddp-buckets is enabled "
+             "(training, default: 25.0).",
+    )
+    parser.add_argument(
+        "--dp-overlap",
+        dest="dp_overlap",
+        action="store_true",
+        default=True,
+        help="Enable original DP hidden/exposed overlap accounting "
+             "(training, default: enabled).",
+    )
+    parser.add_argument(
+        "--no-dp-overlap",
+        dest="dp_overlap",
+        action="store_false",
+        help="Disable DP overlap and model gradient reduction as fully exposed pure DP.",
+    )
+    parser.add_argument(
+        "--dp-ddp-buckets",
+        action="store_true",
+        default=False,
+        help="Use DDP-style cap-based DP gradient buckets for trace-level overlap. "
+             "Without this flag, the original layer DP hidden/exposed path is used.",
+    )
+    parser.add_argument(
         "--total-params", type=float, default=None,
         help="Full model param count, e.g. 671e9 (for scaling traced layers).",
     )
@@ -277,6 +303,11 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    if args.dp_ddp_buckets and not args.dp_overlap:
+        parser.error(
+            "--dp-ddp-buckets requires DP overlap to be enabled. "
+            "Use --no-dp-overlap without --dp-ddp-buckets for pure DP."
+        )
 
     # ── --list-fusion-rules: print and exit ──────────────────────────────────
     if args.list_fusion_rules:
@@ -684,6 +715,9 @@ def _run_training_modelling(args, model_id: str, hw, result) -> None:
         ),
         pp_schedule=args.pp_schedule,
         vpp_chunks=args.vpp_chunks,
+        dp_overlap_in_bubble=args.dp_overlap,
+        dp_bucket_mode="ddp" if getattr(args, "dp_ddp_buckets", False) else "layer",
+        dp_bucket_cap_mb=args.dp_bucket_cap_mb,
         tp_coc=args.tp_coc,
         return_transformed=True,
         quant=args.quant,

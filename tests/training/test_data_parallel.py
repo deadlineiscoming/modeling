@@ -10,6 +10,9 @@ from zrt.transform.context import (
 )
 from zrt.transform.parallel.data_parallel import DataParallelPass
 from zrt.transform.analysis import TrainingPipelinePass
+from zrt.transform.analysis.passes import StreamAssignPass
+from zrt.transform.analysis.comm_latency import CommLatencyPass
+from zrt.executor.scheduler import DAGScheduler
 from zrt.transform.training.offload import OffloadPass
 
 
@@ -73,7 +76,7 @@ def _make_hardware_spec():
 class TestDPZero0:
     """ZeRO-0: all_reduce comm nodes."""
 
-    def test_all_reduce_created_per_layer(self):
+    def test_all_reduce_created_per_layer_by_default(self):
         graph = _make_backward_graph(num_layers=3)
         ctx = TransformContext(
             hw_spec=_make_hardware_spec(),
@@ -88,13 +91,14 @@ class TestDPZero0:
 
         dp_nodes = [n for n in result.nodes.values()
                     if n.annotations.get("dp_comm")]
-        assert len(dp_nodes) == 3  # one per layer
+        assert len(dp_nodes) == 3
 
         for node in dp_nodes:
             assert node.op_type == "comm.all_reduce"
             assert node.attrs["group_size"] == 4
             assert node.attrs["collective"] == "all_reduce"
             assert node.attrs["bucket_bytes"] > 0
+            assert node.id.startswith("comm_grad_reduce_layer_")
 
     def test_dp_comm_annotation_present(self):
         graph = _make_backward_graph(num_layers=2)
@@ -205,6 +209,24 @@ class TestDPZero2:
         expected = 2.0 * (dp - 1) / dp * bucket_bytes / (900e9 / 1e6)
         assert ar_time == pytest.approx(expected)
 
+    def test_comm_latency_uses_dp_bucket_bytes(self):
+        graph = _make_backward_graph(num_layers=1)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(micro_batch=1, global_batch=8, zero_stage=2),
+        )
+
+        dp_graph = DataParallelPass().run(graph, ctx)
+        result = CommLatencyPass().run(dp_graph, ctx)
+        comm_node = next(n for n in result.nodes.values() if n.annotations.get("dp_comm"))
+
+        bucket_bytes = comm_node.attrs["bucket_bytes"]
+        link = ctx.hw_spec.interconnect.intra_node
+        expected = ((4 - 1) / 4 * bucket_bytes) / (link.effective_bw_bps(4) / 1e6)
+        expected += (4 - 1) * link.latency_us
+        assert comm_node.annotations["latency_us"] == pytest.approx(expected)
+
 
 class TestDPOverlap:
     """Tests for DP overlap-in-bubble behavior."""
@@ -259,16 +281,148 @@ class TestDPOverlap:
                     if n.annotations.get("dp_comm")]
         assert len(dp_nodes) == 0
 
+    def test_default_layer_bucket_preserves_original_rewire_behavior(self):
+        graph = _make_backward_graph(num_layers=2)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        assert "grad_node_1" not in result.successors("grad_node_0")
+        assert "comm_grad_reduce_layer_0" in result.successors("grad_node_0")
+        assert "grad_scale_layer_0" in result.successors("comm_grad_reduce_layer_0")
+        assert "grad_scale_layer_0" in result.predecessors("grad_node_1")
+        assert "grad_node_1" in result.successors("grad_scale_layer_0")
+        assert result.nodes["comm_grad_reduce_layer_0"].attrs["bucket_ready_node"] == "grad_node_0"
+
+    def test_default_layer_bucket_keeps_original_overlap_annotation(self):
+        graph = _make_backward_graph(num_layers=2)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        dp_nodes = [n for n in result.nodes.values() if n.annotations.get("dp_comm")]
+        assert dp_nodes
+        assert all(n.annotations.get("overlap_in_bubble") is True for n in dp_nodes)
+
+    def test_no_dp_overlap_layer_bucket_blocks_later_backward_compute(self):
+        graph = _make_backward_graph(num_layers=2)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_overlap_in_bubble=False,
+            ),
+        )
+
+        dp_graph = DataParallelPass().run(graph, ctx)
+        for node_id, latency_us in {
+            "grad_node_0": 100.0,
+            "comm_grad_reduce_layer_0": 80.0,
+            "grad_scale_layer_0": 1.0,
+            "grad_node_1": 100.0,
+        }.items():
+            dp_graph.nodes[node_id].annotations["latency_us"] = latency_us
+
+        scheduled_graph = StreamAssignPass().run(dp_graph, ctx)
+        timeline = DAGScheduler().schedule(scheduled_graph)
+        by_id = {op.node_id: op for op in timeline.scheduled_ops}
+
+        first_comm = by_id["comm_grad_reduce_layer_0"]
+        scale = by_id["grad_scale_layer_0"]
+        later_bwd = by_id["grad_node_1"]
+
+        assert first_comm.start_us == pytest.approx(by_id["grad_node_0"].end_us)
+        assert scale.start_us == pytest.approx(first_comm.end_us)
+        assert later_bwd.start_us == pytest.approx(scale.end_us)
+        assert first_comm.end_us <= later_bwd.start_us
+
+    def test_ddp_bucket_comm_is_side_branch(self):
+        graph = _make_backward_graph(num_layers=2)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_overlap_in_bubble=True,
+                dp_bucket_mode="ddp",
+                dp_bucket_cap_mb=1.0,
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        assert "grad_node_1" in result.successors("grad_node_0")
+        assert "comm_grad_reduce_bucket_0" in result.successors("grad_node_0")
+        assert "comm_grad_reduce_bucket_0" not in result.predecessors("grad_node_1")
+        assert "grad_node_1" not in result.successors("comm_grad_reduce_bucket_0")
+        assert result.nodes["comm_grad_reduce_bucket_0"].attrs["bucket_ready_node"] == "grad_node_0"
+
+    def test_ddp_bucket_comm_overlaps_later_backward_compute(self):
+        graph = _make_backward_graph(num_layers=2)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_overlap_in_bubble=True,
+                dp_bucket_mode="ddp",
+                dp_bucket_cap_mb=1.0,
+            ),
+        )
+
+        dp_graph = DataParallelPass().run(graph, ctx)
+        for node_id, latency_us in {
+            "grad_node_0": 100.0,
+            "grad_node_1": 100.0,
+            "comm_grad_reduce_bucket_0": 80.0,
+            "comm_grad_reduce_bucket_1": 80.0,
+            "grad_scale_bucket_0": 1.0,
+            "grad_scale_bucket_1": 1.0,
+        }.items():
+            dp_graph.nodes[node_id].annotations["latency_us"] = latency_us
+
+        scheduled_graph = StreamAssignPass().run(dp_graph, ctx)
+        timeline = DAGScheduler().schedule(scheduled_graph)
+        by_id = {op.node_id: op for op in timeline.scheduled_ops}
+
+        first_comm = by_id["comm_grad_reduce_bucket_0"]
+        later_bwd = by_id["grad_node_1"]
+        scale = by_id["grad_scale_bucket_0"]
+
+        assert first_comm.stream_type == "comm"
+        assert first_comm.parallelism_tag == "dp"
+        assert first_comm.start_us == pytest.approx(by_id["grad_node_0"].end_us)
+        assert later_bwd.start_us == pytest.approx(by_id["grad_node_0"].end_us)
+        assert scale.stream_type == "comm"
+        assert scale.start_us == pytest.approx(first_comm.end_us)
+        assert later_bwd.start_us < scale.start_us
+        assert min(first_comm.end_us, later_bwd.end_us) > max(first_comm.start_us, later_bwd.start_us)
+
 
 class TestDPGroupIdx:
     """Tests for per-group index assignment."""
 
-    def test_group_idx_sequential(self):
+    def test_group_idx_sequential_for_default_layer_buckets(self):
         graph = _make_backward_graph(num_layers=3)
         ctx = TransformContext(
             hw_spec=_make_hardware_spec(),
             parallel=ParallelConfig(tp=1, dp=4),
-            training=TrainingConfig(micro_batch=1, global_batch=8, zero_stage=0),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+            ),
         )
 
         result = DataParallelPass().run(graph, ctx)
@@ -280,6 +434,73 @@ class TestDPGroupIdx:
         indices = [n.attrs["dp_grad_group_idx"] for n in dp_nodes]
         assert indices == [0, 1, 2]
 
+    def test_ddp_mode_accumulates_ready_grads_into_cap_buckets(self):
+        graph = _make_backward_graph(num_layers=3)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_bucket_mode="ddp",
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        dp_nodes = sorted(
+            [n for n in result.nodes.values() if n.annotations.get("dp_comm")],
+            key=lambda n: n.attrs["bucket_index"],
+        )
+        assert len(dp_nodes) == 2
+        assert dp_nodes[0].attrs["bucket_param_count"] == 2
+        assert dp_nodes[0].attrs["bucket_ready_node"] == "grad_node_1"
+        assert dp_nodes[1].attrs["bucket_param_count"] == 1
+        assert dp_nodes[1].attrs["bucket_ready_node"] == "grad_node_2"
+
+    def test_ddp_mode_small_cap_flushes_each_ready_grad(self):
+        graph = _make_backward_graph(num_layers=3)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_bucket_mode="ddp",
+                dp_bucket_cap_mb=1.0,
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        dp_nodes = sorted(
+            [n for n in result.nodes.values() if n.annotations.get("dp_comm")],
+            key=lambda n: n.attrs["bucket_index"],
+        )
+        assert len(dp_nodes) == 3
+        assert [n.attrs["bucket_ready_node"] for n in dp_nodes] == [
+            "grad_node_0", "grad_node_1", "grad_node_2",
+        ]
+
+    def test_ddp_mode_pp_does_not_bucket_across_layers(self):
+        graph = _make_backward_graph(num_layers=3)
+        ctx = TransformContext(
+            hw_spec=_make_hardware_spec(),
+            parallel=ParallelConfig(tp=1, dp=4, pp=4),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+                dp_bucket_mode="ddp",
+            ),
+        )
+
+        result = DataParallelPass().run(graph, ctx)
+
+        dp_nodes = sorted(
+            [n for n in result.nodes.values() if n.annotations.get("dp_comm")],
+            key=lambda n: n.attrs["bucket_index"],
+        )
+        assert len(dp_nodes) == 3
+        assert [n.attrs["bucket_layers"] for n in dp_nodes] == [["0"], ["1"], ["2"]]
+        assert [n.layer for n in dp_nodes] == ["0", "1", "2"]
+
 
 class TestDPDivScale:
     """Tests for aten.div.Scalar gradient averaging nodes.
@@ -288,12 +509,14 @@ class TestDPDivScale:
     so that all_reduce / reduce_scatter SUM is averaged by dp.
     """
 
-    def test_div_scale_node_created_per_layer(self):
+    def test_div_scale_node_created_per_layer_by_default(self):
         graph = _make_backward_graph(num_layers=3)
         ctx = TransformContext(
             hw_spec=_make_hardware_spec(),
             parallel=ParallelConfig(tp=1, dp=4),
-            training=TrainingConfig(micro_batch=1, global_batch=8, zero_stage=0),
+            training=TrainingConfig(
+                micro_batch=1, global_batch=8, zero_stage=0,
+            ),
         )
 
         result = DataParallelPass().run(graph, ctx)
@@ -303,7 +526,7 @@ class TestDPDivScale:
             if n.annotations.get("inserted_by") == "data_parallel_pass"
             and n.op_type == "aten.div.Scalar"
         ]
-        assert len(scale_nodes) == 3  # one per layer
+        assert len(scale_nodes) == 3
 
     def test_div_scale_divisor_equals_dp(self):
         graph = _make_backward_graph(num_layers=2)

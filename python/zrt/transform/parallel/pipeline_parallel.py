@@ -86,6 +86,7 @@ class PipelineParallelPass(GraphPass):
         layer_profile = g.metadata.get("layer_profile")
         typical_indices = g.metadata.get("typical_indices")
         typical_costs_fwd = g.metadata.get("typical_costs_fwd")
+        typical_costs_from_metadata = typical_costs_fwd is not None
         
         # If typical_costs_fwd not set but we have layer_profile + typical_indices, extract from nodes
         if layer_profile is not None and typical_indices is not None and typical_costs_fwd is None:
@@ -114,11 +115,19 @@ class PipelineParallelPass(GraphPass):
         sorted_layers = sorted(k for k in layer_nodes if k >= 0)
 
         # 3. Partition layers → pp stages (prefer typical layer data if available)
+        use_full_layer_index = self._uses_full_layer_index(
+            sorted_layers=sorted_layers,
+            explicit=pp_layer_assignment,
+            layer_profile=layer_profile,
+            typical_costs=typical_costs_fwd,
+            typical_costs_from_metadata=typical_costs_from_metadata,
+        )
         stages = self._partition(
             sorted_layers, layer_nodes, layer_load,
             pp, pp_layer_assignment, vpp_chunks, pp_schedule,
             layer_profile=layer_profile,
             typical_costs=typical_costs_fwd,
+            use_full_layer_index=use_full_layer_index,
         )
 
         # 2.5 Distribute non-layer (layer_idx=-1) nodes to appropriate stages.
@@ -136,9 +145,15 @@ class PipelineParallelPass(GraphPass):
         layer_to_virtual_stage: Dict[int, int] = {}
         if is_vpp:
             total_chunks = pp * vpp_chunks
-            layers_per_chunk = max(1, len(sorted_layers) // total_chunks)
+            total_profile_layers = (
+                len(layer_profile.layer_types)
+                if use_full_layer_index and layer_profile is not None and getattr(layer_profile, "layer_types", None)
+                else len(sorted_layers)
+            )
+            layers_per_chunk = max(1, total_profile_layers // total_chunks)
             for idx, lid in enumerate(sorted_layers):
-                layer_to_virtual_stage[lid] = min(idx // layers_per_chunk, total_chunks - 1)
+                layer_pos = lid if use_full_layer_index and 0 <= lid < total_profile_layers else idx
+                layer_to_virtual_stage[lid] = min(layer_pos // layers_per_chunk, total_chunks - 1)
 
         # 4. Annotate stage_id and virtual_stage_id on every node
         for node in g.nodes.values():
@@ -174,6 +189,7 @@ class PipelineParallelPass(GraphPass):
         pp_schedule: str = "1f1b",
         layer_profile: Optional["LayerProfile"] = None,
         typical_costs: Optional[Dict[Any, float]] = None,
+        use_full_layer_index: bool = False,
     ) -> List[LayerGroup]:
         """Partition layers into stages.
         
@@ -188,17 +204,23 @@ class PipelineParallelPass(GraphPass):
 
         n_layers = len(sorted_layers)
 
-        # Use typical layer data if available (from metadata)
-        if layer_profile is not None and typical_costs is not None:
+        # Use full-model profile only when there is enough information to map
+        # sparse representative layers by real layer id. Without costs or a
+        # full explicit assignment, trace visualization should partition the
+        # traced representatives themselves.
+        if layer_profile is not None and use_full_layer_index:
             profile = layer_profile
-            costs = typical_costs
+            costs = typical_costs or {}
         else:
             # Fallback: build simplified profile from sorted_layers
             profile = LayerProfile(
                 layer_types=[LayerType.DENSE] * n_layers,
                 typical_indices=[0],
             )
-            costs: Dict[int, float] = layer_load
+            costs: Dict[int, float] = {
+                idx: layer_load.get(layer_id, 0.0)
+                for idx, layer_id in enumerate(sorted_layers)
+            }
 
         layer_assignment = partition_layers_by_strategy(
             layer_profile=profile,
@@ -210,15 +232,17 @@ class PipelineParallelPass(GraphPass):
         )
 
         # Compute total_compute_us per stage
-        if layer_profile is not None and typical_costs is not None:
+        if layer_profile is not None and typical_costs is not None and use_full_layer_index:
             # Use typical_costs (LayerType granularity)
             is_by_layer_type = any(isinstance(k, LayerType) for k in typical_costs.keys())
             for idx, layer_id in enumerate(sorted_layers):
-                s_idx = layer_assignment[idx]
+                s_idx = self._stage_for_layer(
+                    layer_assignment, layer_id, idx, use_full_layer_index
+                )
                 stages[s_idx].layer_ids.append(layer_id)
                 stages[s_idx].node_ids.update(layer_nodes[layer_id])
-                if idx < len(layer_profile.layer_types):
-                    layer_type = layer_profile.layer_types[idx]
+                if 0 <= layer_id < len(layer_profile.layer_types):
+                    layer_type = layer_profile.layer_types[layer_id]
                     if is_by_layer_type:
                         load = typical_costs.get(layer_type, 0.0)
                     else:
@@ -229,12 +253,51 @@ class PipelineParallelPass(GraphPass):
         else:
             # Use layer_load (layer_idx granularity)
             for idx, layer_id in enumerate(sorted_layers):
-                s_idx = layer_assignment[idx]
+                s_idx = self._stage_for_layer(
+                    layer_assignment, layer_id, idx, use_full_layer_index
+                )
                 stages[s_idx].layer_ids.append(layer_id)
                 stages[s_idx].node_ids.update(layer_nodes[layer_id])
                 stages[s_idx].total_compute_us += layer_load.get(layer_id, 0.0)
 
         return stages
+
+    @staticmethod
+    def _uses_full_layer_index(
+        sorted_layers: List[int],
+        explicit: Optional[List[int]],
+        layer_profile: Optional["LayerProfile"],
+        typical_costs: Optional[Dict[Any, float]],
+        typical_costs_from_metadata: bool = False,
+    ) -> bool:
+        """Whether partition output is indexed by full-model layer id."""
+        if layer_profile is None:
+            return False
+        profile_len = len(getattr(layer_profile, "layer_types", []) or [])
+        if profile_len <= len(sorted_layers):
+            return False
+        if typical_costs and typical_costs_from_metadata:
+            return True
+        return explicit is not None and len(explicit) >= profile_len
+
+    @staticmethod
+    def _stage_for_layer(
+        layer_assignment: List[int],
+        layer_id: int,
+        trace_idx: int,
+        use_full_layer_index: bool,
+    ) -> int:
+        """Return stage for a traced layer.
+
+        Full-model partitioners return one entry per real layer.  Representative
+        traces may include sparse layer IDs such as [0, 2, 3, 4], so indexing by
+        trace position would incorrectly read assignment[0..3].  Fall back to
+        trace_idx only for compact assignments whose length matches the traced
+        layer count.
+        """
+        if use_full_layer_index and 0 <= layer_id < len(layer_assignment):
+            return layer_assignment[layer_id]
+        return layer_assignment[trace_idx]
 
     # ── non-layer node distribution ────────────────────────────────────────────
 

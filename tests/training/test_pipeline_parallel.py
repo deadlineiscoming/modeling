@@ -7,6 +7,8 @@ Organization:
   4. TrainingPipelinePass per-stage metrics
   5. Integration with default pipeline
 """
+from types import SimpleNamespace
+
 from python.zrt.ir.node import OpNode
 from python.zrt.ir.edge import Edge
 from python.zrt.ir.graph import OpGraph
@@ -91,6 +93,13 @@ def _make_ctx(
             vpp_chunks=vpp_chunks,
         ),
     )
+
+
+def _pipeline_metrics(graph: OpGraph) -> SimpleNamespace:
+    """Return TrainingPipelinePass metrics using the current metadata contract."""
+    if "pipeline_metrics" in graph.metadata:
+        return graph.metadata["pipeline_metrics"]
+    return SimpleNamespace(**graph.metadata["step_result"])
 
 
 # ── 0. Non-Layer Node Distribution ─────────────────────────────────────────────
@@ -363,6 +372,48 @@ class TestPipelineParallelPassBasic:
 
         assert get_layers_for_stage(0) == {0, 1}
         assert get_layers_for_stage(1) == {2, 3}
+
+    def test_representative_layers_use_real_layer_assignment_index(self):
+        from python.zrt.graph.layer_strategy import LayerProfile, LayerType
+
+        graph = _make_linear_graph(num_layers=5)
+        keep = {"mm_layer0", "mm_layer2", "mm_layer3", "mm_layer4"}
+        graph.nodes = {nid: n for nid, n in graph.nodes.items() if nid in keep}
+        graph.edges = [e for e in graph.edges if e.src in keep and e.dst in keep]
+        graph._rebuild_adjacency()
+        graph.metadata["layer_profile"] = LayerProfile(
+            layer_types=[LayerType.DENSE] * 5,
+            typical_indices=[0, 2, 3, 4],
+        )
+
+        ctx = _make_ctx(pp=4, pp_layer_assignment=[0, 0, 1, 2, 3])
+        result = PipelineParallelPass().run(graph, ctx)
+
+        assert result.nodes["mm_layer0"].annotations["stage_id"] == 0
+        assert result.nodes["mm_layer2"].annotations["stage_id"] == 1
+        assert result.nodes["mm_layer3"].annotations["stage_id"] == 2
+        assert result.nodes["mm_layer4"].annotations["stage_id"] == 3
+
+    def test_representative_layers_without_costs_use_compact_trace_partition(self):
+        from python.zrt.graph.layer_strategy import LayerProfile, LayerType
+
+        graph = _make_linear_graph(num_layers=5)
+        keep = {"mm_layer0", "mm_layer2", "mm_layer3", "mm_layer4"}
+        graph.nodes = {nid: n for nid, n in graph.nodes.items() if nid in keep}
+        graph.edges = [e for e in graph.edges if e.src in keep and e.dst in keep]
+        graph._rebuild_adjacency()
+        graph.metadata["layer_profile"] = LayerProfile(
+            layer_types=[LayerType.DENSE] * 61,
+            typical_indices=[0, 2, 3, 4],
+        )
+
+        ctx = _make_ctx(pp=4)
+        result = PipelineParallelPass().run(graph, ctx)
+
+        assert result.nodes["mm_layer0"].annotations["stage_id"] == 0
+        assert result.nodes["mm_layer2"].annotations["stage_id"] == 1
+        assert result.nodes["mm_layer3"].annotations["stage_id"] == 2
+        assert result.nodes["mm_layer4"].annotations["stage_id"] == 3
 
     def test_all_nodes_have_stage_id_after_pp2(self):
         graph = _make_linear_graph(num_layers=4)
@@ -733,7 +784,7 @@ class TestTrainingPipelinePassPerStage:
         g_pp = PipelineParallelPass().run(graph, ctx) if pp > 1 else graph
         g_flops = TrainingFlopsPass().run(g_pp, ctx)
         result = TrainingPipelinePass().run(g_flops, ctx)
-        return result, result.metadata["pipeline_metrics"]
+        return result, _pipeline_metrics(result)
 
     def test_pp1_no_bubble(self):
         from python.zrt.transform.analysis.training import TrainingFlopsPass
@@ -743,7 +794,7 @@ class TestTrainingPipelinePassPerStage:
 
         g_flops = TrainingFlopsPass().run(graph, ctx)
         result = TrainingPipelinePass().run(g_flops, ctx)
-        metrics = result.metadata["pipeline_metrics"]
+        metrics = _pipeline_metrics(result)
 
         assert metrics.warmup_steps == 0
         assert metrics.cooldown_steps == 0
@@ -765,11 +816,11 @@ class TestTrainingPipelinePassPerStage:
         g_pp2 = PipelineParallelPass().run(graph, ctx2)
         g_pp2 = TrainingFlopsPass().run(g_pp2, ctx2)
         result2 = TrainingPipelinePass().run(g_pp2, ctx2)
-        per_stage_pp2 = result2.metadata["pipeline_metrics"].per_stage_ms
+        per_stage_pp2 = _pipeline_metrics(result2).per_stage_ms
 
         g1 = TrainingFlopsPass().run(graph, ctx1)
         result1 = TrainingPipelinePass().run(g1, ctx1)
-        total_pp1 = result1.metadata["pipeline_metrics"].per_stage_ms
+        total_pp1 = _pipeline_metrics(result1).per_stage_ms
 
         assert 0 < per_stage_pp2 <= total_pp1 * 1.1
 
@@ -791,7 +842,7 @@ class TestTrainingPipelinePassPerStage:
             g = PipelineParallelPass().run(graph, ctx) if pp > 1 else graph
             g = TrainingFlopsPass().run(g, ctx)
             r = TrainingPipelinePass().run(g, ctx)
-            results[pp] = r.metadata["pipeline_metrics"].bubble_fraction
+            results[pp] = _pipeline_metrics(r).bubble_fraction
 
         assert results[1] == 0.0
         assert results[2] > results[1]
@@ -815,8 +866,8 @@ class TestTrainingPipelinePassPerStage:
         g_std = TrainingFlopsPass().run(g_pp_std, ctx_std)
         result_std = TrainingPipelinePass().run(g_std, ctx_std)
 
-        bubble_vpp = result_vpp.metadata["pipeline_metrics"].bubble_fraction
-        bubble_std = result_std.metadata["pipeline_metrics"].bubble_fraction
+        bubble_vpp = _pipeline_metrics(result_vpp).bubble_fraction
+        bubble_std = _pipeline_metrics(result_std).bubble_fraction
 
         assert bubble_vpp <= bubble_std + 1e-6
 

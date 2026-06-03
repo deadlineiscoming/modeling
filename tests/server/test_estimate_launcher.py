@@ -135,3 +135,25 @@ def test_launcher_has_stats_popover_hitting_stats_endpoint():
     assert "async function openStats()" in html
     assert "fetch(api()+'/stats')" in html
     assert 'id="stats-overlay"' in html
+
+
+def test_service_entry_route_serves_static_page():
+    from server.main import app
+
+    assert any(route.path == "/service" for route in app.routes)
+    assert Path("server/service.html").exists()
+
+
+def test_service_entry_page_has_vue_tailwind_and_stateful_scenarios():
+    html = Path("server/service.html").read_text(encoding="utf-8")
+
+    assert "unpkg.com/vue@3" in html
+    assert "cdn.tailwindcss.com" in html
+    assert "性能评估" in html
+    assert "硬件对比" in html
+    assert "系统寻优" in html
+    assert "Loading" in html
+    assert "Success" in html
+    assert "Error" in html
+    assert "debounceTimer" in html
+    assert "requestVersion" in html

@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZRT 服务化入口</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --surface-hi: #eef3fb;
+    --border: #e2e8f2;
+    --border-hi: #cdd8e8;
+    --text: #152033;
+    --text-dim: #4a5a73;
+    --text-muted: #8a97ab;
+    --amber: #d97706;
+    --amber-bright: #b45309;
+    --amber-dim: #fdeccb;
+    --teal: #0d9f6e;
+    --teal-dim: #c7f0dd;
+    --blue: #2563eb;
+    --blue-dim: #dbeafe;
+    --green: #16a34a;
+    --coral: #dc2626;
+    --r: 9px;
+    --r-lg: 16px;
+    --shadow: 0 10px 30px rgba(15,23,42,.08);
+    --shadow-sm: 0 1px 3px rgba(15,23,42,.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  [v-cloak] { display: none; }
+  body {
+    background: var(--bg);
+    background-image: radial-gradient(rgba(37,99,235,.06) 1px, transparent 1px);
+    background-size: 26px 26px;
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .hdr {
+    position: sticky; top: 0; z-index: 100;
+    background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    border-bottom: 1px solid #1e3a8a;
+    padding: 10px 24px;
+    display: flex; align-items: center; gap: 14px;
+    height: 52px;
+    box-shadow: 0 1px 14px rgba(15,23,42,.18);
+  }
+  .hdr-logo {
+    width: 27px; height: 27px;
+    border: 1.5px solid rgba(255,255,255,.55); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 10px; font-weight: 700; flex-shrink: 0;
+  }
+  .hdr-title { font-size: 13px; letter-spacing: .3px; color: #fff; font-weight: 600; }
+  .hdr-title em { color: #93c5fd; font-style: normal; font-weight: 500; }
+  .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .hdr-link {
+    background: rgba(255,255,255,.12); color: #e8eefb;
+    border: 1px solid rgba(255,255,255,.2); padding: 4px 9px;
+    border-radius: var(--r); font: inherit; font-size: 11px;
+    text-decoration: none; transition: border-color .12s, background .12s;
+  }
+  .hdr-link:hover { border-color: #93c5fd; background: rgba(255,255,255,.2); color: #fff; }
+  .api-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); }
+  .api-lbl { font-size: 10px; color: #c7d3e6; min-width: 62px; }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 18px 24px 28px; }
+  .crumb {
+    height: 34px; display: flex; align-items: center; gap: 8px;
+    color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+  }
+  .crumb button { font: inherit; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
+  .crumb button:hover { color: var(--blue); }
+
+  .hero {
+    margin-bottom: 14px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+  }
+  .hero-k { color: var(--text-muted); font-size: 10px; letter-spacing: .8px; text-transform: uppercase; }
+  .hero-title { color: var(--text); font-size: 24px; line-height: 1.2; font-weight: 700; margin-top: 3px; }
+  .hero-desc { color: var(--text-dim); max-width: 700px; font-size: 12px; line-height: 1.8; }
+
+  .formula-banner {
+    background: rgba(255,255,255,.82); border: 1px solid var(--border); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm); padding: 12px 16px; margin-bottom: 18px;
+    display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  }
+  .formula-node {
+    min-width: 84px; text-align: center; color: var(--text); background: var(--surface-hi);
+    border: 1px solid var(--border); border-radius: var(--r); padding: 7px 12px; font-size: 12px; font-weight: 650;
+  }
+  .formula-node.out { color: var(--amber-bright); background: var(--amber-dim); border-color: var(--amber-dim); }
+  .formula-op { color: var(--text-muted); font-size: 15px; font-weight: 700; }
+
+  .portal-grid, .case-choice-grid {
+    display: grid;
+    align-items: stretch;
+    gap: 18px;
+  }
+  .portal-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .case-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 980px; }
+  .entry-card, .case-choice-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+    padding: 22px; min-height: 392px; height: 100%;
+    text-align: left; cursor: pointer; box-shadow: var(--shadow-sm);
+    display: flex; flex-direction: column;
+    transition: transform .12s, border-color .12s, background .12s, box-shadow .12s;
+  }
+  .case-choice-card { min-height: 378px; }
+  .entry-card:hover, .case-choice-card:hover {
+    transform: translateY(-1px); border-color: var(--border-hi); background: #fbfdff; box-shadow: var(--shadow);
+  }
+  .entry-card.perf:hover, .case-choice-card.perf:hover { border-color: var(--amber); background: #fffaf0; }
+  .entry-card.compare:hover, .case-choice-card.compare:hover { border-color: var(--teal); background: #f0fffa; }
+  .entry-card.optimize:hover, .case-choice-card.optimize:hover { border-color: var(--blue); background: #f5f8ff; }
+  .card-k {
+    display: flex; align-items: center; justify-content: space-between;
+    color: var(--text-muted); font-size: 11px; letter-spacing: 1.1px;
+    text-transform: uppercase; font-weight: 800;
+  }
+  .card-badge {
+    color: #fff; background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    border-radius: 999px; padding: 3px 9px; font-size: 10px; letter-spacing: 1px;
+  }
+  .card-title { margin-top: 18px; color: var(--text); font-size: 22px; font-weight: 700; line-height: 1.25; }
+  .card-desc { margin-top: 8px; color: var(--text-dim); font-size: 12px; line-height: 1.75; min-height: 42px; }
+  .card-graph { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 13px; }
+  .graph-caption { color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; }
+  .graph-lane { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .graph-chip {
+    color: var(--text-dim); background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 5px 9px; font-size: 11px; line-height: 1.25;
+  }
+  .graph-arrow { color: var(--text-muted); font-size: 14px; }
+  .graph-solve {
+    color: var(--teal); background: var(--teal-dim); border: 1px solid var(--teal-dim);
+    border-radius: var(--r); padding: 5px 10px; font-size: 11px; font-weight: 750;
+  }
+  .card-flow { margin-top: 14px; display: grid; gap: 8px; }
+  .flow-row { display: grid; grid-template-columns: 42px 1fr; gap: 10px; align-items: baseline; }
+  .flow-k { color: var(--text-muted); font-size: 10px; letter-spacing: .7px; text-transform: uppercase; }
+  .flow-v { color: var(--text-dim); font-size: 12px; line-height: 1.65; }
+  .subcase-list { margin-top: auto; padding-top: 13px; display: grid; gap: 6px; }
+  .subcase-item { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 8px 10px; }
+  .subcase-title { color: var(--text); font-size: 12px; font-weight: 650; }
+  .subcase-desc { color: var(--text-dim); font-size: 11px; line-height: 1.55; margin-top: 2px; }
+
+  .case-shell { display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .panel, .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
+  .panel.est-accent { border-top: 2px solid var(--amber); }
+  .panel.srch-accent { border-top: 2px solid var(--teal); }
+  .panel.blue-accent { border-top: 2px solid var(--blue); }
+  .panel-hdr {
+    padding: 8px 14px; border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim);
+  }
+  .panel-body { padding: 14px; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .full-col { grid-column: 1/-1; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-label { font-size: 10px; letter-spacing: .7px; text-transform: uppercase; color: var(--text-dim); }
+  .form-input, .form-select {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); padding: 6px 8px;
+    border-radius: var(--r); font: inherit; font-size: 11px; width: 100%;
+  }
+  .obj-block { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+  .obj-sub-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--text-dim); margin: 0 0 8px; }
+  .row-grid { display: grid; grid-template-columns: 1fr 72px 26px; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row-grid.hardware { grid-template-columns: 1fr 26px; }
+  .row-act {
+    height: 30px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-dim); border-radius: var(--r); cursor: pointer; font: inherit; font-size: 13px;
+  }
+  .row-act:hover { color: var(--coral); border-color: #fecaca; background: #fff7f7; }
+  .preset-pill {
+    font: inherit; font-size: 10px; letter-spacing: .1px;
+    background: var(--bg); color: var(--text-dim);
+    border: 1px solid var(--border); padding: 3px 9px; border-radius: 2px;
+    cursor: pointer;
+  }
+  .chip-group { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .chip {
+    border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+    font-family: inherit; font-size: 10px; padding: 3px 9px; border-radius: 3px; cursor: pointer;
+  }
+  .chip.on { background: rgba(13,159,110,.10); color: var(--teal); border-color: var(--teal-dim); }
+  .run-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .run-btn {
+    font: inherit; font-size: 11px; letter-spacing: .3px;
+    padding: 6px 18px; border-radius: var(--r); cursor: pointer; border: 1px solid;
+  }
+  .run-btn.est-btn { background: var(--amber-dim); color: var(--amber-bright); border-color: var(--amber); }
+  .run-btn.srch-btn { background: var(--teal-dim); color: var(--teal); border-color: var(--teal-dim); }
+  .run-btn.blue-btn { background: var(--blue-dim); color: var(--blue); border-color: var(--blue-dim); }
+  .run-hint { font-size: 10px; color: var(--text-muted); }
+
+  .job-bar { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; min-height: 34px; }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+  .sdot.ok { background: var(--green); }
+  .sdot.loading { background: var(--amber); animation: pulse 1.1s infinite; }
+  .sdot.error { background: var(--coral); }
+  .job-type { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); font-weight: 700; }
+  .job-elapsed { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+  .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+  .metric { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 9px 10px; min-height: 70px; }
+  .metric-k { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); }
+  .metric-v { font-size: 20px; line-height: 1.2; color: var(--text); font-weight: 650; margin-top: 4px; }
+  .metric-n { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .data-table th {
+    color: var(--text-muted); font-weight: 700; text-align: left;
+    text-transform: uppercase; letter-spacing: .5px; padding: 7px 12px;
+    border-top: 1px solid var(--border); background: var(--surface-hi);
+  }
+  .data-table td { color: var(--text-dim); padding: 7px 12px; border-top: 1px solid var(--border); }
+  .data-table td:first-child { color: var(--text); font-weight: 600; }
+  .report-section { padding: 13px 14px; border-top: 1px solid var(--border); }
+  .report-title { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); margin-bottom: 9px; }
+  .bar-list { display: grid; gap: 7px; }
+  .bar-row { display: grid; grid-template-columns: 128px 1fr 74px; align-items: center; gap: 8px; }
+  .bar-label { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { height: 8px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--amber); border-radius: 2px; }
+  .bar-fill.teal { background: var(--teal); }
+  .bar-fill.blue { background: var(--blue); }
+  .bar-value { color: var(--text-muted); font-size: 11px; text-align: right; }
+  .report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 8px; }
+  .report-cell { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 8px 10px; }
+  .report-cell-k { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+  .report-cell-v { color: var(--text); font-size: 14px; font-weight: 650; margin-top: 3px; }
+  .skeleton-row { height: 68px; background: linear-gradient(90deg, #eef3fb, #f8fafc, #eef3fb); background-size: 200% 100%; animation: shimmer 1.3s infinite; border-radius: var(--r); margin: 12px; }
+  .err-body { padding: 16px; color: var(--coral); font-size: 12px; background: #fff7f7; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes shimmer { to { background-position-x: -200%; } }
+  @media (max-width: 920px) {
+    .page { padding: 14px; }
+    .portal-grid, .case-choice-grid, .case-shell, .metric-grid { grid-template-columns: 1fr; }
+    .entry-card, .case-choice-card { min-height: 0; }
+    .hero { align-items: flex-start; flex-direction: column; }
+    .hdr { padding: 10px 14px; }
+    .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="hdr">
+    <div class="hdr-logo">ZRT</div>
+    <div class="hdr-title">Modeling <em>Service Hub</em></div>
+    <div class="hdr-right">
+      <a class="hdr-link hide-sm" href="/">Launcher</a>
+      <a class="hdr-link hide-sm" href="/docs">API Docs</a>
+      <div class="api-dot"></div>
+      <div class="api-lbl">{{ status }}</div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="crumb">
+      <button @click="goHome()">Service</button>
+      <span v-if="route !== 'home'">/</span>
+      <button v-if="isChoiceRoute || isCaseRoute" @click="goScenarioRoot(routeRoot)">{{ routeTitle }}</button>
+      <span v-if="isCaseRoute">/</span>
+      <span v-if="isCaseRoute">{{ currentCase.title }}</span>
+    </div>
+
+    <section v-if="route === 'home'" data-view="service-home">
+      <div class="hero">
+        <div>
+          <div class="hero-k">Service Scenarios</div>
+          <h1 class="hero-title">建模场景选择入口</h1>
+        </div>
+        <p class="hero-desc">围绕“模型 + 硬件 + 策略 = 性能”组织场景。先选要求解的问题，再进入对应交互页。</p>
+      </div>
+      <div class="formula-banner" aria-label="模型加硬件加策略等于性能">
+        <span class="formula-node">模型</span><span class="formula-op">+</span>
+        <span class="formula-node">硬件</span><span class="formula-op">+</span>
+        <span class="formula-node">策略</span><span class="formula-op">=</span>
+        <span class="formula-node out">性能</span>
+      </div>
+      <div class="portal-grid">
+        <button v-for="scene in scenes" :key="scene.id" class="entry-card" :class="scene.cls" @click="goScenarioRoot(scene.id)">
+          <div class="card-k"><span>{{ scene.code }}</span><span class="card-badge">{{ scene.badge }}</span></div>
+          <div class="card-title">{{ scene.title }}</div>
+          <p class="card-desc">{{ scene.desc }}</p>
+          <div class="card-graph">
+            <div class="graph-caption">KNOWN INPUTS -> SOLVE</div>
+            <div class="graph-lane">
+              <span v-for="node in scene.graph.inputs" :key="node" class="graph-chip">{{ node }}</span>
+              <span class="graph-arrow">-></span>
+              <span class="graph-solve">{{ scene.graph.solve }}</span>
+            </div>
+          </div>
+          <div class="card-flow">
+            <div v-for="line in scene.flow" :key="line.k" class="flow-row">
+              <span class="flow-k">{{ line.k }}</span>
+              <p class="flow-v">{{ line.v }}</p>
+            </div>
+          </div>
+          <div v-if="scene.subcases" class="subcase-list">
+            <div v-for="subcase in scene.subcases" :key="subcase.title" class="subcase-item">
+              <div class="subcase-title">{{ subcase.title }}</div>
+              <div class="subcase-desc">{{ subcase.desc }}</div>
+            </div>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <section v-else-if="isChoiceRoute" data-view="case-choice">
+      <div class="hero">
+        <div>
+          <div class="hero-k">Case Selection</div>
+          <h1 class="hero-title">{{ choiceTitle }}</h1>
+        </div>
+        <p class="hero-desc">{{ choiceDesc }}</p>
+      </div>
+      <div class="case-choice-grid">
+        <button v-for="item in choiceItems" :key="item.route" class="case-choice-card" :class="item.cls" @click="goCase(item.route)">
+          <div class="card-k"><span>{{ item.code }}</span><span class="card-badge">OPEN CASE</span></div>
+          <div class="card-title">{{ item.title }}</div>
+          <p class="card-desc">{{ item.desc }}</p>
+          <div class="card-graph">
+            <div class="graph-caption">KNOWN INPUTS -> SOLVE</div>
+            <div class="graph-lane">
+              <span v-for="node in item.graph.inputs" :key="node" class="graph-chip">{{ node }}</span>
+              <span class="graph-arrow">-></span>
+              <span class="graph-solve">{{ item.graph.solve }}</span>
+            </div>
+          </div>
+          <div class="card-flow">
+            <div v-for="line in item.flow" :key="line.k" class="flow-row">
+              <span class="flow-k">{{ line.k }}</span>
+              <p class="flow-v">{{ line.v }}</p>
+            </div>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <section v-else data-view="case-page">
+      <div class="hero">
+        <div>
+          <div class="hero-k">{{ currentCase.kicker }}</div>
+          <h1 class="hero-title">{{ currentCase.title }}</h1>
+        </div>
+        <p class="hero-desc">{{ currentCase.desc }}</p>
+      </div>
+      <div class="case-shell">
+        <div class="panel" :class="currentCase.panelClass">
+          <div class="panel-hdr">{{ currentCase.panelTitle }}</div>
+          <div class="panel-body">
+            <template v-if="route === 'performance.op'">
+              <div class="form-grid">
+                <label class="form-group"><span class="form-label">operator type</span><select v-model="perf.operator" class="form-select"><option v-for="op in operatorTypes" :key="op" :value="op">{{ op }}</option></select></label>
+                <label class="form-group"><span class="form-label">dtype</span><select v-model="perf.dtype" class="form-select"><option>bf16</option><option>fp8</option><option>fp4</option></select></label>
+                <label class="form-group"><span class="form-label">hardware</span><select v-model="perf.hardware" class="form-select"><option v-for="hw in hardware" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select></label>
+              </div>
+              <div class="obj-block">
+                <div class="obj-sub-lbl">input tensors</div>
+                <div v-for="tensor in perf.tensorInputs" :key="tensor.id" class="row-grid">
+                  <input v-model="tensor.name" class="form-input" placeholder="name">
+                  <input v-model.number="tensor.dim" class="form-input" min="1" type="number">
+                  <button class="row-act" type="button" @click="removeTensorInput(tensor.id)" :disabled="perf.tensorInputs.length <= 1">x</button>
+                </div>
+                <button class="preset-pill" type="button" @click="addTensorInput()">+ add input tensor</button>
+              </div>
+            </template>
+
+            <template v-if="route === 'performance.model'">
+              <div class="form-grid">
+                <label class="form-group full-col"><span class="form-label">model</span><select v-model="estimate.model" class="form-select"><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }}</option></select></label>
+                <label class="form-group full-col"><span class="form-label">hardware</span><select v-model="estimate.hardware" class="form-select"><option v-for="hw in hardware" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select></label>
+                <label class="form-group"><span class="form-label">nodes</span><input v-model.number="estimate.nodes" class="form-input" min="1" type="number"></label>
+                <label class="form-group"><span class="form-label">GPUs/node</span><select v-model.number="estimate.gpusPerNode" class="form-select"><option :value="8">8</option><option :value="4">4</option></select></label>
+                <label class="form-group"><span class="form-label">TP</span><select v-model.number="estimate.tp" class="form-select"><option v-for="v in [1,2,4,8]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">PP</span><select v-model.number="estimate.pp" class="form-select"><option v-for="v in [1,2,4,8,16]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">CP</span><select v-model.number="estimate.cp" class="form-select"><option v-for="v in [1,2,4]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">DP</span><input :value="estimateDP" class="form-input" readonly></label>
+              </div>
+            </template>
+
+            <template v-if="route === 'compare'">
+              <div class="form-grid">
+                <label class="form-group"><span class="form-label">core metric</span><select v-model="compare.metric" class="form-select"><option value="throughput">吞吐</option><option value="step">单步时间</option><option value="hardware">纯硬件指标</option></select></label>
+                <label class="form-group"><span class="form-label">mode</span><select v-model="compare.mode" class="form-select"><option value="weighted">多模型加权</option><option value="pure">纯硬件性能对比</option></select></label>
+                <label class="form-group full-col"><span class="form-label">baseline hardware</span><select v-model="compare.baseline" class="form-select"><option v-for="hw in compareHardwareOptions" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select></label>
+              </div>
+              <div class="obj-block">
+                <div class="obj-sub-lbl">hardware entities</div>
+                <div v-for="entity in compare.hardwares" :key="entity.uid" class="row-grid hardware">
+                  <select v-model="entity.id" class="form-select"><option v-for="hw in hardware" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select>
+                  <button class="row-act" type="button" @click="removeCompareHardware(entity.uid)" :disabled="compare.hardwares.length <= 2">x</button>
+                </div>
+                <button class="preset-pill" type="button" @click="addCompareHardware()">+ add hardware</button>
+              </div>
+            </template>
+
+            <template v-if="route === 'optimize.strategy'">
+              <div class="form-grid">
+                <label class="form-group full-col"><span class="form-label">model</span><select v-model="strategy.model" class="form-select"><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }}</option></select></label>
+                <label class="form-group full-col"><span class="form-label">hardware</span><select v-model="strategy.hardware" class="form-select"><option v-for="hw in hardware" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select></label>
+                <label class="form-group"><span class="form-label">Top N</span><input v-model.number="strategy.topN" class="form-input" min="1" max="20" type="number"></label>
+                <label class="form-group"><span class="form-label">rank by</span><select v-model="strategy.sortBy" class="form-select"><option value="tokens_per_sec">tokens/s</option><option value="mfu">MFU</option><option value="step_time_ms">step time</option></select></label>
+              </div>
+              <div class="obj-block">
+                <div class="obj-sub-lbl">search space</div>
+                <div v-for="space in searchSpaces" :key="space.id" class="chip-group">
+                  <span class="form-label" style="width:34px">{{ space.label }}</span>
+                  <button v-for="value in space.values" :key="value" class="chip" :class="{ on: strategy.space[space.id].includes(value) }" type="button" @click="toggleSearchSpace(space.id, value)">{{ value }}</button>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="route === 'optimize.hardware'">
+              <div class="form-grid">
+                <label class="form-group full-col"><span class="form-label">model</span><select v-model="hardwareSearch.model" class="form-select"><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }}</option></select></label>
+                <label class="form-group"><span class="form-label">world_size</span><input v-model.number="hardwareSearch.worldSize" class="form-input" min="8" step="8" type="number"></label>
+                <label class="form-group"><span class="form-label">TP</span><select v-model.number="hardwareSearch.tp" class="form-select"><option v-for="v in [1,2,4,8]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">PP</span><select v-model.number="hardwareSearch.pp" class="form-select"><option v-for="v in [1,2,4,8,16]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">CP</span><select v-model.number="hardwareSearch.cp" class="form-select"><option v-for="v in [1,2,4]" :key="v" :value="v">{{ v }}</option></select></label>
+                <label class="form-group"><span class="form-label">Top N</span><input v-model.number="hardwareSearch.topN" class="form-input" min="1" max="20" type="number"></label>
+              </div>
+              <div class="obj-block">
+                <div class="obj-sub-lbl">candidate hardware</div>
+                <div v-for="candidate in hardwareSearch.candidates" :key="candidate.uid" class="row-grid hardware">
+                  <select v-model="candidate.id" class="form-select"><option v-for="hw in hardware" :key="hw.id" :value="hw.id">{{ hw.name }}</option></select>
+                  <button class="row-act" type="button" @click="removeHardwareCandidate(candidate.uid)" :disabled="hardwareSearch.candidates.length <= 1">x</button>
+                </div>
+                <button class="preset-pill" type="button" @click="addHardwareCandidate()">+ add hardware</button>
+              </div>
+            </template>
+
+            <div class="run-row">
+              <button class="run-btn" :class="currentCase.buttonClass" @click="scheduleRecompute(0)">preview</button>
+              <span class="run-hint">local recompute, no backend call</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="result-card">
+          <div class="job-bar">
+            <div class="sdot" :class="statusClass"></div>
+            <span class="job-type">{{ status }}</span>
+            <span class="job-elapsed">requestVersion {{ requestVersion }}</span>
+          </div>
+          <template v-if="status === 'Loading'">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </template>
+          <template v-else-if="status === 'Error'">
+            <div class="err-body">Error: {{ errorMessage }}</div>
+          </template>
+          <template v-else>
+            <div class="metric-grid">
+              <div v-for="metric in result.metrics" :key="metric.label" class="metric">
+                <div class="metric-k">{{ metric.label }}</div>
+                <div class="metric-v">{{ metric.value }}</div>
+                <div class="metric-n">{{ metric.note }}</div>
+              </div>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="data-table">
+                <thead><tr><th v-for="head in result.headers" :key="head">{{ head }}</th></tr></thead>
+                <tbody><tr v-for="row in result.rows" :key="row.key"><td v-for="head in result.headers" :key="head">{{ row[head] }}</td></tr></tbody>
+              </table>
+            </div>
+            <div v-for="section in result.sections" :key="section.title" class="report-section">
+              <div class="report-title">{{ section.title }}</div>
+              <div v-if="section.type === 'bars'" class="bar-list">
+                <div v-for="bar in section.bars" :key="bar.label" class="bar-row">
+                  <div class="bar-label">{{ bar.label }}</div>
+                  <div class="bar-track"><div class="bar-fill" :class="bar.tone" :style="{ width: bar.percent + '%' }"></div></div>
+                  <div class="bar-value">{{ bar.value }}</div>
+                </div>
+              </div>
+              <div v-else class="report-grid">
+                <div v-for="cell in section.cells" :key="cell.k" class="report-cell">
+                  <div class="report-cell-k">{{ cell.k }}</div>
+                  <div class="report-cell-v">{{ cell.v }}</div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      route: this.parseRoute(),
+      status: 'Success',
+      errorMessage: '',
+      debounceTimer: null,
+      requestVersion: 0,
+      result: { metrics: [], headers: [], rows: [], sections: [] },
+      scenes: [
+        {
+          id: 'performance', cls: 'perf', code: '01', title: '性能评估', badge: 'Evaluate',
+          desc: '评估一个算子或一个完整训练配置在指定硬件上的性能表现。',
+          graph: { inputs: ['模型/算子', '硬件', '策略'], solve: '性能指标' },
+          flow: [
+            { k: '输入', v: '算子/模型、张量或训练配置、硬件、并行策略与优化项。' },
+            { k: '过程', v: '按输入参数即时重算性能预览，后续可对接 estimate 报告。' },
+            { k: '输出', v: '耗时、计算量、访存量、通信量、Step Time、MFU 与吞吐量。' }
+          ],
+          subcases: [
+            { title: '算子级性能评估', desc: '面向 matmul、attention、allreduce 等单算子。' },
+            { title: '模型级性能评估', desc: '面向完整模型和并行配置的端到端效率。' }
+          ]
+        },
+        {
+          id: 'compare', cls: 'compare', code: '02', title: '硬件对比', badge: 'Compare',
+          desc: '比较多个芯片、服务器或集群在同一基准下的相对性能。',
+          graph: { inputs: ['硬件 A/B/N', '模型负载', '基准'], solve: '相对性能' },
+          flow: [
+            { k: '输入', v: '两个或更多硬件实体、基准硬件、核心指标和可选模型负载。' },
+            { k: '过程', v: '按硬件规格或模型负载综合评分，围绕基准计算百分比。' },
+            { k: '输出', v: '相对基准性能，或纯硬件模式下的算力、显存与带宽维度。' }
+          ]
+        },
+        {
+          id: 'optimize', cls: 'optimize', code: '03', title: '系统寻优', badge: 'Search',
+          desc: '在给定模型、硬件和约束下搜索更优策略或更合适的硬件。',
+          graph: { inputs: ['模型', '硬件/候选', '约束'], solve: '最优策略/硬件' },
+          flow: [
+            { k: '输入', v: '模型、硬件或候选硬件、搜索空间、约束、排序依据和 Top N。' },
+            { k: '过程', v: '枚举候选策略或硬件，按吞吐、时延、MFU 进行筛选排序。' },
+            { k: '输出', v: 'Top N 策略或硬件型号，以及 MFU、吞吐、时延、显存。' }
+          ],
+          subcases: [
+            { title: '策略寻优', desc: '固定模型和硬件，在 TP/PP/EP/CP 空间里搜索。' },
+            { title: '硬件寻优', desc: '固定模型和并行策略，在候选硬件中找最优。' }
+          ]
+        }
+      ],
+      choiceMap: {
+        performance: [
+          {
+            route: 'performance.op', cls: 'perf', code: '01-A', title: '算子级性能评估',
+            desc: '拆解单个算子的瓶颈，尤其适合输入张量形态变化较大的场景。',
+            graph: { inputs: ['算子类型', 'Input Tensors', '硬件'], solve: '算子性能' },
+            flow: [
+              { k: '输入', v: '算子类型、多个 input tensor、整数维度、数据类型和硬件。' },
+              { k: '过程', v: '估算计算路径、访存路径与通信路径。' },
+              { k: '输出', v: '算子耗时、计算量、访存量、通信量和 tensor 贡献。' }
+            ]
+          },
+          {
+            route: 'performance.model', cls: 'perf', code: '01-B', title: '模型级性能评估',
+            desc: '从完整训练配置出发，评估端到端训练效率。',
+            graph: { inputs: ['模型', '集群', '并行/优化'], solve: 'Step/MFU/吞吐' },
+            flow: [
+              { k: '输入', v: '模型、硬件集群、nodes、GPU/node、TP/PP/CP、batch 与优化项。' },
+              { k: '过程', v: '复用 launcher estimate 的配置形态，模拟阶段拆分和并行效率。' },
+              { k: '输出', v: 'Step Time、MFU、吞吐量、显存峰值和阶段明细。' }
+            ]
+          }
+        ],
+        optimize: [
+          {
+            route: 'optimize.strategy', cls: 'optimize', code: '03-A', title: '策略寻优',
+            desc: '模型和硬件已确定时，搜索更优并行策略组合。',
+            graph: { inputs: ['模型', '硬件', '策略空间'], solve: 'Top N 策略' },
+            flow: [
+              { k: '输入', v: '模型、硬件、TP/PP/EP/CP 搜索空间、约束和排序依据。' },
+              { k: '过程', v: '枚举并行策略组合，执行约束过滤和排序。' },
+              { k: '输出', v: 'Top N 策略配置及 MFU、吞吐、时延、显存。' }
+            ]
+          },
+          {
+            route: 'optimize.hardware', cls: 'optimize', code: '03-B', title: '硬件寻优',
+            desc: '并行策略已确定时，在多个候选硬件中选型。',
+            graph: { inputs: ['模型', '固定策略', '候选硬件'], solve: 'Top N 硬件' },
+            flow: [
+              { k: '输入', v: '模型、world_size、固定 TP/PP/CP/DP、指标、候选硬件和 Top N。' },
+              { k: '过程', v: '对每个候选硬件套用同一策略，估算吞吐、时延、MFU。' },
+              { k: '输出', v: 'Top N 硬件型号与关键指标。' }
+            ]
+          }
+        ]
+      },
+      hardware: [
+        { id: 'h100', name: 'NVIDIA H100 SXM', compute: 989, memory: 80, bandwidth: 3350, interconnect: 900, fp8: 1979, fp4: 3958 },
+        { id: 'h800', name: 'NVIDIA H800', compute: 756, memory: 80, bandwidth: 3350, interconnect: 400, fp8: 1513, fp4: 3026 },
+        { id: 'gb300', name: 'NVIDIA GB300 NVL', compute: 1420, memory: 288, bandwidth: 8000, interconnect: 1800, fp8: 2840, fp4: 5680 },
+        { id: 'ascend910c', name: 'Ascend 910C', compute: 780, memory: 96, bandwidth: 3200, interconnect: 392, fp8: 1560, fp4: 3120 }
+      ],
+      models: [
+        { id: 'llama70b', name: 'LLaMA-3 70B', scale: 70 },
+        { id: 'deepseekv3', name: 'DeepSeek-V3', scale: 671 },
+        { id: 'deepseekv4', name: 'DeepSeek-V4 Pro', scale: 685 }
+      ],
+      operatorTypes: ['matmul', 'attention', 'allreduce', 'swiglu', 'layernorm'],
+      tensorSeq: 2,
+      compareHardwareSeq: 2,
+      hardwareCandidateSeq: 4,
+      perf: { operator: 'matmul', hardware: 'h100', dtype: 'bf16', tensorInputs: [{ id: 1, name: 'A', dim: 8192 }, { id: 2, name: 'B', dim: 8192 }] },
+      estimate: { model: 'llama70b', hardware: 'h100', nodes: 16, gpusPerNode: 8, tp: 4, pp: 16, cp: 1 },
+      compare: { metric: 'throughput', mode: 'weighted', baseline: 'gb300', hardwares: [{ uid: 1, id: 'gb300' }, { uid: 2, id: 'h100' }] },
+      searchSpaces: [
+        { id: 'tp', label: 'TP', values: [1, 2, 4, 8] },
+        { id: 'pp', label: 'PP', values: [1, 2, 4, 8, 16] },
+        { id: 'ep', label: 'EP', values: [1, 2, 4, 8] },
+        { id: 'cp', label: 'CP', values: [1, 2, 4] }
+      ],
+      strategy: { model: 'deepseekv4', hardware: 'h100', topN: 5, sortBy: 'tokens_per_sec', space: { tp: [2, 4, 8], pp: [4, 8, 16], ep: [1, 2], cp: [1, 2, 4] } },
+      hardwareSearch: { model: 'deepseekv4', worldSize: 128, tp: 4, pp: 8, cp: 2, topN: 5, candidates: [{ uid: 1, id: 'h100' }, { uid: 2, id: 'h800' }, { uid: 3, id: 'gb300' }, { uid: 4, id: 'ascend910c' }] }
+    };
+  },
+  computed: {
+    isChoiceRoute() { return this.route === 'performance' || this.route === 'optimize'; },
+    isCaseRoute() { return ['performance.op', 'performance.model', 'compare', 'optimize.strategy', 'optimize.hardware'].includes(this.route); },
+    routeRoot() { return this.route.split('.')[0]; },
+    routeTitle() { return this.scenes.find(scene => scene.id === this.routeRoot)?.title || 'Service'; },
+    choiceTitle() { return this.route === 'performance' ? '选择性能评估类型' : '选择系统寻优类型'; },
+    choiceDesc() { return this.route === 'performance' ? '性能评估需要先确定评估粒度，再进入对应交互页。' : '系统寻优需要先确定寻优目标，再进入对应交互页。'; },
+    choiceItems() { return this.choiceMap[this.route] || []; },
+    compareHardwareOptions() { return this.compare.hardwares.map(item => this.hw(item.id)).filter(Boolean); },
+    estimateDP() {
+      const world = Number(this.estimate.nodes || 1) * Number(this.estimate.gpusPerNode || 1);
+      const denom = Number(this.estimate.tp || 1) * Number(this.estimate.pp || 1) * Number(this.estimate.cp || 1);
+      return Math.max(1, Math.floor(world / Math.max(1, denom)));
+    },
+    currentCase() {
+      const cases = {
+        'performance.op': { title: '算子级性能评估', kicker: 'Performance / Operator', desc: '配置算子和输入张量，查看局部性能报表。', panelTitle: 'operator inputs', panelClass: 'est-accent', buttonClass: 'est-btn' },
+        'performance.model': { title: '模型级性能评估', kicker: 'Performance / Model', desc: '配置模型、硬件和并行策略，查看 estimate 风格报表。', panelTitle: 'estimate inputs', panelClass: 'est-accent', buttonClass: 'est-btn' },
+        compare: { title: '硬件对比', kicker: 'Hardware Compare', desc: '选择多个硬件和基准，查看加权或纯硬件对比。', panelTitle: 'compare inputs', panelClass: 'srch-accent', buttonClass: 'srch-btn' },
+        'optimize.strategy': { title: '策略寻优', kicker: 'Optimization / Strategy', desc: '固定模型和硬件，在策略空间中寻找 Top N。', panelTitle: 'strategy search inputs', panelClass: 'blue-accent', buttonClass: 'blue-btn' },
+        'optimize.hardware': { title: '硬件寻优', kicker: 'Optimization / Hardware', desc: '固定模型和策略，在候选硬件中寻找 Top N。', panelTitle: 'hardware search inputs', panelClass: 'blue-accent', buttonClass: 'blue-btn' }
+      };
+      return cases[this.route] || cases['performance.op'];
+    },
+    statusClass() { return this.status === 'Loading' ? 'loading' : this.status === 'Error' ? 'error' : 'ok'; }
+  },
+  watch: {
+    route() { this.scheduleRecompute(); },
+    perf: { handler() { this.scheduleRecompute(); }, deep: true },
+    compare: { handler() { this.scheduleRecompute(); }, deep: true },
+    estimate: { handler() { this.scheduleRecompute(); }, deep: true },
+    strategy: { handler() { this.scheduleRecompute(); }, deep: true },
+    hardwareSearch: { handler() { this.scheduleRecompute(); }, deep: true }
+  },
+  mounted() {
+    window.addEventListener('hashchange', () => { this.route = this.parseRoute(); });
+    this.normalizeRoute();
+    this.scheduleRecompute(0);
+  },
+  methods: {
+    parseRoute() { return (location.hash || '#/').replace(/^#\/?/, '').replace(/\//g, '.') || 'home'; },
+    normalizeRoute() {
+      const valid = ['home', 'performance', 'performance.op', 'performance.model', 'compare', 'optimize', 'optimize.strategy', 'optimize.hardware'];
+      if (!valid.includes(this.route)) this.goHome();
+    },
+    setRoute(route) {
+      location.hash = route === 'home' ? '#/' : `#/${route.replace(/\./g, '/')}`;
+      this.route = route;
+    },
+    goHome() { this.setRoute('home'); },
+    goScenarioRoot(scene) { this.setRoute(scene === 'compare' ? 'compare' : scene); },
+    goCase(route) { this.setRoute(route); },
+    hw(id) { return this.hardware.find(item => item.id === id); },
+    model(id) { return this.models.find(item => item.id === id); },
+    fmtMs(value) { return `${Number(value).toFixed(1)} ms`; },
+    fmtNum(value) { return Math.round(value).toLocaleString('en-US'); },
+    pct(value) { return Math.max(3, Math.min(100, Number(value || 0))); },
+    barSection(title, bars, tone = '') {
+      return { type: 'bars', title, bars: bars.map(bar => ({ label: bar.label, value: bar.value, percent: this.pct(bar.percent), tone: bar.tone || tone })) };
+    },
+    cellSection(title, cells) { return { type: 'cells', title, cells }; },
+    scheduleRecompute(delay = 180) {
+      clearTimeout(this.debounceTimer);
+      if (!this.isCaseRoute) return;
+      const version = ++this.requestVersion;
+      this.status = 'Loading';
+      this.debounceTimer = setTimeout(() => {
+        if (version !== this.requestVersion) return;
+        try {
+          this.result = this.buildResult();
+          this.errorMessage = '';
+          this.status = 'Success';
+        } catch (error) {
+          this.result = { metrics: [], headers: [], rows: [], sections: [] };
+          this.errorMessage = error.message || String(error);
+          this.status = 'Error';
+        }
+      }, delay);
+    },
+    addTensorInput() { this.perf.tensorInputs.push({ id: ++this.tensorSeq, name: `input_${this.perf.tensorInputs.length + 1}`, dim: 1024 }); },
+    removeTensorInput(id) { if (this.perf.tensorInputs.length > 1) this.perf.tensorInputs = this.perf.tensorInputs.filter(item => item.id !== id); },
+    addCompareHardware() {
+      const next = this.hardware[this.compare.hardwares.length % this.hardware.length]?.id || this.hardware[0].id;
+      this.compare.hardwares.push({ uid: ++this.compareHardwareSeq, id: next });
+    },
+    removeCompareHardware(uid) {
+      if (this.compare.hardwares.length > 2) {
+        this.compare.hardwares = this.compare.hardwares.filter(item => item.uid !== uid);
+        if (!this.compare.hardwares.some(item => item.id === this.compare.baseline)) this.compare.baseline = this.compare.hardwares[0].id;
+      }
+    },
+    toggleSearchSpace(spaceId, value) {
+      const values = this.strategy.space[spaceId];
+      const index = values.indexOf(value);
+      if (index >= 0 && values.length > 1) values.splice(index, 1);
+      if (index < 0) values.push(value);
+    },
+    addHardwareCandidate() {
+      const next = this.hardware[this.hardwareSearch.candidates.length % this.hardware.length]?.id || this.hardware[0].id;
+      this.hardwareSearch.candidates.push({ uid: ++this.hardwareCandidateSeq, id: next });
+    },
+    removeHardwareCandidate(uid) { if (this.hardwareSearch.candidates.length > 1) this.hardwareSearch.candidates = this.hardwareSearch.candidates.filter(item => item.uid !== uid); },
+    buildResult() {
+      if (this.route === 'compare') return this.buildCompare();
+      if (this.route === 'performance.op') return this.buildOperatorPerformance();
+      if (this.route === 'performance.model') return this.buildModelEstimate();
+      if (this.route === 'optimize.strategy') return this.buildStrategySearch();
+      return this.buildHardwareSearch();
+    },
+    buildOperatorPerformance() {
+      const hw = this.hw(this.perf.hardware);
+      const total = this.perf.tensorInputs.reduce((sum, tensor) => sum + Number(tensor.dim || 1) ** 2, 0);
+      const dtypeFactor = { bf16: 1, fp8: .72, fp4: .55 }[this.perf.dtype] || 1;
+      const time = (80 + Math.log10(total || 1) * 8) * dtypeFactor * (989 / hw.compute);
+      return {
+        metrics: [
+          { label: '算子耗时', value: this.fmtMs(time), note: this.perf.operator },
+          { label: '计算量', value: `${(total / 1e9).toFixed(2)} TF`, note: this.perf.dtype },
+          { label: '访存量', value: `${(total * 2 / 1e9).toFixed(2)} GB`, note: `${this.perf.tensorInputs.length} tensors` },
+          { label: '通信量', value: `${(hw.interconnect * .04).toFixed(1)} GB`, note: hw.name }
+        ],
+        headers: ['Input Tensor', 'Shape', 'Elements', '贡献耗时'],
+        rows: this.perf.tensorInputs.map(tensor => ({ key: tensor.id, 'Input Tensor': tensor.name, Shape: `[${tensor.dim}, ${tensor.dim}]`, Elements: this.fmtNum(Number(tensor.dim || 1) ** 2), 贡献耗时: this.fmtMs(time / this.perf.tensorInputs.length) })),
+        sections: [
+          this.barSection('operator path breakdown', [{ label: 'compute', value: '54%', percent: 54 }, { label: 'memory', value: '31%', percent: 31, tone: 'teal' }, { label: 'communication', value: '15%', percent: 15, tone: 'blue' }]),
+          this.cellSection('operator report summary', [{ k: 'operator', v: this.perf.operator }, { k: 'dtype', v: this.perf.dtype }, { k: 'hardware', v: hw.name }, { k: 'inputs', v: `${this.perf.tensorInputs.length} tensors` }])
+        ]
+      };
+    },
+    buildModelEstimate() {
+      const hw = this.hw(this.estimate.hardware);
+      const model = this.model(this.estimate.model);
+      const world = Number(this.estimate.nodes || 1) * Number(this.estimate.gpusPerNode || 1);
+      const step = (model.scale * 11.6 / Math.max(1, world)) * (989 / hw.compute) * 100;
+      const mfu = Math.min(76, 48 + hw.compute / 55 + Math.log2(world) * 1.4);
+      const throughput = Math.round((world * hw.compute * .16) / Math.max(1, model.scale));
+      return {
+        metrics: [
+          { label: 'Step Time', value: this.fmtMs(step), note: `${world} GPUs / DP ${this.estimateDP}` },
+          { label: 'MFU', value: `${mfu.toFixed(1)}%`, note: 'estimate style' },
+          { label: '吞吐量', value: `${this.fmtNum(throughput)} tok/s`, note: model.name },
+          { label: '显存峰值', value: `${Math.min(hw.memory, 42 + model.scale / 18).toFixed(1)} GB`, note: hw.name }
+        ],
+        headers: ['算子阶段', '耗时', '计算量', '访存量', '通信量'],
+        rows: [
+          { key: 'attention', 算子阶段: 'attention', 耗时: this.fmtMs(step * .34), 计算量: `${(model.scale * .46).toFixed(1)} TF`, 访存量: `${(model.scale * .11).toFixed(1)} GB`, 通信量: `${(world * .18).toFixed(1)} GB` },
+          { key: 'mlp', 算子阶段: 'mlp / moe', 耗时: this.fmtMs(step * .29), 计算量: `${(model.scale * .62).toFixed(1)} TF`, 访存量: `${(model.scale * .09).toFixed(1)} GB`, 通信量: `${(world * .08).toFixed(1)} GB` },
+          { key: 'comm', 算子阶段: 'communication', 耗时: this.fmtMs(step * .18), 计算量: '-', 访存量: `${(world * .05).toFixed(1)} GB`, 通信量: `${(hw.interconnect * .14).toFixed(1)} GB` }
+        ],
+        sections: [
+          this.barSection('estimate phase breakdown', [{ label: 'attention', value: this.fmtMs(step * .34), percent: 34 }, { label: 'mlp / moe', value: this.fmtMs(step * .29), percent: 29 }, { label: 'communication', value: this.fmtMs(step * .18), percent: 18, tone: 'teal' }, { label: 'optimizer', value: this.fmtMs(step * .12), percent: 12, tone: 'blue' }]),
+          this.cellSection('estimate config summary', [{ k: 'model', v: model.name }, { k: 'hardware', v: hw.name }, { k: 'world size', v: String(world) }, { k: 'parallel', v: `TP${this.estimate.tp} PP${this.estimate.pp} CP${this.estimate.cp} DP${this.estimateDP}` }])
+        ]
+      };
+    },
+    buildCompare() {
+      const selected = this.compare.hardwares.map(item => this.hw(item.id)).filter(Boolean);
+      if (new Set(selected.map(hw => hw.id)).size < 2) throw new Error('至少选择 2 个不同硬件实体。');
+      const baseline = selected.find(hw => hw.id === this.compare.baseline) || selected[0];
+      const scored = selected.map(hw => ({ hw, score: (hw.compute * .48 + hw.bandwidth * .22 + hw.interconnect * .3), step: 210000 / (hw.compute * .48 + hw.bandwidth * .22 + hw.interconnect * .3), mfu: Math.min(78, 34 + hw.compute / 48) })).sort((a, b) => b.score - a.score);
+      const best = scored[0];
+      if (this.compare.mode === 'pure') {
+        return {
+          metrics: [
+            { label: '基准硬件', value: baseline.name, note: 'user selected' },
+            { label: '对比硬件数', value: String(selected.length), note: 'pure hardware mode' },
+            { label: '最高 HBM 带宽', value: `${Math.max(...selected.map(hw => hw.bandwidth))} GB/s`, note: 'bandwidth' },
+            { label: '最高 HBM 容量', value: `${Math.max(...selected.map(hw => hw.memory))} GB`, note: 'memory' }
+          ],
+          headers: ['硬件', '对比维度', '当前值', '基准值', '相对基准'],
+          rows: selected.flatMap(hw => [
+            { key: `${hw.id}-bf16`, 硬件: hw.name, 对比维度: 'BF16/FP16 算力', 当前值: `${hw.compute} TFLOPS`, 基准值: `${baseline.compute} TFLOPS`, 相对基准: `${(hw.compute / baseline.compute * 100).toFixed(1)}%` },
+            { key: `${hw.id}-fp8`, 硬件: hw.name, 对比维度: 'FP8 算力', 当前值: `${hw.fp8} TFLOPS`, 基准值: `${baseline.fp8} TFLOPS`, 相对基准: `${(hw.fp8 / baseline.fp8 * 100).toFixed(1)}%` },
+            { key: `${hw.id}-mem`, 硬件: hw.name, 对比维度: 'HBM 容量', 当前值: `${hw.memory} GB`, 基准值: `${baseline.memory} GB`, 相对基准: `${(hw.memory / baseline.memory * 100).toFixed(1)}%` },
+            { key: `${hw.id}-bw`, 硬件: hw.name, 对比维度: 'HBM 带宽', 当前值: `${hw.bandwidth} GB/s`, 基准值: `${baseline.bandwidth} GB/s`, 相对基准: `${(hw.bandwidth / baseline.bandwidth * 100).toFixed(1)}%` }
+          ]),
+          sections: [
+            this.barSection('compute capability by hardware', selected.map(hw => ({ label: hw.name, value: `${hw.compute} TFLOPS`, percent: hw.compute / Math.max(...selected.map(item => item.compute)) * 100, tone: 'teal' }))),
+            this.barSection('memory and bandwidth capacity', selected.map(hw => ({ label: hw.name, value: `${hw.memory} GB / ${hw.bandwidth} GB/s`, percent: hw.bandwidth / Math.max(...selected.map(item => item.bandwidth)) * 100, tone: 'blue' })))
+          ]
+        };
+      }
+      return {
+        metrics: [
+          { label: '最佳/基准', value: `${(best.score / (baseline.compute * .48 + baseline.bandwidth * .22 + baseline.interconnect * .3) * 100).toFixed(1)}%`, note: `${best.hw.name} vs ${baseline.name}` },
+          { label: '硬件数量', value: String(selected.length), note: '2 or more supported' },
+          { label: '模型负载', value: 'weighted', note: 'frontend sample' },
+          { label: '核心指标', value: this.compare.metric, note: 'local score' }
+        ],
+        headers: ['排名', '硬件', '相对基准', 'Step Time', 'MFU'],
+        rows: scored.map((item, index) => ({ key: item.hw.id, 排名: `#${index + 1}`, 硬件: item.hw.name, 相对基准: `${(item.score / (baseline.compute * .48 + baseline.bandwidth * .22 + baseline.interconnect * .3) * 100).toFixed(1)}%`, 'Step Time': this.fmtMs(item.step), MFU: `${item.mfu.toFixed(1)}%` })),
+        sections: [
+          this.barSection('relative performance vs baseline', scored.map(item => ({ label: item.hw.name, value: `${(item.score / (baseline.compute * .48 + baseline.bandwidth * .22 + baseline.interconnect * .3) * 100).toFixed(1)}%`, percent: item.score / best.score * 100, tone: 'teal' }))),
+          this.cellSection('compare report summary', [{ k: 'baseline', v: baseline.name }, { k: 'best', v: best.hw.name }, { k: 'metric', v: this.compare.metric }])
+        ]
+      };
+    },
+    buildStrategySearch() {
+      const hw = this.hw(this.strategy.hardware);
+      const model = this.model(this.strategy.model);
+      const combos = [];
+      this.strategy.space.tp.forEach(tp => this.strategy.space.pp.forEach(pp => this.strategy.space.ep.forEach(ep => this.strategy.space.cp.forEach(cp => {
+        const step = (model.scale * 9.2 / 128) * (989 / hw.compute) * (1 + pp * .015 + cp * .02) * 100;
+        const memory = Math.min(hw.memory * 1.2, 22 + model.scale / Math.max(1, tp * 8));
+        const mfu = Math.min(79, 42 + hw.compute / 58 - pp * .12);
+        const throughput = Math.round((128 * hw.compute * .13) / Math.max(1, model.scale));
+        combos.push({ tp, pp, ep, cp, step, memory, mfu, throughput });
+      }))));
+      const sorted = combos.sort((a, b) => b.throughput - a.throughput).slice(0, Math.min(20, this.strategy.topN));
+      return {
+        metrics: [
+          { label: '搜索空间', value: String(combos.length), note: 'strategy configs' },
+          { label: '命中数量', value: String(sorted.length), note: 'after constraints' },
+          { label: '最佳 MFU', value: `${sorted[0].mfu.toFixed(1)}%`, note: `TP${sorted[0].tp}/PP${sorted[0].pp}` },
+          { label: '最佳吞吐', value: `${this.fmtNum(sorted[0].throughput)} tok/s`, note: this.strategy.sortBy }
+        ],
+        headers: ['排名', '策略', 'MFU', '吞吐', '时延', '显存'],
+        rows: sorted.map((row, index) => ({ key: `s-${index}`, 排名: `#${index + 1}`, 策略: `TP${row.tp} CP${row.cp} PP${row.pp} EP${row.ep}`, MFU: `${row.mfu.toFixed(1)}%`, 吞吐: `${this.fmtNum(row.throughput)} tok/s`, 时延: this.fmtMs(row.step), 显存: `${row.memory.toFixed(1)} GB` })),
+        sections: [
+          this.barSection('top strategy throughput', sorted.slice(0, 6).map(row => ({ label: `TP${row.tp}/PP${row.pp}/CP${row.cp}`, value: `${this.fmtNum(row.throughput)} tok/s`, percent: row.throughput / Math.max(...sorted.map(item => item.throughput)) * 100, tone: 'teal' }))),
+          this.barSection('memory and bubble constraints', sorted.slice(0, 6).map(row => ({ label: `TP${row.tp}/PP${row.pp}/CP${row.cp}`, value: `${row.memory.toFixed(1)} GB`, percent: row.memory / hw.memory * 100, tone: 'blue' })))
+        ]
+      };
+    },
+    buildHardwareSearch() {
+      const model = this.model(this.hardwareSearch.model);
+      const dp = Math.max(1, Math.floor(this.hardwareSearch.worldSize / Math.max(1, this.hardwareSearch.tp * this.hardwareSearch.pp * this.hardwareSearch.cp)));
+      const raw = this.hardwareSearch.candidates.map(candidate => {
+        const hw = this.hw(candidate.id);
+        const step = (model.scale * 10.5 / Math.max(1, this.hardwareSearch.worldSize)) * (989 / hw.compute) * 100;
+        const throughput = Math.round((this.hardwareSearch.worldSize * hw.compute * .15) / Math.max(1, model.scale));
+        const mfu = Math.min(80, 40 + hw.compute / 52 + hw.interconnect / 260);
+        const memory = Math.min(hw.memory, 30 + model.scale / Math.max(1, this.hardwareSearch.tp * dp));
+        return { key: `${candidate.uid}`, hw, step, throughput, mfu, memory };
+      }).sort((a, b) => b.throughput - a.throughput);
+      const rows = raw.slice(0, Math.min(20, this.hardwareSearch.topN));
+      return {
+        metrics: [
+          { label: '候选硬件', value: String(this.hardwareSearch.candidates.length), note: 'user selected' },
+          { label: '最优硬件', value: rows[0].hw.name, note: 'throughput' },
+          { label: '固定策略', value: `TP${this.hardwareSearch.tp}/PP${this.hardwareSearch.pp}/CP${this.hardwareSearch.cp}`, note: `world_size ${this.hardwareSearch.worldSize}` },
+          { label: '最优吞吐', value: `${this.fmtNum(rows[0].throughput)} tok/s`, note: `DP ${dp}` }
+        ],
+        headers: ['排名', '硬件型号', '固定并行策略', 'MFU', '吞吐', '时延', '显存'],
+        rows: rows.map((row, index) => ({ key: row.key, 排名: `#${index + 1}`, 硬件型号: row.hw.name, 固定并行策略: `TP${this.hardwareSearch.tp} CP${this.hardwareSearch.cp} PP${this.hardwareSearch.pp} DP${dp}`, MFU: `${row.mfu.toFixed(1)}%`, 吞吐: `${this.fmtNum(row.throughput)} tok/s`, 时延: this.fmtMs(row.step), 显存: `${row.memory.toFixed(1)} GB` })),
+        sections: [
+          this.barSection('candidate throughput', rows.map(row => ({ label: row.hw.name, value: `${this.fmtNum(row.throughput)} tok/s`, percent: row.throughput / Math.max(...rows.map(item => item.throughput)) * 100, tone: 'teal' }))),
+          this.cellSection('hardware search summary', [{ k: 'model', v: model.name }, { k: 'world_size', v: String(this.hardwareSearch.worldSize) }, { k: 'strategy', v: `TP${this.hardwareSearch.tp} PP${this.hardwareSearch.pp} CP${this.hardwareSearch.cp} DP${dp}` }])
+        ]
+      };
+    }
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

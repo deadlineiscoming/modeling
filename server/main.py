@@ -66,11 +66,17 @@ app.add_middleware(
 app.mount("/estimate", StaticFiles(directory=str(_estimates_dir)), name="estimate")
 
 _launcher = Path(__file__).parent / "launcher.html"
+_service_entry = Path(__file__).parent / "service.html"
 
 
 @app.get("/", include_in_schema=False)
 def serve_launcher():
     return FileResponse(_launcher, media_type="text/html")
+
+
+@app.get("/service", include_in_schema=False)
+def serve_service_entry():
+    return FileResponse(_service_entry, media_type="text/html")
 
 # ── In-memory job store ───────────────────────────────────────────────────────
 # Each entry: {id, status, result, error, created_at, finished_at}

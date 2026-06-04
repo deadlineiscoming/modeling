@@ -83,7 +83,10 @@ def _excel_summary_map(path):
     return result
 
 
-def _sheet_rows(path, sheet_name):
+_SHEET_FWD_BWD = "Operators (fwd+bwd)"
+
+
+def _sheet_rows(path, sheet_name, phase=None):
     import openpyxl
 
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -95,6 +98,8 @@ def _sheet_rows(path, sheet_name):
             if not any(v is not None for v in values):
                 continue
             rows.append(dict(zip(header, values)))
+        if phase is not None:
+            rows = [r for r in rows if str(r.get("Phase", "")) == phase]
         return rows
     finally:
         wb.close()
@@ -489,7 +494,7 @@ class TestRecomputeE2E:
 
     def test_exported_forward_ops_show_reduced_activation(self, full_excel, none_excel):
         excel_path, graph, _report = full_excel
-        rows = _sheet_rows(excel_path, "Forward Operators")
+        rows = _sheet_rows(excel_path, _SHEET_FWD_BWD, phase="fwd")
         for col in (
             "Activation (B)",
             "Activation Memory (µs)",
@@ -514,7 +519,7 @@ class TestRecomputeE2E:
             )
 
         none_path, none_graph, _ = none_excel
-        none_rows = _sheet_rows(none_path, "Forward Operators")
+        none_rows = _sheet_rows(none_path, _SHEET_FWD_BWD, phase="fwd")
         activation_rows = [
             row for row in none_rows
             if row["Node ID"] in none_graph.nodes
@@ -525,7 +530,7 @@ class TestRecomputeE2E:
 
     def test_exported_backward_ops_show_recompute_replay(self, full_excel):
         excel_path, graph, _report = full_excel
-        rows = _sheet_rows(excel_path, "Backward Operators")
+        rows = _sheet_rows(excel_path, _SHEET_FWD_BWD, phase="bwd")
         assert "Recompute Replay (µs)" in rows[0]
         assert "Final Latency (µs)" in rows[0]
 

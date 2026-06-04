@@ -369,13 +369,14 @@ class TestDpCommScope:
 
 class TestDpScaleOps:
     """DP gradient averaging scale nodes (aten.div.Scalar)
-    in the Backward Operators sheet."""
+    in the Operators (fwd+bwd) sheet, bwd phase."""
 
     def _scale_rows(self, data: dict) -> list[dict]:
-        t_ops = data.get("Backward Operators", [])
+        t_ops = data.get("Operators (fwd+bwd)", [])
         return [
             r for r in t_ops
-            if r.get("Op Type") == "aten.div.Scalar"
+            if str(r.get("Phase", "")) == "bwd"
+            and r.get("Op Type") == "aten.div.Scalar"
             and "grad_scale" in str(r.get("Node ID", ""))
         ]
 

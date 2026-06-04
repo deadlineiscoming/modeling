@@ -109,7 +109,10 @@ def ep8_artifacts(tmp_path_factory, ep8_all):
     return _export_training_artifacts(tmp_path_factory.mktemp("ep8_artifacts"), ep8_all)
 
 
-def _sheet_rows(path: Path, sheet_name: str) -> list[dict[str, object]]:
+_SHEET_FWD_BWD = "Operators (fwd+bwd)"
+
+
+def _sheet_rows(path: Path, sheet_name: str, phase: str | None = None) -> list[dict[str, object]]:
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
         ws = wb[sheet_name]
@@ -119,6 +122,8 @@ def _sheet_rows(path: Path, sheet_name: str) -> list[dict[str, object]]:
             if not any(v is not None for v in values):
                 continue
             rows.append(dict(zip(header, values)))
+        if phase is not None:
+            rows = [r for r in rows if str(r.get("Phase", "")) == phase]
         return rows
     finally:
         wb.close()
@@ -406,7 +411,7 @@ class TestEPE2E:
         assert ep8_artifacts["json"].exists()
 
     def test_exported_excel_grouped_mm_has_weight_inputs_and_formula(self, ep8_artifacts):
-        rows = _sheet_rows(ep8_artifacts["excel"], "Forward Operators")
+        rows = _sheet_rows(ep8_artifacts["excel"], _SHEET_FWD_BWD, phase="fwd")
         grouped = [r for r in rows if r["Op Type"] == "GroupedMatMul"]
         assert grouped, "Expected GroupedMatMul rows in exported Excel"
         for row in grouped:
@@ -417,7 +422,7 @@ class TestEPE2E:
             assert int(row["FLOPs"]) > int(row["Activation (B)"])
 
     def test_exported_excel_grouped_mm_shapes_match_dsv4_experts(self, ep8_artifacts):
-        rows = _sheet_rows(ep8_artifacts["excel"], "Forward Operators")
+        rows = _sheet_rows(ep8_artifacts["excel"], _SHEET_FWD_BWD, phase="fwd")
         grouped = {str(r["Node ID"]): r for r in rows if r["Op Type"] == "GroupedMatMul"}
         G = _NUM_EXPERTS // _EP
         M = _BATCH * _SEQ_LEN * _MOE_ACTIVE // _NUM_EXPERTS
@@ -433,7 +438,7 @@ class TestEPE2E:
             assert str((G, M, _HIDDEN)) in str(down["Output Shapes"])
 
     def test_exported_excel_backward_grouped_mm_shapes_and_order(self, ep8_artifacts):
-        rows = _sheet_rows(ep8_artifacts["excel"], "Backward Operators")
+        rows = _sheet_rows(ep8_artifacts["excel"], _SHEET_FWD_BWD, phase="bwd")
         ids = [str(r["Node ID"]) for r in rows]
         grouped = {str(r["Node ID"]): r for r in rows if r["Op Type"] == "GroupedMatMul"}
         G = _NUM_EXPERTS // _EP
@@ -458,7 +463,7 @@ class TestEPE2E:
             assert str((G, M, _HIDDEN * 2)) in str(gate_up["Output Shapes"])
 
     def test_exported_excel_ep_forward_order(self, ep8_artifacts):
-        rows = _sheet_rows(ep8_artifacts["excel"], "Forward Operators")
+        rows = _sheet_rows(ep8_artifacts["excel"], _SHEET_FWD_BWD, phase="fwd")
         fwd_ep = [
             r for r in rows
             if r["Op Type"] in ("comm.all_to_all", "GroupedMatMul", "aten.silu")

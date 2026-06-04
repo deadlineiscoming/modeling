@@ -465,6 +465,7 @@ def export_html_report(
 <title>{title}</title>
 <style>
 {_CSS}
+</style>
 </head>
 <body>
 <h1>{title}</h1>
@@ -762,19 +763,19 @@ def _render_op_family_details(fam) -> str:
 def export_hierarchical_html_report(
     rc: "ReportContext",
     output_path: Path,
-    timeline_data: list[dict] | None = None,
     *,
     hw_spec: "Any | None" = None,
     parallel: "Any | None" = None,
+    trace_html_name: str = "",
 ) -> Path:
     """Export a 4-level hierarchical HTML performance report from ReportContext.
 
     Sections rendered:
       - Hero Card (5 KPI: Prefill/TPOT/TPS/Memory/Blocks)
       - Bound Bar (compute / memory / communication %)
+      - Chrome Trace Viewer iframe (optional, when trace_html_name is set)
       - Block → SubStructure → OpFamily expandable hierarchy
       - 12-column OpFamily detail table (on click expand)
-      - Timeline canvas (optional)
       - Warnings box
 
     Parameters
@@ -783,8 +784,9 @@ def export_hierarchical_html_report(
         Built by ``build_report_context()`` with full hierarchical data.
     output_path : Path
         Output HTML file path.
-    timeline_data : list[dict] | None
-        Optional Gantt chart data.
+    trace_html_name : str
+        Optional filename of the trace viewer HTML (same dir).
+        When set, an iframe is embedded right after the Bound Bar section.
 
     Returns
     -------
@@ -916,22 +918,17 @@ def export_hierarchical_html_report(
         hierarchy_parts.append('</div>')  # timeline
         hierarchy_html = "\n".join(hierarchy_parts)
 
-    # ── Timeline ──
-    # Canvas + tooltip div; init deferred after _JS so drawTimeline is defined.
-    timeline_html = ""
-    timeline_init = ""
-    if timeline_data:
-        ops_json = json.dumps(timeline_data)
-        timeline_html = """
-<h2>Timeline</h2>
-<div class="chart-container">
-    <div class="tl-wrap">
-        <canvas id="timeline" style="display:block;width:100%;height:280px"></canvas>
-        <div id="timeline-tooltip" class="tl-tooltip"></div>
-    </div>
+    # ── Trace Viewer iframe ──
+    trace_viewer_html = ""
+    if trace_html_name:
+        trace_viewer_html = f"""
+<h2>Timeline (Chrome Trace Viewer)</h2>
+<div class="chart-container" style="padding:0;overflow:hidden">
+    <iframe src="{trace_html_name}" width="100%" height="800px"
+            style="border:none;border-radius:8px"
+            title="Chrome Trace Viewer"></iframe>
 </div>
 """
-        timeline_init = f"drawTimeline('timeline', {ops_json});"
 
     # ── Warnings ──
     warning_html = ""
@@ -1209,18 +1206,17 @@ def export_hierarchical_html_report(
 <div class="meta">{''.join(f'<span>{p}</span>' for p in meta_parts)}</div>
 <div class="cards">{cards_html}</div>
 {bound_html}
+{trace_viewer_html}
 <h2>模型 → Block → 子结构 → 算子分层展开</h2>
 <div class="chart-container">{hierarchy_html}</div>
 {topo_html}
 {struct_html}
-{timeline_html}
 {calib_html}
 {op_calib_html}
 {ref_html}
 {warning_html}
 {_JS}
 {_HIER_JS}
-<script>{timeline_init}</script>
 </body>
 </html>"""
 
@@ -1290,7 +1286,7 @@ def export_reports(
     from python.zrt.executor import DAGScheduler
     from python.zrt.simulator import SimulatorHub
     from python.zrt.report.report_builder import build_report_context as _build_rc
-    from python.zrt.report.chrome_trace import export_chrome_trace
+    from python.zrt.report.chrome_trace import export_chrome_trace, export_trace_html
     from python.zrt.report.summary import E2ESummary, build_summary
 
     output_dir = _Path(output_dir)
@@ -1340,19 +1336,25 @@ def export_reports(
     export_hierarchical_html_report(
         rc,
         report_dir / f"{slug}_{phase}_hier.html",
-        timeline_data=timeline_json,
         hw_spec=hw_spec,
         parallel=getattr(ctx, "parallel", None) if ctx else None,
+        trace_html_name=f"{slug}_{phase}_trace.html",
     )
 
-    # ── 4. Chrome Trace ───────────────────────────────────────────────────
+    # ── 4. Chrome Trace + Trace Viewer HTML ───────────────────────────────
     parallel_desc = ctx.parallel.describe() if ctx else "single"
-    export_chrome_trace(
-        tl,
-        report_dir / f"{slug}_{phase}_trace.json",
-        name=f"{model} | {phase}",
-        metadata={"model": model, "hardware": hardware,
-                  "phase": phase, "parallel": parallel_desc},
+    trace_json_path = report_dir / f"{slug}_{phase}_trace.json"
+    trace_name = f"{model} | {phase}"
+    trace_meta = {"model": model, "hardware": hardware,
+                  "phase": phase, "parallel": parallel_desc}
+
+    export_chrome_trace(tl, trace_json_path, name=trace_name, metadata=trace_meta)
+
+    # Also produce a standalone trace viewer HTML (template-based, self-contained)
+    export_trace_html(
+        trace_json_path,
+        report_dir / f"{slug}_{phase}_trace.html",
+        title=trace_name,
     )
 
     # ── 5. Flat E2ESummary (inference path) ───────────────────────────────

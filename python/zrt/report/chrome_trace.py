@@ -1,8 +1,12 @@
 """Chrome Trace builder — returns dict for chrome://tracing or writes to file."""
 from __future__ import annotations
 
+import base64
+import gzip
+import io
 import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,6 +14,19 @@ if TYPE_CHECKING:
     from python.zrt.executor.scheduler import Timeline
 
 logger = logging.getLogger(__name__)
+
+# ── Template path helpers ───────────────────────────────────────────────────────
+
+_PKG_DIR = Path(__file__).resolve().parent
+_TEMPLATE_PATH = _PKG_DIR / "templates" / "trace_viewer_shell.html"
+
+
+def _get_template_path() -> Path | None:
+    """Return the path to the pre-built viewer template, or None if missing."""
+    if _TEMPLATE_PATH.is_file():
+        return _TEMPLATE_PATH
+    return None
+
 
 # Category color map for chrome://tracing
 CATEGORY_COLORS = {
@@ -108,7 +125,7 @@ def build_chrome_trace(
 
     return {
         "traceEvents": events,
-        "displayTimeUnit": "us",
+        "displayTimeUnit": "ms",
         "metadata": trace_meta,
     }
 
@@ -165,7 +182,7 @@ def build_chrome_trace_multi(
 
     return {
         "traceEvents": all_events,
-        "displayTimeUnit": "us",
+        "displayTimeUnit": "ms",
         "metadata": trace_meta,
     }
 
@@ -232,3 +249,121 @@ def export_chrome_trace_multi(
     logger.info("Exported multi-phase Chrome Trace to %s (%d events)",
                 output_path, len(trace["traceEvents"]))
     return output_path
+
+
+# ── Template-based trace HTML export (zero Catapult dependency) ───────
+
+
+def _inject_trace_data_into_template(
+    trace_data: str | dict | list,
+    output_path: Path,
+    title: str = "",
+) -> Path:
+    """Inject trace JSON into the pre-built Catapult viewer template.
+
+    Uses only Python stdlib (gzip + base64) — **no Catapult dependency at runtime**.
+    The template is generated once via Catapult's trace2html and shipped with the
+    project as ``python/zrt/report/templates/trace_viewer_shell.html``.
+
+    Parameters
+    ----------
+    trace_data : str | dict | list
+        Chrome Trace JSON string, or a dict/list that will be serialized.
+    output_path : Path
+        Output ``.html`` file path.
+    title : str
+        Display title in the trace viewer top bar.
+
+    Returns
+    -------
+    Path
+        The output HTML path.
+    """
+    tmpl_path = _get_template_path()
+    if tmpl_path is None:
+        raise FileNotFoundError(
+            "Trace viewer template not found at "
+            f"{_TEMPLATE_PATH}. "
+            "Run Catapult trace2html once to generate the template."
+        )
+
+    template = tmpl_path.read_text(encoding="utf-8")
+
+    # Serialize to JSON string if needed
+    if isinstance(trace_data, (dict, list)):
+        trace_data_str = json.dumps(trace_data, ensure_ascii=False)
+    else:
+        trace_data_str = trace_data
+
+    # gzip + base64 (same algorithm as Catapult's ViewerDataScript)
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as f:
+        f.write(trace_data_str.encode("utf-8"))
+    b64_content = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    # Inject into template
+    html = template.replace("__TRACE_DATA__", b64_content)
+
+    # Replace title
+    if title:
+        html = re.sub(
+            r"<title>.*?</title>",
+            f"<title>{title}</title>",
+            html,
+            count=1,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    logger.info("Exported trace HTML (template) to %s", output_path)
+    return output_path
+
+
+# ── Trace HTML export (template-based, zero external dependency) ────────────────
+
+
+def export_trace_html(
+    trace_json_path: Path,
+    output_path: Path | None = None,
+    title: str = "",
+) -> Path:
+    """Convert a Chrome Trace JSON file into a standalone HTML file.
+
+    Uses a pre-built Catapult viewer template shipped with the project.
+    Trace data is gzip+base64 injected at runtime — only Python stdlib required,
+    zero external dependencies.
+
+    Parameters
+    ----------
+    trace_json_path : Path
+        Input ``*_trace.json`` file produced by :func:`export_chrome_trace`.
+    output_path : Path | None
+        Output HTML path.  Defaults to ``<trace_json_path_stem>.html`` in the
+        same directory.
+    title : str
+        Display title in the trace viewer top bar.
+
+    Returns
+    -------
+    Path
+        The output HTML path.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the viewer template is not found at ``templates/trace_viewer_shell.html``.
+    """
+    if output_path is None:
+        output_path = trace_json_path.with_suffix(".html")
+
+    if _get_template_path() is None:
+        raise FileNotFoundError(
+            "Trace viewer template not found at "
+            f"{_TEMPLATE_PATH}. "
+            "Run Catapult trace2html once to generate the template."
+        )
+
+    trace_data = json.loads(trace_json_path.read_text(encoding="utf-8"))
+    return _inject_trace_data_into_template(
+        trace_data, output_path, title=title,
+    )

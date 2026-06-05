@@ -429,17 +429,21 @@
     min_ops: 11
     max_ops: 11
   io_roles:
-    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,Hc]"}
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0, shape_role: "[B,S,HC*H]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
+    - {role: post,       source_kind: output, source_op_index: 7,  source_arg_index: 0, shape_role: "[B,S,HC]"}
+    - {role: comb,       source_kind: output, source_op_index: 8,  source_arg_index: 0, shape_role: "[B,S,HC,HC]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
     seq_len:    "activation.shape[1]"
     hidden_in:  "activation.shape[-1]"
     hidden_out: "output.shape[-1]"
     extra:
-      - [hc_dim, "output.shape[-1]"]
-  flops_formula: "4 * batch_size * seq_len * hidden_in + 2 * batch_size * seq_len * hidden_in * hc_dim"
-  memory_formula: "activation.bytes + output.bytes"
+      - [hc_dim, "post.shape[-1]"]
+      - [mix_hc, "(2 + hc_dim) * hc_dim"]
+      - [sinkhorn_iters, "20"]
+  flops_formula: "2 * batch_size * seq_len * hidden_in * mix_hc + 4 * sinkhorn_iters * batch_size * seq_len * hc_dim * hc_dim + 2 * batch_size * seq_len * hc_dim * hidden_out"
+  memory_formula: "activation.bytes + output.bytes + post.bytes + comb.bytes * (2 * sinkhorn_iters + 1)"
   annotations:
     scope_suffix: hc_pre
     component: block_hc_pre
@@ -464,18 +468,22 @@
     min_ops: 8
     max_ops: 8
   io_roles:
-    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,Hc]"}
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0, shape_role: "[B,S,HC*H]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
+    - {role: post,       source_kind: output, source_op_index: 4,  source_arg_index: 0, shape_role: "[B,S,HC]"}
+    - {role: comb,       source_kind: output, source_op_index: 5,  source_arg_index: 0, shape_role: "[B,S,HC,HC]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
     seq_len:    "activation.shape[1]"
     hidden_in:  "activation.shape[-1]"
     hidden_out: "output.shape[-1]"
     extra:
-      - [hc_dim, "output.shape[-1]"]
-  # 4 RMSNorm-ish FLOPs + linear hc_mult * H * Hc.  Sinkhorn iterations ignored (small).
-  flops_formula: "4 * batch_size * seq_len * hidden_in + 2 * batch_size * seq_len * hidden_in * hc_dim"
-  memory_formula: "activation.bytes + output.bytes"
+      - [hc_dim, "post.shape[-1]"]
+      - [mix_hc, "(2 + hc_dim) * hc_dim"]
+      - [sinkhorn_iters, "20"]
+  # Routing linear + Sinkhorn iterations + weighted HC reduction.
+  flops_formula: "2 * batch_size * seq_len * hidden_in * mix_hc + 4 * sinkhorn_iters * batch_size * seq_len * hc_dim * hc_dim + 2 * batch_size * seq_len * hc_dim * hidden_out"
+  memory_formula: "activation.bytes + output.bytes + post.bytes + comb.bytes * (2 * sinkhorn_iters + 1)"
   annotations:
     scope_suffix: hc_pre
     component: block_hc_pre
@@ -501,16 +509,16 @@
     max_ops: 4
   io_roles:
     - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,Hc,H]"}
-    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,HC,H]"}
   shape_derivation:
-    batch_size: "activation.shape[0]"
-    seq_len:    "activation.shape[1]"
+    batch_size: "output.shape[0]"
+    seq_len:    "output.shape[1]"
     hidden_out: "output.shape[-1]"
     extra:
       # hc_dim ≈ activation.numel / (B*S*Hout); falls back to 1 if shapes collapse.
-      - [hc_dim, "max(1, activation.numel // (batch_size * seq_len * hidden_out))"]
+      - [hc_dim, "output.shape[-2]"]
   # Weighted sum over hc_dim residuals.
-  flops_formula: "2 * batch_size * seq_len * hidden_out * hc_dim"
+  flops_formula: "2 * batch_size * seq_len * hidden_out * hc_dim + 2 * batch_size * seq_len * hidden_out * hc_dim * hc_dim"
   memory_formula: "activation.bytes + output.bytes"
   annotations:
     scope_suffix: hc_post
@@ -531,15 +539,15 @@
   match:
     kind: class_only
   io_roles:
-    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,H]"}
-    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,Hc]"}
+    - {role: activation, source_kind: input,  source_op_index: 0,  source_arg_index: 0,  shape_role: "[B,S,HC*H]"}
+    - {role: output,     source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,H]"}
   shape_derivation:
     batch_size: "activation.shape[0]"
     seq_len:    "activation.shape[1]"
     hidden_in:  "activation.shape[-1]"
     hidden_out: "output.shape[-1]"
     extra:
-      - [hc_dim, "output.shape[-1]"]
+      - [hc_dim, "max(1, activation.shape[-1] // hidden_out)"]
   # 4 RMSNorm + 2 * H * Hc routing linear + sigmoid (~T*Hc).
   flops_formula: "4 * batch_size * seq_len * hidden_in + 2 * batch_size * seq_len * hidden_in * hc_dim + batch_size * seq_len * hc_dim"
   memory_formula: "activation.bytes + output.bytes"

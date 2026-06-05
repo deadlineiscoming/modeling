@@ -715,6 +715,79 @@ def test_multi_pass_rms_coef_then_hc_pre():
     assert len(hc_pre_nodes) == 1
 
 
+def test_dsv4_hc_pre_raw_preserves_y_post_comb_outputs():
+    """The real DeepSeek-V4 HC-pre rule must surface all external products.
+
+    ``Block.hc_pre`` returns ``(y, post, comb)`` and ``hc_post`` consumes
+    ``post``/``comb`` later.  A fused hc_pre node with only the final ``y``
+    output drops those edges from the node schema and makes downstream shape
+    accounting ambiguous.
+    """
+    from python.zrt.transform.context import FusionConfig
+
+    scope = "model.layers.0.hc_pre_attn"
+    op_types = [
+        "aten.pow.Tensor_Scalar",
+        "aten.mean.dim",
+        "aten.add.Tensor",
+        "aten.rsqrt.default",
+        "aten.mm.default",
+        "aten.mul.Tensor",
+        "aten._softmax.default",
+        "aten.sigmoid.default",
+        "aten._softmax.default",
+        "aten.mul.Tensor",
+        "aten.sum.dim_IntList",
+    ]
+    nodes, edges = _seq_graph(
+        op_types, scope=scope, module_class="HCPreAttn", call_id=9301,
+    )
+
+    x = _t("x_hc", (1, 128, 4 * 7168), DType.FP32)
+    weight = _t("hc_fn_t", (4 * 7168, 24), DType.FP32)
+    nodes[0].inputs = [x]
+    nodes[4].inputs = [nodes[3].outputs[0], weight]
+    nodes[7].outputs = [_t("post", (1, 128, 4), DType.FP32)]
+    nodes[8].outputs = [_t("comb", (1, 128, 4, 4), DType.FP32)]
+    nodes[10].outputs = [_t("y", (1, 128, 7168))]
+
+    post_consumer = _node(
+        "post_user", "aten.mul.Tensor",
+        scope="model.layers.0.hc_post_attn", module_class="HCPostAttn",
+    )
+    comb_consumer = _node(
+        "comb_user", "aten.mul.Tensor",
+        scope="model.layers.0.hc_post_attn", module_class="HCPostAttn",
+    )
+    y_consumer = _node(
+        "y_user", "aten.mm.default",
+        scope="model.layers.0.attn", module_class="Attention",
+    )
+    edges.extend([
+        Edge(src=nodes[7].id, src_idx=0, dst=post_consumer.id, dst_idx=0,
+             tensor=nodes[7].outputs[0]),
+        Edge(src=nodes[8].id, src_idx=0, dst=comb_consumer.id, dst_idx=0,
+             tensor=nodes[8].outputs[0]),
+        Edge(src=nodes[10].id, src_idx=0, dst=y_consumer.id, dst_idx=0,
+             tensor=nodes[10].outputs[0]),
+    ])
+    g = _graph(nodes + [post_consumer, comb_consumer, y_consumer], edges)
+
+    ctx = _ctx_with_fusion(
+        FusionConfig(enabled_rules={"hc_pre_attn_raw"}),
+        model_id="hf_models/deepseek_v4",
+    )
+    out = FusionPass().run(g, ctx)
+    fused = [n for n in out.nodes.values() if n.op_type == "hc_pre"]
+
+    assert len(fused) == 1
+    assert [t.id for t in fused[0].outputs] == ["y", "post", "comb"]
+    assert fused[0].annotations["hidden_out"] == 7168
+    assert fused[0].annotations["sem_shape"]["hc_dim"] == 4
+    assert fused[0].annotations["sem_shape"]["mix_hc"] == 24
+    assert fused[0].annotations["sem_flops"] > 2 * 128 * 4 * 7168 * 24
+
+
 def test_disabled_rules_disable_partial():
     """``FusionConfig.disabled_rules`` excludes a rule from the active set;
     the sliding-window scanner therefore won't see it either.

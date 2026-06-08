@@ -33,7 +33,12 @@ from python.zrt.transform.fusion.registry import (
     lookup_rule,
 )
 
-from .compositors import _ADD_NORM_RULE_NAME, _compose_add_norm
+from .compositors import (
+    _ADD_NORM_RULE_NAME,
+    _HC_POST_FFN_RULE_NAME,
+    _compose_add_norm,
+    _compose_hc_post_ffn,
+)
 
 if TYPE_CHECKING:
     from python.zrt.ir.graph import OpGraph
@@ -88,6 +93,10 @@ def fuse(graph: "OpGraph", ctx=None) -> "OpGraph":
             )
         if len(working_graph.nodes) >= previous_count:
             break  # fixed point — no progress this pass
+
+    if _HC_POST_FFN_RULE_NAME in active_names:
+        rule = next(r for r in active if r.name == _HC_POST_FFN_RULE_NAME)
+        working_graph = _compose_hc_post_ffn(working_graph, rule)
 
     if _ADD_NORM_RULE_NAME in active_names:
         working_graph = _compose_add_norm(working_graph)

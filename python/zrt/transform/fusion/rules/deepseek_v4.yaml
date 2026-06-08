@@ -525,11 +525,35 @@
     component: block_hc_post
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 15. ParallelHead.hc_head  (line 728) — RMSNorm-ish + linear + sigmoid + sum.
-#     Note: the inline ``hc_head`` method is wrapped by an ``HCHead`` capture
-#     module (see graph/patches.py::_attach_hc_module_to_head), so the bucket's
-#     module_class is ``HCHead`` — not ``ParallelHead``.
+# 15. Block.hc_post_ffn -- non-contiguous post-FFN residual diamond.
+#     TP/EP traces can split HCPostFfn into mul/sum and mul/add fragments.
 # ─────────────────────────────────────────────────────────────────────────────
+- target_class: HCPostFfn
+  op_type: hc_post
+  name: hc_post_ffn
+  description: "Hyper-Connections post-FFN residual mixer; may appear as a non-contiguous diamond after TP/EP transforms"
+  default_phases: [inference, training]
+  priority: 30
+  match:
+    kind: class_only
+    min_ops: 4
+    max_ops: 4
+  io_roles:
+    - {role: output, source_kind: output, source_op_index: -1, source_arg_index: -1, shape_role: "[B,S,HC,H]"}
+  shape_derivation:
+    batch_size: "output.shape[0]"
+    seq_len:    "output.shape[1]"
+    hidden_out: "output.shape[-1]"
+    extra:
+      - [hc_dim, "output.shape[-2]"]
+  flops_formula: "2 * batch_size * seq_len * hidden_out * hc_dim + 2 * batch_size * seq_len * hidden_out * hc_dim * hc_dim"
+  memory_formula: "output.bytes * 2"
+  annotations:
+    scope_suffix: hc_post
+    component: block_hc_post
+
+# 16. ParallelHead.hc_head -- RMSNorm-ish + linear + sigmoid + sum.
+#     The inline hc_head method is wrapped by an HCHead capture module.
 - target_class: HCHead
   op_type: hc_head
   name: hc_head

@@ -788,6 +788,82 @@ def test_dsv4_hc_pre_raw_preserves_y_post_comb_outputs():
     assert fused[0].annotations["sem_flops"] > 2 * 128 * 4 * 7168 * 24
 
 
+def test_dsv4_hc_post_ffn_noncontiguous_diamond_fuses():
+    """HCPostFfn can be split into two topo fragments under TP/EP.
+
+    The graph shape is a diamond: ``mul -> sum -> add`` plus a sibling
+    ``mul -> add`` branch.  A same-scope interleaving node keeps the raw
+    HCPostFfn ops non-contiguous, reproducing the tp8/ep8 trace gap.
+    """
+    from python.zrt.transform.context import FusionConfig
+
+    scope = "model.layers.0.hc_post_ffn"
+    mix_mul = _node(
+        "mix_mul", "aten.mul.Tensor",
+        scope=scope, module_class="HCPostFfn", layer="0",
+    )
+    reduce_sum = _node(
+        "reduce_sum", "aten.sum.dim_IntList",
+        scope=scope, module_class="HCPostFfn", layer="0",
+    )
+    interleaved = _node(
+        "gap", "aten.mm.default",
+        scope="model.layers.0.ffn", module_class="FeedForward", layer="0",
+    )
+    residual_mul = _node(
+        "residual_mul", "aten.mul.Tensor",
+        scope=scope, module_class="HCPostFfn", layer="0",
+    )
+    residual_add = _node(
+        "residual_add", "aten.add.Tensor",
+        scope=scope, module_class="HCPostFfn", layer="0",
+    )
+
+    mix_mul.inputs = [
+        _t("comb", (1, 128, 4, 4, 1), DType.FP32),
+        _t("hidden_stack", (1, 128, 4, 1, 7168), DType.FP32),
+    ]
+    mix_mul.outputs = [_t("mixed_5d", (1, 128, 4, 4, 7168), DType.FP32)]
+    reduce_sum.inputs = [mix_mul.outputs[0]]
+    reduce_sum.outputs = [_t("mixed", (1, 128, 4, 7168), DType.FP32)]
+    residual_mul.inputs = [
+        _t("post", (1, 128, 4, 1), DType.FP32),
+        _t("ffn_out", (1, 128, 1, 7168), DType.FP32),
+    ]
+    residual_mul.outputs = [_t("residual", (1, 128, 4, 7168), DType.FP32)]
+    residual_add.inputs = [residual_mul.outputs[0], reduce_sum.outputs[0]]
+    residual_add.outputs = [_t("out", (1, 128, 4, 7168), DType.FP32)]
+
+    g = _graph(
+        [mix_mul, reduce_sum, interleaved, residual_mul, residual_add],
+        [
+            Edge(src=mix_mul.id, src_idx=0, dst=reduce_sum.id, dst_idx=0,
+                 tensor=mix_mul.outputs[0]),
+            Edge(src=reduce_sum.id, src_idx=0, dst=residual_add.id, dst_idx=1,
+                 tensor=reduce_sum.outputs[0]),
+            Edge(src=residual_mul.id, src_idx=0, dst=residual_add.id, dst_idx=0,
+                 tensor=residual_mul.outputs[0]),
+        ],
+    )
+    ctx = _ctx_with_fusion(
+        FusionConfig(enabled_rules={"hc_post_ffn"}),
+        model_id="hf_models/deepseek_v4",
+    )
+    out = FusionPass().run(g, ctx)
+
+    fused = [n for n in out.nodes.values() if n.op_type == "hc_post"]
+    raw_hc_post_ffn = [
+        n for n in out.nodes.values()
+        if n.module_class == "HCPostFfn" and n.op_type.startswith("aten.")
+    ]
+
+    assert len(fused) == 1
+    assert not raw_hc_post_ffn
+    assert fused[0].annotations["fused_by_rule"] == "hc_post_ffn"
+    assert fused[0].annotations["sem_shape"]["hc_dim"] == 4
+    assert fused[0].annotations["sem_flops"] == 36700160.0
+
+
 def test_disabled_rules_disable_partial():
     """``FusionConfig.disabled_rules`` excludes a rule from the active set;
     the sliding-window scanner therefore won't see it either.

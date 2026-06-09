@@ -34,6 +34,9 @@ class PerStrategyOverlapReport:
     cp_total_us:    float = 0.0
     cp_exposed_us:  float = 0.0
     cp_hidden_us:   float = 0.0
+    dp_total_us:    float = 0.0
+    dp_exposed_us:  float = 0.0
+    dp_hidden_us:   float = 0.0
     total_compute_us: float = 0.0
     total_comm_us:    float = 0.0
 
@@ -51,6 +54,9 @@ class PerStrategyOverlapReport:
             "cp_total_us": self.cp_total_us,
             "cp_exposed_us": self.cp_exposed_us,
             "cp_hidden_us": self.cp_hidden_us,
+            "dp_total_us": self.dp_total_us,
+            "dp_exposed_us": self.dp_exposed_us,
+            "dp_hidden_us": self.dp_hidden_us,
             "total_compute_us": self.total_compute_us,
             "total_comm_us": self.total_comm_us,
         }
@@ -69,7 +75,7 @@ def per_strategy_overlap(timeline: "Timeline") -> PerStrategyOverlapReport:
     report = PerStrategyOverlapReport(total_compute_us=total_compute)
 
     all_comm_intervals: list[tuple[float, float]] = []
-    for tag in ("tp", "ep", "pp", "cp"):
+    for tag in ("tp", "ep", "pp", "cp", "dp"):
         comm_intervals = [
             (op.start_us, op.end_us)
             for op in timeline.scheduled_ops

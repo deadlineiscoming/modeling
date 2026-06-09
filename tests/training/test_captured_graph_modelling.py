@@ -686,6 +686,138 @@ def test_modeller_uses_pipeline_step_time_for_schedule_adjustments():
     assert report.step_time_ms < expected_step_ms * 3.0
 
 
+def test_modeller_dp1_reports_zero_dp_comm_fields():
+    """dp=1 must not leak stale DP hidden/exposed fields into reports."""
+    from zrt.transform.analysis import estimate_training_from_graphs
+
+    fwd = _captured_style_graph(num_layers=4)
+    bwd = _backward_graph_for_fwd(fwd)
+
+    report, _ctx, graphs = estimate_training_from_graphs(
+        forward_graph=fwd,
+        backward_graph=bwd,
+        hw_spec=_hw(),
+        seq_len=2048,
+        hidden=4096,
+        num_layers=4,
+        tp=1,
+        pp=1,
+        ep=1,
+        dp=1,
+        zero_stage=1,
+        micro_batch=1,
+        global_batch=8,
+        return_transformed=True,
+    )
+
+    assert report.dp_total_ms == 0.0
+    assert report.dp_exposed_ms == 0.0
+    assert report.dp_hidden_ms == 0.0
+    assert not [
+        n for n in graphs["unified"].nodes.values()
+        if n.annotations.get("dp_comm")
+    ]
+
+
+def test_zero3_fsdp_comm_is_reported_as_dp_comm_breakdown():
+    """ZeRO-3/FSDP collectives are DP-group communication and need report attribution."""
+    from collections import Counter
+
+    import pytest
+
+    from zrt.transform.analysis import estimate_training_from_graphs
+
+    fwd = _captured_style_graph(num_layers=4)
+    bwd = _backward_graph_for_fwd(fwd)
+
+    report, _ctx, graphs = estimate_training_from_graphs(
+        forward_graph=fwd,
+        backward_graph=bwd,
+        hw_spec=_hw(),
+        seq_len=2048,
+        hidden=4096,
+        num_layers=4,
+        tp=1,
+        pp=1,
+        ep=1,
+        dp=4,
+        zero_stage=3,
+        micro_batch=1,
+        global_batch=8,
+        return_transformed=True,
+    )
+
+    graph = graphs["unified"]
+    fsdp_comm = [
+        n for n in graph.nodes.values()
+        if n.annotations.get("inserted_by") == "zero_fsdp_pass"
+        and n.category == "communication"
+    ]
+    by_op = Counter(n.op_type for n in fsdp_comm)
+
+    assert graph.metadata["zero"] == {
+        "stage": 3,
+        "weight_shard": 4,
+        "grad_shard": 4,
+        "optstate_shard": 4,
+    }
+    assert by_op["comm.all_gather"] > 0
+    assert by_op["comm.reduce_scatter"] > 0
+    assert report.dp_total_ms > 0.0
+    assert report.dp_total_ms == pytest.approx(
+        report.dp_exposed_ms + report.dp_hidden_ms
+    )
+    assert report.total_comm_volume_ms == pytest.approx(report.dp_total_ms)
+    assert report.exposed_comm_ms == pytest.approx(report.dp_exposed_ms)
+    assert report.hidden_comm_ms == pytest.approx(report.dp_hidden_ms)
+
+
+def test_dp_degree_does_not_change_compute_op_shape_or_dtype():
+    """DP may add grad communication, but ordinary compute op metadata stays stable."""
+    from zrt.transform.analysis import estimate_training_from_graphs
+
+    transformed_by_dp = {}
+    for dp in (1, 4):
+        fwd = _captured_style_graph(num_layers=4)
+        bwd = _backward_graph_for_fwd(fwd)
+        _report, _ctx, graphs = estimate_training_from_graphs(
+            forward_graph=fwd,
+            backward_graph=bwd,
+            hw_spec=_hw(),
+            seq_len=2048,
+            hidden=4096,
+            num_layers=4,
+            tp=1,
+            pp=1,
+            ep=1,
+            dp=dp,
+            zero_stage=1,
+            micro_batch=1,
+            global_batch=8,
+            return_transformed=True,
+        )
+        transformed_by_dp[dp] = graphs["unified"]
+
+    g1 = transformed_by_dp[1]
+    g4 = transformed_by_dp[4]
+    common_ids = set(g1.nodes).intersection(g4.nodes)
+    compute_ids = [
+        nid for nid in common_ids
+        if g1.nodes[nid].category == "compute"
+        and g4.nodes[nid].category == "compute"
+    ]
+
+    assert compute_ids
+    for nid in compute_ids:
+        n1 = g1.nodes[nid]
+        n4 = g4.nodes[nid]
+        assert n4.op_type == n1.op_type
+        assert [t.shape for t in n4.inputs] == [t.shape for t in n1.inputs]
+        assert [t.shape for t in n4.outputs] == [t.shape for t in n1.outputs]
+        assert [t.dtype for t in n4.inputs] == [t.dtype for t in n1.inputs]
+        assert [t.dtype for t in n4.outputs] == [t.dtype for t in n1.outputs]
+
+
 # ── Phase 2 end-to-end: stitched pp>1 ─────────────────────────────────────────
 
 def test_pp_routing_basic():

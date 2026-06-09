@@ -999,7 +999,7 @@ class TrainingPipelinePass(GraphPass):
         for s_id, tl in stage_timelines.items():
             if tl and tl.scheduled_ops:
                 stage_report = per_strategy_overlap(tl)
-                for tag in ("tp", "ep", "pp", "cp"):
+                for tag in ("tp", "ep", "pp", "cp", "dp"):
                     curr_total = getattr(stage_report, f"{tag}_total_us", 0.0)
                     curr_exposed = getattr(stage_report, f"{tag}_exposed_us", 0.0)
                     curr_hidden = getattr(stage_report, f"{tag}_hidden_us", 0.0)
@@ -1010,8 +1010,12 @@ class TrainingPipelinePass(GraphPass):
                         setattr(per_strat, f"{tag}_hidden_us", curr_hidden)
 
         # Formula-based overlap for annotated comm nodes (captures micro-pipelining)
-        formula_total_by_tag: dict[str, float] = {"tp": 0.0, "ep": 0.0, "cp": 0.0, "pp": 0.0}
-        formula_hidden_by_tag: dict[str, float] = {"tp": 0.0, "ep": 0.0, "cp": 0.0, "pp": 0.0}
+        formula_total_by_tag: dict[str, float] = {
+            "tp": 0.0, "ep": 0.0, "cp": 0.0, "pp": 0.0, "dp": 0.0,
+        }
+        formula_hidden_by_tag: dict[str, float] = {
+            "tp": 0.0, "ep": 0.0, "cp": 0.0, "pp": 0.0, "dp": 0.0,
+        }
         for node in g.nodes.values():
             if node.category != "communication":
                 continue
@@ -1054,7 +1058,9 @@ class TrainingPipelinePass(GraphPass):
                 raw = node.annotations.get("inserted_by", "")
                 if raw.endswith("_pass"):
                     raw = raw[:-5]
-                if raw in ("tp", "ep", "cp", "pp"):
+                if raw in ("tp", "ep", "cp", "pp", "data_parallel", "zero_fsdp"):
+                    if raw in ("data_parallel", "zero_fsdp"):
+                        raw = "dp"
                     node_tag = raw
             if not node_tag:
                 node_tag = "tp"  # default for untagged comm
@@ -1067,7 +1073,7 @@ class TrainingPipelinePass(GraphPass):
         # Normalise formula totals to per-stage (trace totals are per-stage
         # bottleneck, formula totals are whole-graph aggregate).
         formula_div = pp if pp > 1 else 1
-        for tag in ("tp", "ep", "pp", "cp"):
+        for tag in ("tp", "ep", "pp", "cp", "dp"):
             trace_total = getattr(per_strat, f"{tag}_total_us", 0.0)
             trace_hidden = getattr(per_strat, f"{tag}_hidden_us", 0.0)
             f_total = formula_total_by_tag.get(tag, 0.0) / formula_div
@@ -1078,24 +1084,42 @@ class TrainingPipelinePass(GraphPass):
             setattr(per_strat, f"{tag}_hidden_us", merged_hidden)
             setattr(per_strat, f"{tag}_exposed_us", max(0.0, merged_total - merged_hidden))
 
-        total_comm_us = (
+        non_dp_total_us = (
             per_strat.tp_total_us + per_strat.ep_total_us
             + per_strat.pp_total_us + per_strat.cp_total_us
         ) * M
-        # Ensure total includes untagged comm ops from per-stage timelines
-        trace_total = 0.0
-        for s_id, tl in stage_timelines.items():
-            if tl and tl.scheduled_ops:
-                trace_total = max(
-                    trace_total,
-                    sum(op.latency_us for op in tl.scheduled_ops if op.stream_type == "comm")
-                )
-        if trace_total * M > total_comm_us:
-            total_comm_us = trace_total * M
-        total_exposed_us = (
+        non_dp_exposed_us = (
             per_strat.tp_exposed_us + per_strat.ep_exposed_us
             + per_strat.pp_exposed_us + per_strat.cp_exposed_us
         ) * M
+
+        step_dp_total_us = (step_result.dp_exposed + step_result.dp_hidden) * 1e6
+        if step_dp_total_us > 0.0:
+            effective_dp_total_us = step_dp_total_us
+            effective_dp_exposed_us = step_result.dp_exposed * 1e6
+        else:
+            effective_dp_total_us = per_strat.dp_total_us * M
+            effective_dp_exposed_us = per_strat.dp_exposed_us * M
+
+        # Include only untagged comm as a conservative exposed bucket; tagged
+        # TP/EP/PP/CP/DP comm is already accounted above.  This avoids double
+        # counting DataParallel comm, whose report fields use bucket-tail
+        # semantics rather than raw trace overlap.
+        untagged_comm_us = 0.0
+        for s_id, tl in stage_timelines.items():
+            if tl and tl.scheduled_ops:
+                untagged_comm_us = max(
+                    untagged_comm_us,
+                    sum(
+                        op.latency_us
+                        for op in tl.scheduled_ops
+                        if op.stream_type == "comm" and not op.parallelism_tag
+                    )
+                )
+        untagged_comm_us *= M
+
+        total_comm_us = non_dp_total_us + effective_dp_total_us + untagged_comm_us
+        total_exposed_us = non_dp_exposed_us + effective_dp_exposed_us + untagged_comm_us
         hidden_us = max(0.0, total_comm_us - total_exposed_us)
 
         # In trace mode, PPStitcher already models compute↔comm overlap correctly
@@ -1252,6 +1276,12 @@ class TrainingPipelinePass(GraphPass):
                 key = f"{tag}_{suffix}"
                 us_key = key.replace("_ms", "_us")
                 sr[key] = getattr(per_strat, us_key, 0.0) / 1000.0
+        if sr.get("dp_total_ms", 0.0) <= 0.0 and effective_dp_total_us > 0.0:
+            sr["dp_exposed_ms"] = effective_dp_exposed_us / 1000.0
+            sr["dp_hidden_ms"] = (
+                effective_dp_total_us - effective_dp_exposed_us
+            ) / 1000.0
+            sr["dp_total_ms"] = effective_dp_total_us / 1000.0
 
         g.metadata["step_result"] = sr
         g.metadata["recompute_compute_ms"] = recompute_compute_ms

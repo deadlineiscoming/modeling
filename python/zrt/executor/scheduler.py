@@ -37,7 +37,7 @@ class ScheduledOp:
     op_type:     str
     category:    str    # "compute" | "communication" | "memory"
     phase:       str = ""  # "fwd" | "bwd" | ""
-    parallelism_tag: str = ""  # "tp" | "ep" | "pp" | "cp" | ""
+    parallelism_tag: str = ""  # "tp" | "ep" | "pp" | "cp" | "dp" | ""
     overlap_type: str = ""    # "coc" | "mc2" | "ring_cp" | "none"
     coc_tile_k:   int = 0
     overlap_target: str = ""  # node_id of the compute predecessor for CoC
@@ -139,6 +139,7 @@ class DAGScheduler:
     _PARALLELISM_TAG_MAP: dict[str, str] = {
         "tp": "tp", "ep": "ep", "pp": "pp", "cp": "cp",
         "data_parallel": "dp",
+        "zero_fsdp": "dp",
     }
 
     @staticmethod
